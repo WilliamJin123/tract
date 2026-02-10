@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "trace-context"
+version = "0.1.0"
+description = "Git-like version control for LLM context windows"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "sqlalchemy>=2.0.46,<2.2",
+    "pydantic>=2.10,<3.0",
+    "tiktoken>=0.12.0",
+    "typing-extensions>=4.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "hypothesis>=6.150",
+    "pytest-cov>=7.0",
+    "ruff>=0.15",
+    "mypy>=1.14",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trace_context"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
