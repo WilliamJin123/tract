@@ -105,43 +105,43 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CORE-01 | Phase 0 | Pending |
-| CORE-02 | Phase 0 | Pending |
-| CORE-03 | Phase 1 | Pending |
-| CORE-04 | Phase 1 | Pending |
-| CORE-05 | Phase 1 | Pending |
-| CORE-06 | Phase 1 | Pending |
-| CORE-07 | Phase 1 | Pending |
-| CORE-08 | Phase 0 | Pending |
-| CORE-09 | Phase 0 | Pending |
-| BRNC-01 | Phase 2 | Pending |
-| BRNC-02 | Phase 2 | Pending |
-| BRNC-03 | Phase 2 | Pending |
-| BRNC-04 | Phase 2 | Pending |
-| BRNC-05 | Phase 2 | Pending |
-| BRNC-06 | Phase 2 | Pending |
-| COMP-01 | Phase 2 | Pending |
-| COMP-02 | Phase 2 | Pending |
-| COMP-03 | Phase 2 | Pending |
-| COMP-04 | Phase 2 | Pending |
-| MAGT-01 | Phase 3 | Pending |
-| MAGT-02 | Phase 3 | Pending |
-| MAGT-03 | Phase 3 | Pending |
-| MAGT-04 | Phase 3 | Pending |
-| MAGT-05 | Phase 3 | Pending |
-| MAGT-06 | Phase 3 | Pending |
-| MAGT-07 | Phase 3 | Pending |
-| INFR-01 | Phase 0 | Pending |
-| INFR-02 | Phase 0 | Pending |
-| INFR-03 | Phase 0 | Pending |
-| INFR-04 | Phase 0 | Pending |
-| INFR-05 | Phase 0 | Pending |
-| INFR-06 | Phase 0 | Pending |
+| CORE-01 | Phase 1 | Pending |
+| CORE-02 | Phase 1 | Pending |
+| CORE-03 | Phase 2 | Pending |
+| CORE-04 | Phase 2 | Pending |
+| CORE-05 | Phase 2 | Pending |
+| CORE-06 | Phase 2 | Pending |
+| CORE-07 | Phase 2 | Pending |
+| CORE-08 | Phase 1 | Pending |
+| CORE-09 | Phase 1 | Pending |
+| BRNC-01 | Phase 3 | Pending |
+| BRNC-02 | Phase 3 | Pending |
+| BRNC-03 | Phase 3 | Pending |
+| BRNC-04 | Phase 3 | Pending |
+| BRNC-05 | Phase 3 | Pending |
+| BRNC-06 | Phase 3 | Pending |
+| COMP-01 | Phase 4 | Pending |
+| COMP-02 | Phase 4 | Pending |
+| COMP-03 | Phase 4 | Pending |
+| COMP-04 | Phase 4 | Pending |
+| MAGT-01 | Phase 5 | Pending |
+| MAGT-02 | Phase 5 | Pending |
+| MAGT-03 | Phase 5 | Pending |
+| MAGT-04 | Phase 5 | Pending |
+| MAGT-05 | Phase 5 | Pending |
+| MAGT-06 | Phase 5 | Pending |
+| MAGT-07 | Phase 5 | Pending |
+| INFR-01 | Phase 1 | Pending |
+| INFR-02 | Phase 1 | Pending |
+| INFR-03 | Phase 1 | Pending |
+| INFR-04 | Phase 1 | Pending |
+| INFR-05 | Phase 1 | Pending |
+| INFR-06 | Phase 1 | Pending |
 | INTF-01 | Phase 1 | Pending |
-| INTF-02 | Phase 1 | Pending |
-| INTF-03 | Phase 2 | Pending |
-| INTF-04 | Phase 2 | Pending |
-| INTF-05 | Phase 3 | Pending |
+| INTF-02 | Phase 2 | Pending |
+| INTF-03 | Phase 3 | Pending |
+| INTF-04 | Phase 3 | Pending |
+| INTF-05 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 37 total
@@ -150,4 +150,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-02-10*
-*Last updated: 2026-02-10 after initial definition*
+*Last updated: 2026-02-10 after roadmap creation (phases renumbered 1-5)*
