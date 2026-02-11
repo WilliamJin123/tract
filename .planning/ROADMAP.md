@@ -13,6 +13,7 @@ Trace delivers git-like version control for LLM context windows across five phas
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundations** - Data model, storage, commit/compile cycle, token accounting, and SDK entry point
+- [ ] **Phase 1.1: Incremental Compile Cache & Token Tracking** - O(1) append-path compilation, API-reported token usage as source of truth (INSERTED)
 - [ ] **Phase 2: Linear History & CLI** - Log, status, diff, reset, checkout, and CLI wrapper for inspection
 - [ ] **Phase 3: Branching & Merging** - Branch, switch, merge (fast-forward + semantic), rebase, cherry-pick, and LLM client
 - [ ] **Phase 4: Compression** - Token-budget-aware compression, pinned commit preservation, commit reordering, garbage collection
@@ -36,6 +37,22 @@ Plans:
 - [x] 01-01-PLAN.md -- Project scaffolding, domain models (7 content types), SQLAlchemy schema, repository pattern (ABCs + SQLite)
 - [x] 01-02-PLAN.md -- Deterministic hashing, token counting, commit engine, and default context compiler
 - [x] 01-03-PLAN.md -- Repo class (public SDK entry point) and end-to-end integration tests
+
+### Phase 1.1: Incremental Compile Cache & Token Tracking (INSERTED)
+**Goal**: Reduce compile latency via incremental caching for append-only operations, and establish API-reported token usage as the primary source of truth over tiktoken estimates
+**Depends on**: Phase 1
+**Requirements**: CORE-09 (token tracking refinement), INFR-06 (performance)
+**Success Criteria** (what must be TRUE):
+  1. Compiling after an APPEND commit reuses cached intermediate state (O(1) incremental extend, not O(n) full chain walk)
+  2. EDIT and annotate operations trigger full cache invalidation (correctness over speed)
+  3. User can feed API-reported token usage back into Trace via `repo.record_usage()`, and this is preferred over tiktoken counts when available
+  4. tiktoken remains the pre-call estimator for budget enforcement; API actuals are the post-call source of truth
+  5. `CompiledContext.token_source` accurately reflects whether counts came from tiktoken estimate or API response
+**Plans**: 2 plans
+
+Plans:
+- [ ] 01.1-01-PLAN.md -- CompileSnapshot dataclass, build_message_for_commit() extraction, incremental APPEND fast path, EDIT/annotate/batch invalidation
+- [ ] 01.1-02-PLAN.md -- record_usage() API, OpenAI/Anthropic dict normalization, two-tier token tracking integration tests
 
 ### Phase 2: Linear History & CLI
 **Goal**: Users can inspect, navigate, and manipulate linear commit history through both the SDK and a CLI
@@ -107,11 +124,12 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 1.1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundations | 3/3 | Complete | 2026-02-10 |
+| 1.1 Compile Cache & Token Tracking | 0/2 | Not started | - |
 | 2. Linear History & CLI | 0/2 | Not started | - |
 | 3. Branching & Merging | 0/4 | Not started | - |
 | 4. Compression | 0/2 | Not started | - |
