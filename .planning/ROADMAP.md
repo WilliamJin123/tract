@@ -15,6 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Foundations** - Data model, storage, commit/compile cycle, token accounting, and SDK entry point
 - [x] **Phase 1.1: Incremental Compile Cache & Token Tracking** - O(1) append-path compilation, API-reported token usage as source of truth (INSERTED)
 - [x] **Phase 1.2: Rename Repo to Tract** - Rename entry-point class Repo→Tract, repo_id→tract_id across source, tests, and planning docs (INSERTED)
+- [ ] **Phase 1.3: Hyperparameter Config Storage** - Store LLM generation config (temperature, top_p, top_k, etc.) with commits for full call provenance (INSERTED)
 - [ ] **Phase 2: Linear History & CLI** - Log, status, diff, reset, checkout, and CLI wrapper for inspection
 - [ ] **Phase 3: Branching & Merging** - Branch, switch, merge (fast-forward + semantic), rebase, cherry-pick, and LLM client
 - [ ] **Phase 4: Compression** - Token-budget-aware compression, pinned commit preservation, commit reordering, garbage collection
@@ -69,6 +70,21 @@ Plans:
 
 Plans:
 - [x] 01.2-01-PLAN.md -- Mechanical rename: Repo→Tract, repo_id→tract_id, file renames, test updates, doc updates
+
+### Phase 1.3: Hyperparameter Config Storage (INSERTED)
+**Goal**: Every commit can store the LLM generation config (temperature, top_p, top_k, repetition_penalty, frequency_penalty, presence_penalty, model name, max_tokens, etc.) used at call time, giving full provenance for how each piece of context was generated. Enables downstream workflows like exploration/exploitation branching where hyperparams are tuned per-branch and results compared.
+**Depends on**: Phase 1.2
+**Requirements**: None (new capability -- extends commit model)
+**Success Criteria** (what must be TRUE):
+  1. User can attach a generation config dict to any commit via `tract.commit(..., generation_config={...})` and retrieve it from the stored commit
+  2. Generation config is stored as a flexible schema (JSON blob or similar) that supports any provider's parameters without migration
+  3. Generation config is preserved through compile -- `CompiledContext` exposes the configs associated with its commits
+  4. `record_usage()` can optionally accept generation config, linking post-call actuals with the params that produced them
+  5. Generation config is queryable: user can filter/retrieve commits by config values (e.g., "all commits with temperature > 0.8")
+**Plans**: 1 plan
+
+Plans:
+- [ ] 01.3-01-PLAN.md -- Add generation_config field to data model, storage, engine, compiler, Tract facade, and integration tests
 
 ### Phase 2: Linear History & CLI
 **Goal**: Users can inspect, navigate, and manipulate linear commit history through both the SDK and a CLI
@@ -140,13 +156,14 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundations | 3/3 | Complete | 2026-02-10 |
 | 1.1 Compile Cache & Token Tracking | 2/2 | Complete | 2026-02-11 |
 | 1.2 Rename Repo to Tract | 1/1 | Complete | 2026-02-11 |
+| 1.3 Hyperparameter Config Storage | 0/1 | Not started | - |
 | 2. Linear History & CLI | 0/2 | Not started | - |
 | 3. Branching & Merging | 0/4 | Not started | - |
 | 4. Compression | 0/2 | Not started | - |
