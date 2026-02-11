@@ -793,3 +793,151 @@ class TestIncrementalCompileCache:
 
             # Both compiles invoked the custom compiler (no caching)
             assert call_count == 2
+
+
+# ===========================================================================
+# Record Usage (Plan 02 -- two-tier token tracking)
+# ===========================================================================
+
+
+class TestRecordUsage:
+    """Tests for repo.record_usage() -- post-call API token recording."""
+
+    def test_record_usage_openai_dict(self):
+        """OpenAI-format dict updates CompiledContext with API-reported counts."""
+        with Repo.open() as repo:
+            repo.commit(InstructionContent(text="System prompt"))
+            repo.compile()
+
+            result = repo.record_usage({
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+            })
+            assert result.token_count == 100
+            assert result.token_source == "api:100+50"
+
+    def test_record_usage_anthropic_dict(self):
+        """Anthropic-format dict updates CompiledContext with API-reported counts."""
+        with Repo.open() as repo:
+            repo.commit(InstructionContent(text="System prompt"))
+            repo.compile()
+
+            result = repo.record_usage({
+                "input_tokens": 200,
+                "output_tokens": 80,
+            })
+            assert result.token_count == 200
+            assert result.token_source == "api:200+80"
+
+    def test_record_usage_token_usage_dataclass(self):
+        """TokenUsage dataclass directly updates CompiledContext."""
+        from tract.protocols import TokenUsage
+
+        with Repo.open() as repo:
+            repo.commit(InstructionContent(text="System prompt"))
+            repo.compile()
+
+            result = repo.record_usage(TokenUsage(
+                prompt_tokens=300,
+                completion_tokens=100,
+                total_tokens=400,
+            ))
+            assert result.token_count == 300
+            assert result.token_source == "api:300+100"
+
+    def test_record_usage_updates_snapshot(self):
+        """After record_usage, subsequent compile() (without new commits) returns API counts."""
+        with Repo.open() as repo:
+            repo.commit(InstructionContent(text="System prompt"))
+            repo.compile()
+
+            repo.record_usage({
+                "prompt_tokens": 500,
+                "completion_tokens": 200,
+                "total_tokens": 700,
+            })
+
+            # Compile again without new commits -- should return cached API counts
+            cached = repo.compile()
+            assert cached.token_count == 500
+            assert cached.token_source == "api:500+200"
+
+    def test_record_usage_no_commits_raises(self):
+        """record_usage on empty repo raises TraceError."""
+        from tract.exceptions import TraceError
+
+        with Repo.open() as repo:
+            with pytest.raises(TraceError, match="Cannot record usage: no commits exist"):
+                repo.record_usage({
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "total_tokens": 150,
+                })
+
+    def test_record_usage_unrecognized_format_raises(self):
+        """Unrecognized dict format raises ContentValidationError."""
+        from tract.exceptions import ContentValidationError
+
+        with Repo.open() as repo:
+            repo.commit(InstructionContent(text="System prompt"))
+            repo.compile()
+
+            with pytest.raises(ContentValidationError, match="Unrecognized usage dict format"):
+                repo.record_usage({"foo": 42})
+
+    def test_record_usage_no_prior_compile(self):
+        """record_usage works even if compile() has not been called yet."""
+        with Repo.open() as repo:
+            repo.commit(InstructionContent(text="System prompt"))
+            # Do NOT call compile()
+
+            result = repo.record_usage({
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+            })
+            assert result.token_count == 100
+            assert result.token_source == "api:100+50"
+
+    def test_record_usage_with_head_hash(self):
+        """record_usage with explicit head_hash works for matching head."""
+        from tract.exceptions import TraceError
+
+        with Repo.open() as repo:
+            repo.commit(InstructionContent(text="A"))
+            repo.commit(DialogueContent(role="user", text="B"))
+            c3 = repo.commit(DialogueContent(role="assistant", text="C"))
+            repo.compile()
+
+            result = repo.record_usage(
+                {"prompt_tokens": 500, "completion_tokens": 200, "total_tokens": 700},
+                head_hash=c3.commit_hash,
+            )
+            assert result.token_count == 500
+
+            with pytest.raises(TraceError, match="does not match current HEAD"):
+                repo.record_usage(
+                    {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                    head_hash="nonexistent",
+                )
+
+    def test_token_source_reflects_api_after_record(self):
+        """Token source transitions: tiktoken -> api -> tiktoken (after new commit)."""
+        with Repo.open() as repo:
+            repo.commit(InstructionContent(text="System prompt"))
+            ctx1 = repo.compile()
+            assert ctx1.token_source.startswith("tiktoken:")
+
+            repo.record_usage({
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+            })
+            ctx2 = repo.compile()
+            assert ctx2.token_source.startswith("api:")
+
+            # New commit resets to tiktoken
+            repo.commit(DialogueContent(role="user", text="New message"))
+            ctx3 = repo.compile()
+            assert ctx3.token_source.startswith("tiktoken:")
