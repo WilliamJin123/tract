@@ -1047,3 +1047,204 @@ class TestTwoTierTokenTracking:
             })
             ctx2 = t.compile()
             assert ctx2.token_source == "api:0+0"
+
+
+# ===========================================================================
+# Generation Config (Phase 1.3)
+# ===========================================================================
+
+
+class TestGenerationConfig:
+    """Phase 1.3: Hyperparameter config storage tests."""
+
+    # SC1: Attach and retrieve generation_config
+    def test_commit_with_generation_config(self, tract: Tract):
+        config = {"model": "gpt-4o", "temperature": 0.7, "top_p": 0.95}
+        info = tract.commit(
+            DialogueContent(role="user", text="Hello"),
+            generation_config=config,
+        )
+        assert info.generation_config == config
+        # Retrieve via get_commit
+        fetched = tract.get_commit(info.commit_hash)
+        assert fetched is not None
+        assert fetched.generation_config == config
+
+    def test_commit_without_generation_config(self, tract: Tract):
+        info = tract.commit(DialogueContent(role="user", text="Hi"))
+        assert info.generation_config is None
+        fetched = tract.get_commit(info.commit_hash)
+        assert fetched is not None
+        assert fetched.generation_config is None
+
+    def test_generation_config_in_log(self, tract: Tract):
+        config = {"temperature": 0.9}
+        tract.commit(
+            DialogueContent(role="user", text="Hello"),
+            generation_config=config,
+        )
+        entries = tract.log(limit=1)
+        assert entries[0].generation_config == config
+
+    # SC2: Flexible schema -- any provider params work
+    def test_generation_config_arbitrary_provider_params(self, tract: Tract):
+        openai_config = {"model": "gpt-4o", "temperature": 0.7, "frequency_penalty": 0.5}
+        anthropic_config = {"model": "claude-3-opus", "top_k": 40, "temperature": 0.3}
+        meta_config = {"model": "llama-3", "repetition_penalty": 1.2, "min_p": 0.05}
+
+        c1 = tract.commit(DialogueContent(role="user", text="a"), generation_config=openai_config)
+        c2 = tract.commit(DialogueContent(role="user", text="b"), generation_config=anthropic_config)
+        c3 = tract.commit(DialogueContent(role="user", text="c"), generation_config=meta_config)
+
+        assert c1.generation_config == openai_config
+        assert c2.generation_config == anthropic_config
+        assert c3.generation_config == meta_config
+
+    # SC3: generation_configs preserved through compile
+    def test_compile_exposes_generation_configs(self, tract: Tract):
+        config1 = {"temperature": 0.5}
+        config2 = {"temperature": 0.9}
+        tract.commit(InstructionContent(text="System"), generation_config=config1)
+        tract.commit(DialogueContent(role="user", text="Hi"), generation_config=config2)
+        result = tract.compile()
+        assert len(result.generation_configs) == 2
+        assert result.generation_configs[0] == config1
+        assert result.generation_configs[1] == config2
+
+    def test_compile_empty_config_for_commits_without_config(self, tract: Tract):
+        tract.commit(InstructionContent(text="System"))
+        tract.commit(DialogueContent(role="user", text="Hi"), generation_config={"temperature": 0.7})
+        result = tract.compile()
+        assert result.generation_configs[0] == {}
+        assert result.generation_configs[1] == {"temperature": 0.7}
+
+    def test_compile_incremental_carries_generation_configs(self, tract: Tract):
+        config1 = {"temperature": 0.3}
+        config2 = {"temperature": 0.7}
+        tract.commit(InstructionContent(text="System"), generation_config=config1)
+        result1 = tract.compile()
+        assert result1.generation_configs == [config1]
+
+        tract.commit(DialogueContent(role="user", text="Hi"), generation_config=config2)
+        result2 = tract.compile()
+        assert result2.generation_configs == [config1, config2]
+
+    def test_compile_edit_preserves_generation_config_of_replacement(self, tract: Tract):
+        config_orig = {"temperature": 0.5}
+        config_edit = {"temperature": 0.9}
+        c1 = tract.commit(
+            DialogueContent(role="user", text="original"),
+            generation_config=config_orig,
+        )
+        tract.commit(
+            DialogueContent(role="user", text="edited"),
+            operation=CommitOperation.EDIT,
+            response_to=c1.commit_hash,
+            generation_config=config_edit,
+        )
+        result = tract.compile()
+        # The effective commit's config comes from the edit replacement
+        assert result.generation_configs[0] == config_edit
+
+    def test_compile_edit_without_config_inherits_original(self, tract: Tract):
+        """When an EDIT commit has no generation_config, the original's config is inherited."""
+        config_orig = {"temperature": 0.7, "model": "gpt-4o"}
+        c1 = tract.commit(
+            DialogueContent(role="user", text="original"),
+            generation_config=config_orig,
+        )
+        tract.commit(
+            DialogueContent(role="user", text="edited text only"),
+            operation=CommitOperation.EDIT,
+            response_to=c1.commit_hash,
+            # No generation_config on the edit
+        )
+        result = tract.compile()
+        # Original config inherited since edit didn't specify one
+        assert result.generation_configs[0] == config_orig
+
+    # SC4: generation_config NOT in commit hash
+    def test_generation_config_not_in_hash(self, tract: Tract):
+        """Same content with different generation_configs should produce
+        the same content_hash (different commit_hash due to timestamp/parent)."""
+        c1 = tract.commit(
+            DialogueContent(role="user", text="identical"),
+            generation_config={"temperature": 0.1},
+        )
+        c2 = tract.commit(
+            DialogueContent(role="user", text="identical"),
+            generation_config={"temperature": 0.9},
+        )
+        # content_hash should be the same (same content)
+        assert c1.content_hash == c2.content_hash
+        # commit_hash differs because of parent_hash and timestamp, not config
+        assert c1.commit_hash != c2.commit_hash
+
+    # SC5: Query by config values
+    def test_query_by_config_equality(self, tract: Tract):
+        tract.commit(
+            DialogueContent(role="user", text="a"),
+            generation_config={"model": "gpt-4o", "temperature": 0.5},
+        )
+        tract.commit(
+            DialogueContent(role="user", text="b"),
+            generation_config={"model": "claude-3", "temperature": 0.9},
+        )
+        tract.commit(
+            DialogueContent(role="user", text="c"),
+            generation_config={"model": "gpt-4o", "temperature": 0.7},
+        )
+        results = tract.query_by_config("model", "=", "gpt-4o")
+        assert len(results) == 2
+        assert all(r.generation_config["model"] == "gpt-4o" for r in results)
+
+    def test_query_by_config_greater_than(self, tract: Tract):
+        tract.commit(
+            DialogueContent(role="user", text="a"),
+            generation_config={"temperature": 0.3},
+        )
+        tract.commit(
+            DialogueContent(role="user", text="b"),
+            generation_config={"temperature": 0.8},
+        )
+        tract.commit(
+            DialogueContent(role="user", text="c"),
+            generation_config={"temperature": 1.0},
+        )
+        results = tract.query_by_config("temperature", ">", 0.5)
+        assert len(results) == 2
+        assert all(r.generation_config["temperature"] > 0.5 for r in results)
+
+    def test_query_by_config_no_matches(self, tract: Tract):
+        tract.commit(
+            DialogueContent(role="user", text="a"),
+            generation_config={"temperature": 0.3},
+        )
+        results = tract.query_by_config("temperature", ">", 0.9)
+        assert len(results) == 0
+
+    def test_query_by_config_invalid_operator(self, tract: Tract):
+        with pytest.raises(ValueError, match="Unsupported operator"):
+            tract.query_by_config("temperature", "LIKE", 0.5)
+
+    def test_query_by_config_commits_without_config_excluded(self, tract: Tract):
+        tract.commit(DialogueContent(role="user", text="no config"))
+        tract.commit(
+            DialogueContent(role="user", text="with config"),
+            generation_config={"temperature": 0.7},
+        )
+        results = tract.query_by_config("temperature", "=", 0.7)
+        assert len(results) == 1
+
+    # Cache safety: copy-on-output prevents corruption
+    def test_compile_cache_not_corrupted_by_mutation(self, tract: Tract):
+        """Mutating generation_configs on a returned CompiledContext
+        should not affect subsequent compile() results."""
+        config = {"temperature": 0.5}
+        tract.commit(DialogueContent(role="user", text="Hi"), generation_config=config)
+        result1 = tract.compile()
+        # Mutate the returned dict
+        result1.generation_configs[0]["temperature"] = 999
+        # Compile again -- should return clean copy from cache
+        result2 = tract.compile()
+        assert result2.generation_configs[0] == config

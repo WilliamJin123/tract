@@ -380,3 +380,84 @@ class TestSqliteAnnotationRepository:
         """Commits with no annotations are omitted from result."""
         result = annotation_repo.batch_get_latest(["nonexistent_" + "0" * 52])
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Commit Repository: get_by_config
+# ---------------------------------------------------------------------------
+
+
+class TestSqliteCommitRepositoryGetByConfig:
+    """Unit tests for SqliteCommitRepository.get_by_config()."""
+
+    def _setup_blob(self, blob_repo, content_hash="cfg_blob_" + "0" * 55):
+        blob = _make_blob(content_hash)
+        blob_repo.save_if_absent(blob)
+        return blob
+
+    def test_get_by_config_equality(self, commit_repo, blob_repo, session, sample_tract_id):
+        blob = self._setup_blob(blob_repo)
+        now = datetime.now(timezone.utc)
+
+        c1 = _make_commit("cfg_eq1_" + "a" * 56, sample_tract_id, blob.content_hash, created_at=now)
+        c1.generation_config_json = {"model": "gpt-4o", "temperature": 0.7}
+        c2 = _make_commit("cfg_eq2_" + "b" * 56, sample_tract_id, blob.content_hash,
+                          parent_hash=c1.commit_hash, created_at=now + timedelta(seconds=1))
+        c2.generation_config_json = {"model": "claude-3", "temperature": 0.5}
+
+        commit_repo.save(c1)
+        commit_repo.save(c2)
+
+        results = commit_repo.get_by_config(sample_tract_id, "model", "=", "gpt-4o")
+        assert len(results) == 1
+        assert results[0].commit_hash == c1.commit_hash
+
+    def test_get_by_config_greater_than(self, commit_repo, blob_repo, session, sample_tract_id):
+        blob = self._setup_blob(blob_repo, "cfg_gt_blob_" + "0" * 52)
+        now = datetime.now(timezone.utc)
+
+        c1 = _make_commit("cfg_gt1_" + "a" * 56, sample_tract_id, blob.content_hash, created_at=now)
+        c1.generation_config_json = {"temperature": 0.3}
+        c2 = _make_commit("cfg_gt2_" + "b" * 56, sample_tract_id, blob.content_hash,
+                          parent_hash=c1.commit_hash, created_at=now + timedelta(seconds=1))
+        c2.generation_config_json = {"temperature": 0.9}
+
+        commit_repo.save(c1)
+        commit_repo.save(c2)
+
+        results = commit_repo.get_by_config(sample_tract_id, "temperature", ">", 0.5)
+        assert len(results) == 1
+        assert results[0].commit_hash == c2.commit_hash
+
+    def test_get_by_config_no_matches(self, commit_repo, blob_repo, session, sample_tract_id):
+        blob = self._setup_blob(blob_repo, "cfg_nm_blob_" + "0" * 52)
+        now = datetime.now(timezone.utc)
+
+        c1 = _make_commit("cfg_nm1_" + "a" * 56, sample_tract_id, blob.content_hash, created_at=now)
+        c1.generation_config_json = {"temperature": 0.3}
+        commit_repo.save(c1)
+
+        results = commit_repo.get_by_config(sample_tract_id, "temperature", ">", 0.9)
+        assert len(results) == 0
+
+    def test_get_by_config_invalid_operator_raises(self, commit_repo, blob_repo, session, sample_tract_id):
+        with pytest.raises(ValueError, match="Unsupported operator"):
+            commit_repo.get_by_config(sample_tract_id, "temperature", "LIKE", 0.5)
+
+    def test_get_by_config_null_config_excluded(self, commit_repo, blob_repo, session, sample_tract_id):
+        """Commits with NULL generation_config_json are not returned."""
+        blob = self._setup_blob(blob_repo, "cfg_null_blob" + "0" * 51)
+        now = datetime.now(timezone.utc)
+
+        c1 = _make_commit("cfg_null1" + "a" * 55, sample_tract_id, blob.content_hash, created_at=now)
+        # No generation_config_json set (NULL)
+        c2 = _make_commit("cfg_null2" + "b" * 55, sample_tract_id, blob.content_hash,
+                          parent_hash=c1.commit_hash, created_at=now + timedelta(seconds=1))
+        c2.generation_config_json = {"temperature": 0.7}
+
+        commit_repo.save(c1)
+        commit_repo.save(c2)
+
+        results = commit_repo.get_by_config(sample_tract_id, "temperature", "=", 0.7)
+        assert len(results) == 1
+        assert results[0].commit_hash == c2.commit_hash

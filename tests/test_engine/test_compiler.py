@@ -482,3 +482,88 @@ class TestContentTextExtraction:
         ))
         result = compiler.compile(TRACT_ID, c.commit_hash)
         assert "def hello(): pass" in result.messages[0].content
+
+
+# =========================================================================
+# Generation Config collection tests (Phase 1.3)
+# =========================================================================
+
+
+class TestGenerationConfigCollection:
+    """Unit tests for generation_config collection during compile."""
+
+    def test_compile_collects_generation_configs(self, commit_engine, compiler) -> None:
+        """generation_configs list parallel to effective commits."""
+        config1 = {"temperature": 0.3}
+        config2 = {"temperature": 0.7}
+        commit_engine.create_commit(
+            InstructionContent(text="System"), generation_config=config1
+        )
+        c2 = commit_engine.create_commit(
+            DialogueContent(role="user", text="Hi"), generation_config=config2
+        )
+        result = compiler.compile(TRACT_ID, c2.commit_hash)
+        assert len(result.generation_configs) == 2
+        assert result.generation_configs[0] == config1
+        assert result.generation_configs[1] == config2
+
+    def test_compile_empty_config_for_no_config_commit(self, commit_engine, compiler) -> None:
+        """Commits without generation_config get {} in the list."""
+        commit_engine.create_commit(InstructionContent(text="System"))
+        c2 = commit_engine.create_commit(
+            DialogueContent(role="user", text="Hi"), generation_config={"temperature": 0.7}
+        )
+        result = compiler.compile(TRACT_ID, c2.commit_hash)
+        assert result.generation_configs[0] == {}
+        assert result.generation_configs[1] == {"temperature": 0.7}
+
+    def test_edit_with_config_uses_edit_config(self, commit_engine, compiler) -> None:
+        """When edit has generation_config, it is used."""
+        original = commit_engine.create_commit(
+            DialogueContent(role="user", text="original"),
+            generation_config={"temperature": 0.3},
+        )
+        commit_engine.create_commit(
+            DialogueContent(role="user", text="edited"),
+            operation=CommitOperation.EDIT,
+            response_to=original.commit_hash,
+            generation_config={"temperature": 0.9},
+        )
+        head = commit_engine._ref_repo.get_head(TRACT_ID)
+        result = compiler.compile(TRACT_ID, head)
+        assert result.generation_configs[0] == {"temperature": 0.9}
+
+    def test_edit_without_config_inherits_original(self, commit_engine, compiler) -> None:
+        """When edit has no generation_config, original commit's config is inherited."""
+        original = commit_engine.create_commit(
+            DialogueContent(role="user", text="original"),
+            generation_config={"temperature": 0.7},
+        )
+        commit_engine.create_commit(
+            DialogueContent(role="user", text="edited"),
+            operation=CommitOperation.EDIT,
+            response_to=original.commit_hash,
+            # No generation_config
+        )
+        head = commit_engine._ref_repo.get_head(TRACT_ID)
+        result = compiler.compile(TRACT_ID, head)
+        assert result.generation_configs[0] == {"temperature": 0.7}
+
+    def test_skip_priority_commit_excluded_from_configs(self, commit_engine, compiler) -> None:
+        """SKIP commits don't appear in generation_configs list."""
+        c1 = commit_engine.create_commit(
+            DialogueContent(role="user", text="keep"),
+            generation_config={"temperature": 0.3},
+        )
+        c2 = commit_engine.create_commit(
+            DialogueContent(role="assistant", text="skip me"),
+            generation_config={"temperature": 0.9},
+        )
+        # Mark c2 as SKIP
+        commit_engine.annotate(c2.commit_hash, Priority.SKIP, reason="not needed")
+
+        head = commit_engine._ref_repo.get_head(TRACT_ID)
+        result = compiler.compile(TRACT_ID, head)
+        # Only c1 should be in the result
+        assert len(result.generation_configs) == 1
+        assert result.generation_configs[0] == {"temperature": 0.3}

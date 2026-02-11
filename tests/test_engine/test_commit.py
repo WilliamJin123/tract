@@ -319,3 +319,50 @@ class TestAnnotate:
 
         latest = repos["annotation"].get_latest(commit.commit_hash)
         assert latest is None  # NORMAL is the default, no annotation created
+
+
+# =========================================================================
+# Generation Config (Phase 1.3)
+# =========================================================================
+
+
+class TestGenerationConfig:
+    """Tests for generation_config threading through CommitEngine."""
+
+    def test_create_commit_with_generation_config(self, commit_engine) -> None:
+        """generation_config is stored on CommitRow and returned in CommitInfo."""
+        config = {"model": "gpt-4o", "temperature": 0.7}
+        info = commit_engine.create_commit(
+            InstructionContent(text="test"),
+            generation_config=config,
+        )
+        assert info.generation_config == config
+
+    def test_create_commit_without_generation_config(self, commit_engine) -> None:
+        """generation_config defaults to None when not provided."""
+        info = commit_engine.create_commit(InstructionContent(text="test"))
+        assert info.generation_config is None
+
+    def test_row_to_info_maps_generation_config(self, commit_engine, repos) -> None:
+        """_row_to_info correctly maps generation_config_json to generation_config."""
+        config = {"temperature": 0.5, "top_p": 0.9}
+        info = commit_engine.create_commit(
+            DialogueContent(role="user", text="hello"),
+            generation_config=config,
+        )
+        # Fetch via get_commit which uses _row_to_info
+        fetched = commit_engine.get_commit(info.commit_hash)
+        assert fetched is not None
+        assert fetched.generation_config == config
+
+    def test_generation_config_not_in_content_hash(self, commit_engine) -> None:
+        """generation_config does not affect content_hash."""
+        c1 = commit_engine.create_commit(
+            DialogueContent(role="user", text="same"),
+            generation_config={"temperature": 0.1},
+        )
+        c2 = commit_engine.create_commit(
+            DialogueContent(role="user", text="same"),
+            generation_config={"temperature": 0.9},
+        )
+        assert c1.content_hash == c2.content_hash

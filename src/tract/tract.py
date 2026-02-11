@@ -595,7 +595,7 @@ class Tract:
             commit_count=result.commit_count,
             token_count=result.token_count,
             token_source=result.token_source,
-            generation_configs=tuple(result.generation_configs),
+            generation_configs=tuple(dict(c) for c in result.generation_configs),
         )
 
     def _tiktoken_source(self) -> str:
