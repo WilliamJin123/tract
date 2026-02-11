@@ -5,33 +5,33 @@
 See: .planning/PROJECT.md (updated 2026-02-10)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 1.1 - Incremental Compile Cache & Token Tracking (IN PROGRESS)
+**Current focus:** Phase 1.1 COMPLETE. Ready for Phase 2 (Linear History).
 
 ## Current Position
 
 Phase: 1.1 of 5 (Compile Cache & Token Tracking)
-Plan: 1 of 2 in current phase
-Status: In progress
-Last activity: 2026-02-11 - Completed 01.1-01-PLAN.md
+Plan: 2 of 2 in current phase
+Status: Phase complete
+Last activity: 2026-02-11 - Completed 01.1-02-PLAN.md
 
-Progress: [####..........] 25% (4/16 plans)
+Progress: [#####.........] 31% (5/16 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 8m
-- Total execution time: 0.5 hours
+- Total plans completed: 5
+- Average duration: 7m
+- Total execution time: 0.6 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 3/3 | 27m | 9m |
-| 1.1 | 1/2 | 3m | 3m |
+| 1.1 | 2/2 | 6m | 3m |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (8m), 01-02 (15m), 01-03 (4m), 01.1-01 (3m)
+- Last 5 plans: 01-01 (8m), 01-02 (15m), 01-03 (4m), 01.1-01 (3m), 01.1-02 (3m)
 - Trend: incremental plans on solid foundation execute very fast
 
 *Updated after each plan completion*
@@ -61,6 +61,9 @@ Recent decisions affecting current work:
 - [01.1-01]: build_message_for_commit() extracted as public method on DefaultContextCompiler for reuse by Repo incremental path
 - [01.1-01]: CompileSnapshot stores both raw and aggregated messages for correct tail aggregation
 - [01.1-01]: Time-travel and custom compilers bypass incremental cache entirely
+- [01.1-02]: record_usage() validates head_hash match before attempting compile (fail-fast)
+- [01.1-02]: record_usage() auto-compiles if no snapshot exists (user doesn't need to call compile() first)
+- [01.1-02]: Token source format: "tiktoken:{encoding}" for pre-call, "api:{prompt}+{completion}" for post-call
 
 ### Pending Todos
 
@@ -68,7 +71,7 @@ None.
 
 ### Roadmap Evolution
 
-- Phase 1.1 inserted after Phase 1: Incremental Compile Cache & Token Tracking (INSERTED) — addresses two design issues: (1) full chain walk on every compile adds latency, incremental cache makes APPEND O(1); (2) tiktoken used as sole token source, but API-reported usage should be source of truth post-call
+- Phase 1.1 inserted after Phase 1: Incremental Compile Cache & Token Tracking (INSERTED) -- addresses two design issues: (1) full chain walk on every compile adds latency, incremental cache makes APPEND O(1); (2) tiktoken used as sole token source, but API-reported usage should be source of truth post-call
 
 ### Blockers/Concerns
 
@@ -90,8 +93,18 @@ None.
 
 All 5 Phase 1 success criteria verified end-to-end.
 
+## Phase 1.1 Final Stats
+
+| Plan | Name | Tests | Duration |
+|------|------|-------|----------|
+| 01.1-01 | Incremental Compile Cache | 7 | 3m |
+| 01.1-02 | record_usage() API | 13 | 3m |
+| **Total** | | **20** | **6m** |
+
+Total test suite: 220 tests passing.
+
 ## Session Continuity
 
-Last session: 2026-02-11T03:30:02Z
-Stopped at: Completed 01.1-01-PLAN.md (Incremental compile cache with CompileSnapshot). Phase 1.1 plan 1/2 complete.
+Last session: 2026-02-11
+Stopped at: Completed 01.1-02-PLAN.md (record_usage API). Phase 1.1 complete (2/2 plans).
 Resume file: None
