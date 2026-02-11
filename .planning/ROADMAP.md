@@ -13,7 +13,7 @@ Trace delivers git-like version control for LLM context windows across five phas
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundations** - Data model, storage, commit/compile cycle, token accounting, and SDK entry point
-- [ ] **Phase 1.1: Incremental Compile Cache & Token Tracking** - O(1) append-path compilation, API-reported token usage as source of truth (INSERTED)
+- [x] **Phase 1.1: Incremental Compile Cache & Token Tracking** - O(1) append-path compilation, API-reported token usage as source of truth (INSERTED)
 - [ ] **Phase 2: Linear History & CLI** - Log, status, diff, reset, checkout, and CLI wrapper for inspection
 - [ ] **Phase 3: Branching & Merging** - Branch, switch, merge (fast-forward + semantic), rebase, cherry-pick, and LLM client
 - [ ] **Phase 4: Compression** - Token-budget-aware compression, pinned commit preservation, commit reordering, garbage collection
@@ -51,8 +51,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01.1-01-PLAN.md -- CompileSnapshot dataclass, build_message_for_commit() extraction, incremental APPEND fast path, EDIT/annotate/batch invalidation
-- [ ] 01.1-02-PLAN.md -- record_usage() API, OpenAI/Anthropic dict normalization, two-tier token tracking integration tests
+- [x] 01.1-01-PLAN.md -- CompileSnapshot dataclass, build_message_for_commit() extraction, incremental APPEND fast path, EDIT/annotate/batch invalidation
+- [x] 01.1-02-PLAN.md -- record_usage() API, OpenAI/Anthropic dict normalization, two-tier token tracking integration tests
 
 ### Phase 2: Linear History & CLI
 **Goal**: Users can inspect, navigate, and manipulate linear commit history through both the SDK and a CLI
@@ -129,7 +129,7 @@ Phases execute in numeric order: 1 -> 1.1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundations | 3/3 | Complete | 2026-02-10 |
-| 1.1 Compile Cache & Token Tracking | 0/2 | Not started | - |
+| 1.1 Compile Cache & Token Tracking | 2/2 | Complete | 2026-02-11 |
 | 2. Linear History & CLI | 0/2 | Not started | - |
 | 3. Branching & Merging | 0/4 | Not started | - |
 | 4. Compression | 0/2 | Not started | - |
