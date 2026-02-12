@@ -58,3 +58,25 @@ class DuplicateRefError(TraceError):
     def __init__(self, ref_name: str) -> None:
         self.ref_name = ref_name
         super().__init__(f"Ref already exists: {ref_name}")
+
+
+class DetachedHeadError(TraceError):
+    """Raised when attempting to commit in detached HEAD state."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Cannot commit in detached HEAD state. "
+            "Use 'tract checkout main' to return to your branch."
+        )
+
+
+class AmbiguousPrefixError(TraceError):
+    """Raised when a commit hash prefix matches multiple commits."""
+
+    def __init__(self, prefix: str, candidates: list[str]) -> None:
+        self.prefix = prefix
+        self.candidates = candidates
+        candidate_str = ", ".join(c[:12] + "..." for c in candidates[:5])
+        super().__init__(
+            f"Ambiguous prefix '{prefix}'. Matches: {candidate_str}"
+        )

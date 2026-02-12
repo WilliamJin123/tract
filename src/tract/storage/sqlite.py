@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, and_
 from sqlalchemy.orm import Session
 
 from tract.storage.repositories import (
@@ -91,6 +91,30 @@ class SqliteCommitRepository(CommitRepository):
         stmt = select(CommitRow).where(CommitRow.parent_hash == commit_hash)
         return list(self._session.execute(stmt).scalars().all())
 
+    def get_by_prefix(self, prefix: str, tract_id: str | None = None) -> CommitRow | None:
+        """Find commit by hash prefix (min 4 chars).
+
+        Raises AmbiguousPrefixError if multiple matches.
+        Returns None if no match.
+        """
+        from tract.exceptions import AmbiguousPrefixError
+
+        if len(prefix) < 4:
+            raise ValueError("Commit hash prefix must be at least 4 characters")
+
+        conditions = [CommitRow.commit_hash.startswith(prefix)]
+        if tract_id is not None:
+            conditions.append(CommitRow.tract_id == tract_id)
+
+        stmt = select(CommitRow).where(and_(*conditions))
+        results = list(self._session.execute(stmt).scalars().all())
+
+        if len(results) == 0:
+            return None
+        if len(results) == 1:
+            return results[0]
+        raise AmbiguousPrefixError(prefix, [r.commit_hash for r in results])
+
     def get_by_config(
         self, tract_id: str, json_path: str, operator: str, value: object
     ) -> Sequence[CommitRow]:
@@ -119,47 +143,94 @@ class SqliteCommitRepository(CommitRepository):
 class SqliteRefRepository(RefRepository):
     """SQLite implementation of ref repository.
 
-    HEAD is stored as ref_name="HEAD".
+    HEAD is stored as ref_name="HEAD".  When attached, HEAD has a
+    symbolic_target (e.g. "refs/heads/main") and the branch ref stores
+    the actual commit hash.  When detached, HEAD stores commit_hash
+    directly with symbolic_target=None.
+
     Branches are stored as ref_name="refs/heads/{name}".
     """
 
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def get_head(self, tract_id: str) -> str | None:
+    def _get_ref_row(self, tract_id: str, ref_name: str) -> RefRow | None:
+        """Get a ref row by tract_id and ref_name."""
         stmt = select(RefRow).where(
-            RefRow.tract_id == tract_id, RefRow.ref_name == "HEAD"
+            RefRow.tract_id == tract_id, RefRow.ref_name == ref_name
         )
-        ref = self._session.execute(stmt).scalar_one_or_none()
-        return ref.commit_hash if ref else None
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def get_head(self, tract_id: str) -> str | None:
+        """Get the HEAD commit hash, resolving symbolic refs."""
+        head_ref = self._get_ref_row(tract_id, "HEAD")
+        if head_ref is None:
+            return None
+
+        # If HEAD is symbolic (attached), resolve through branch ref
+        if head_ref.symbolic_target:
+            branch_ref = self._get_ref_row(tract_id, head_ref.symbolic_target)
+            return branch_ref.commit_hash if branch_ref else None
+
+        # Detached HEAD: commit_hash stored directly
+        return head_ref.commit_hash
 
     def update_head(self, tract_id: str, commit_hash: str) -> None:
-        stmt = select(RefRow).where(
-            RefRow.tract_id == tract_id, RefRow.ref_name == "HEAD"
-        )
-        ref = self._session.execute(stmt).scalar_one_or_none()
-        if ref is None:
+        """Update HEAD to point at a new commit.
+
+        Backward compatible: existing callers (CommitEngine) call this
+        when creating commits.  Behavior:
+        - No HEAD exists: create symbolic HEAD -> refs/heads/main + branch ref
+        - Attached HEAD: update the target branch ref
+        - Detached HEAD: update commit_hash directly
+        """
+        head_ref = self._get_ref_row(tract_id, "HEAD")
+
+        if head_ref is None:
+            # First commit: create symbolic HEAD -> refs/heads/main
             self._session.add(
-                RefRow(tract_id=tract_id, ref_name="HEAD", commit_hash=commit_hash)
+                RefRow(
+                    tract_id=tract_id,
+                    ref_name="HEAD",
+                    commit_hash=None,
+                    symbolic_target="refs/heads/main",
+                )
             )
+            # Also create the branch ref
+            self._session.add(
+                RefRow(
+                    tract_id=tract_id,
+                    ref_name="refs/heads/main",
+                    commit_hash=commit_hash,
+                )
+            )
+        elif head_ref.symbolic_target:
+            # Attached HEAD: update the branch ref
+            branch_ref = self._get_ref_row(tract_id, head_ref.symbolic_target)
+            if branch_ref is None:
+                self._session.add(
+                    RefRow(
+                        tract_id=tract_id,
+                        ref_name=head_ref.symbolic_target,
+                        commit_hash=commit_hash,
+                    )
+                )
+            else:
+                branch_ref.commit_hash = commit_hash
         else:
-            ref.commit_hash = commit_hash
+            # Detached HEAD: update commit_hash directly
+            head_ref.commit_hash = commit_hash
+
         self._session.flush()
 
     def get_branch(self, tract_id: str, branch_name: str) -> str | None:
         ref_name = f"refs/heads/{branch_name}"
-        stmt = select(RefRow).where(
-            RefRow.tract_id == tract_id, RefRow.ref_name == ref_name
-        )
-        ref = self._session.execute(stmt).scalar_one_or_none()
+        ref = self._get_ref_row(tract_id, ref_name)
         return ref.commit_hash if ref else None
 
     def set_branch(self, tract_id: str, branch_name: str, commit_hash: str) -> None:
         ref_name = f"refs/heads/{branch_name}"
-        stmt = select(RefRow).where(
-            RefRow.tract_id == tract_id, RefRow.ref_name == ref_name
-        )
-        ref = self._session.execute(stmt).scalar_one_or_none()
+        ref = self._get_ref_row(tract_id, ref_name)
         if ref is None:
             self._session.add(
                 RefRow(tract_id=tract_id, ref_name=ref_name, commit_hash=commit_hash)
@@ -176,6 +247,81 @@ class SqliteRefRepository(RefRepository):
         )
         refs = self._session.execute(stmt).scalars().all()
         return [ref.ref_name[len(prefix):] for ref in refs]
+
+    def is_detached(self, tract_id: str) -> bool:
+        """Check if HEAD is in detached state."""
+        head_ref = self._get_ref_row(tract_id, "HEAD")
+        if head_ref is None:
+            return False  # No HEAD yet = not detached
+        return head_ref.symbolic_target is None
+
+    def attach_head(self, tract_id: str, branch_name: str) -> None:
+        """Attach HEAD to a branch (symbolic ref)."""
+        ref_name = f"refs/heads/{branch_name}"
+        head_ref = self._get_ref_row(tract_id, "HEAD")
+        if head_ref is None:
+            self._session.add(
+                RefRow(
+                    tract_id=tract_id,
+                    ref_name="HEAD",
+                    commit_hash=None,
+                    symbolic_target=ref_name,
+                )
+            )
+        else:
+            head_ref.symbolic_target = ref_name
+            head_ref.commit_hash = None
+        self._session.flush()
+
+    def detach_head(self, tract_id: str, commit_hash: str) -> None:
+        """Detach HEAD to point directly at a commit hash."""
+        head_ref = self._get_ref_row(tract_id, "HEAD")
+        if head_ref is None:
+            self._session.add(
+                RefRow(
+                    tract_id=tract_id,
+                    ref_name="HEAD",
+                    commit_hash=commit_hash,
+                    symbolic_target=None,
+                )
+            )
+        else:
+            head_ref.commit_hash = commit_hash
+            head_ref.symbolic_target = None
+        self._session.flush()
+
+    def get_ref(self, tract_id: str, ref_name: str) -> str | None:
+        """Get the commit hash for a named ref."""
+        ref = self._get_ref_row(tract_id, ref_name)
+        return ref.commit_hash if ref else None
+
+    def set_ref(self, tract_id: str, ref_name: str, commit_hash: str) -> None:
+        """Set or update a named ref to point at a commit hash."""
+        ref = self._get_ref_row(tract_id, ref_name)
+        if ref is None:
+            self._session.add(
+                RefRow(tract_id=tract_id, ref_name=ref_name, commit_hash=commit_hash)
+            )
+        else:
+            ref.commit_hash = commit_hash
+        self._session.flush()
+
+    def delete_ref(self, tract_id: str, ref_name: str) -> None:
+        """Delete a named ref. No-op if ref doesn't exist."""
+        ref = self._get_ref_row(tract_id, ref_name)
+        if ref is not None:
+            self._session.delete(ref)
+            self._session.flush()
+
+    def get_current_branch(self, tract_id: str) -> str | None:
+        """Get the current branch name if HEAD is attached."""
+        head_ref = self._get_ref_row(tract_id, "HEAD")
+        if head_ref is None or head_ref.symbolic_target is None:
+            return None
+        prefix = "refs/heads/"
+        if head_ref.symbolic_target.startswith(prefix):
+            return head_ref.symbolic_target[len(prefix):]
+        return None
 
 
 class SqliteAnnotationRepository(AnnotationRepository):

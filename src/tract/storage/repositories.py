@@ -63,6 +63,15 @@ class CommitRepository(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_by_prefix(self, prefix: str, tract_id: str | None = None) -> CommitRow | None:
+        """Find commit by hash prefix (min 4 chars).
+
+        Raises AmbiguousPrefixError if multiple matches.
+        Returns None if no match.
+        """
+        ...
+
 
 class BlobRepository(ABC):
     """Abstract interface for blob storage operations."""
@@ -107,6 +116,41 @@ class RefRepository(ABC):
     @abstractmethod
     def list_branches(self, tract_id: str) -> list[str]:
         """List all branch names for a tract."""
+        ...
+
+    @abstractmethod
+    def is_detached(self, tract_id: str) -> bool:
+        """Check if HEAD is in detached state (pointing directly at a commit)."""
+        ...
+
+    @abstractmethod
+    def attach_head(self, tract_id: str, branch_name: str) -> None:
+        """Attach HEAD to a branch (symbolic ref: HEAD -> refs/heads/{branch_name})."""
+        ...
+
+    @abstractmethod
+    def detach_head(self, tract_id: str, commit_hash: str) -> None:
+        """Detach HEAD to point directly at a commit hash."""
+        ...
+
+    @abstractmethod
+    def get_ref(self, tract_id: str, ref_name: str) -> str | None:
+        """Get the commit hash for a named ref. Returns None if not found."""
+        ...
+
+    @abstractmethod
+    def set_ref(self, tract_id: str, ref_name: str, commit_hash: str) -> None:
+        """Set or update a named ref to point at a commit hash."""
+        ...
+
+    @abstractmethod
+    def delete_ref(self, tract_id: str, ref_name: str) -> None:
+        """Delete a named ref. No-op if ref doesn't exist."""
+        ...
+
+    @abstractmethod
+    def get_current_branch(self, tract_id: str) -> str | None:
+        """Get the current branch name if HEAD is attached. Returns None if detached."""
         ...
 
 
