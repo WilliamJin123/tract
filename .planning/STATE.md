@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-10)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 2 in progress -- Navigation infrastructure complete, log/status/diff next.
+**Current focus:** Phase 2 in progress -- Navigation + read operations complete, CLI wrapper next.
 
 ## Current Position
 
 Phase: 2 of 5 (Linear History & CLI)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: In progress
-Last activity: 2026-02-12 - Completed 02-01-PLAN.md
+Last activity: 2026-02-12 - Completed 02-02-PLAN.md
 
-Progress: [#########.....] 45% (9/20 plans)
+Progress: [##########....] 50% (10/20 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
+- Total plans completed: 10
 - Average duration: 5m
-- Total execution time: 0.83 hours
+- Total execution time: 0.90 hours
 
 **By Phase:**
 
@@ -32,11 +32,11 @@ Progress: [#########.....] 45% (9/20 plans)
 | 1.2 | 1/1 | 3m | 3m |
 | 1.3 | 1/1 | 3m | 3m |
 | 1.4 | 1/1 | 4m | 4m |
-| 2 | 1/3 | 5m | 5m |
+| 2 | 2/3 | 9m | 4.5m |
 
 **Recent Trend:**
-- Last 5 plans: 01.1-02 (3m), 01.2-01 (3m), 01.3-01 (3m), 01.4-01 (4m), 02-01 (5m)
-- Trend: stable execution times, Phase 2 plan 1 slightly larger scope
+- Last 5 plans: 01.2-01 (3m), 01.3-01 (3m), 01.4-01 (4m), 02-01 (5m), 02-02 (4m)
+- Trend: stable execution times around 4-5m per plan
 
 *Updated after each plan completion*
 
@@ -89,6 +89,11 @@ Recent decisions affecting current work:
 - [02-01]: reset soft == hard in Trace (no working directory); distinction for API compatibility
 - [02-01]: Prefix matching minimum 4 characters (same as git)
 - [02-01]: operations/ package established for higher-level composites over storage primitives
+- [02-02]: StatusInfo is a frozen dataclass (not Pydantic) for lightweight status reporting
+- [02-02]: compute_diff() uses SequenceMatcher on serialized message strings for alignment
+- [02-02]: op_filter walks through all ancestors but only collects matching ones (limit applies to matches)
+- [02-02]: EDIT auto-resolve in diff: when commit_b is EDIT, commit_a defaults to response_to target
+- [02-02]: Generation config changes computed from last non-empty config in each chain
 
 ### Pending Todos
 
@@ -163,11 +168,12 @@ Total test suite: 267 tests passing.
 | Plan | Name | Tests | Duration |
 |------|------|-------|----------|
 | 02-01 | Navigation Infrastructure | 35 | 5m |
+| 02-02 | Read Operations (log/status/diff) | 27 | 4m |
 
-Total test suite: 302 tests passing.
+Total test suite: 329 tests passing.
 
 ## Session Continuity
 
 Last session: 2026-02-12
-Stopped at: Completed 02-01-PLAN.md (Navigation Infrastructure). Phase 2 plan 1 of 3 complete.
+Stopped at: Completed 02-02-PLAN.md (Read Operations). Phase 2 plan 2 of 3 complete.
 Resume file: None
