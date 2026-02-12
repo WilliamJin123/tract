@@ -16,6 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1.1: Incremental Compile Cache & Token Tracking** - O(1) append-path compilation, API-reported token usage as source of truth (INSERTED)
 - [x] **Phase 1.2: Rename Repo to Tract** - Rename entry-point class Repo→Tract, repo_id→tract_id across source, tests, and planning docs (INSERTED)
 - [x] **Phase 1.3: Hyperparameter Config Storage** - Store LLM generation config (temperature, top_p, top_k, etc.) with commits for full call provenance (INSERTED)
+- [x] **Phase 1.4: LRU Compile Cache & Snapshot Patching** - Replace single-snapshot cache with LRU keyed by head_hash, EDIT/annotate snapshot patching instead of invalidation (INSERTED)
 - [ ] **Phase 2: Linear History & CLI** - Log, status, diff, reset, checkout, and CLI wrapper for inspection
 - [ ] **Phase 3: Branching & Merging** - Branch, switch, merge (fast-forward + semantic), rebase, cherry-pick, and LLM client
 - [ ] **Phase 4: Compression** - Token-budget-aware compression, pinned commit preservation, commit reordering, garbage collection
@@ -86,16 +87,36 @@ Plans:
 Plans:
 - [x] 01.3-01-PLAN.md -- Add generation_config field to data model, storage, engine, compiler, Tract facade, and integration tests
 
+### Phase 1.4: Remove Aggregation, LRU Compile Cache & Snapshot Patching (INSERTED)
+**Goal**: Remove same-role message aggregation (commits are discrete events, not mergeable), replace single-snapshot compile cache with LRU cache keyed by head_hash, and upgrade EDIT/annotate handling from full invalidation to in-memory snapshot patching — so checkout, reset, and future branch switching get cache hits, and EDITs avoid expensive full recompilation
+**Depends on**: Phase 1.3
+**Requirements**: INFR-06 (performance refinement)
+**Success Criteria** (what must be TRUE):
+  1. Same-role consecutive messages are preserved as separate messages in compiled output; `_aggregate_messages()` is removed
+  2. `CompiledContext.commit_hashes` lists effective commit hashes parallel to messages, populated by the compiler
+  3. Multiple compile snapshots are cached simultaneously via LRU; switching HEAD to a previously-compiled position is a cache hit (O(1))
+  4. Incremental APPEND still works: new commit's parent matches cached snapshot -> O(1) extend
+  5. EDIT commits use snapshot patching: find message by commit hash, replace in-memory, recount tokens -- no chain re-walk
+  6. Annotate (priority change to SKIP) uses snapshot patching; annotation clears stale cache entries for other HEADs
+  7. batch() remains full cache clear; crash loses cache; DB is always source of truth
+  8. verify_cache=True cross-checks every cache hit/patch against full recompile (oracle testing)
+  9. All existing 250 tests pass with updated aggregation assertions (zero regressions)
+  10. New tests cover LRU eviction, EDIT patching, annotate patching, oracle verification, commit_hashes tracking
+**Plans**: 1 plan
+
+Plans:
+- [x] 01.4-01-PLAN.md -- Remove aggregation, simplify CompileSnapshot, LRU cache, EDIT/annotate snapshot patching, verify_cache oracle, tests
+
 ### Phase 2: Linear History & CLI
 **Goal**: Users can inspect, navigate, and manipulate linear commit history through both the SDK and a CLI
 **Depends on**: Phase 1
 **Requirements**: CORE-03, CORE-04, CORE-05, CORE-06, CORE-07, INTF-02
 **Success Criteria** (what must be TRUE):
-  1. User can view commit history (log) with per-commit and cumulative token counts
+  1. User can view commit history (log) with per-commit token counts
   2. User can check current state (status) showing HEAD position, branch name, and token budget usage
   3. User can compare any two commits (diff) and see textual differences in content
   4. User can reset HEAD to a previous commit (soft keeps content accessible, hard discards forward history) and checkout a specific commit for read-only inspection
-  5. User can perform all of the above via a CLI (`trace log`, `trace status`, `trace diff`, `trace reset`, `trace checkout`) with readable terminal output
+  5. User can perform all of the above via a CLI (`tract log`, `tract status`, `tract diff`, `tract reset`, `tract checkout`) with readable terminal output
 **Plans**: TBD
 
 Plans:
@@ -156,7 +177,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 1.4 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -164,6 +185,7 @@ Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 2 -> 3 -> 4 -> 5
 | 1.1 Compile Cache & Token Tracking | 2/2 | Complete | 2026-02-11 |
 | 1.2 Rename Repo to Tract | 1/1 | Complete | 2026-02-11 |
 | 1.3 Hyperparameter Config Storage | 1/1 | Complete | 2026-02-11 |
+| 1.4 LRU Cache & Snapshot Patching | 1/1 | Complete | 2026-02-11 |
 | 2. Linear History & CLI | 0/2 | Not started | - |
 | 3. Branching & Merging | 0/4 | Not started | - |
 | 4. Compression | 0/2 | Not started | - |
