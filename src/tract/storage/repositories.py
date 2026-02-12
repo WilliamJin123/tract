@@ -29,8 +29,19 @@ class CommitRepository(ABC):
         ...
 
     @abstractmethod
-    def get_ancestors(self, commit_hash: str, limit: int | None = None) -> Sequence[CommitRow]:
+    def get_ancestors(
+        self,
+        commit_hash: str,
+        limit: int | None = None,
+        *,
+        op_filter: object | None = None,
+    ) -> Sequence[CommitRow]:
         """Get ancestor chain from commit to root (inclusive).
+
+        Args:
+            commit_hash: Starting commit hash.
+            limit: Maximum number of commits to return.
+            op_filter: If set, only include commits with this CommitOperation.
 
         Returns commits in reverse chronological order (newest first).
         """

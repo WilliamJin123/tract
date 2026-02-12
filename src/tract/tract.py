@@ -25,7 +25,7 @@ from tract.models.annotations import Priority, PriorityAnnotation
 from tract.models.commit import CommitInfo, CommitOperation
 from tract.models.config import TractConfig
 from tract.models.content import validate_content
-from tract.exceptions import ContentValidationError, DetachedHeadError, TraceError
+from tract.exceptions import CommitNotFoundError, ContentValidationError, DetachedHeadError, TraceError
 from tract.protocols import CompiledContext, CompileSnapshot, ContextCompiler, Message, TokenCounter, TokenUsage
 from tract.storage.engine import create_session_factory, create_trace_engine, init_db
 from tract.storage.sqlite import (
@@ -41,6 +41,8 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
     from sqlalchemy.orm import Session
 
+    from tract.operations.diff import DiffResult
+    from tract.operations.history import StatusInfo
     from tract.storage.schema import CommitRow
 
 
@@ -458,11 +460,17 @@ class Tract:
             for row in rows
         ]
 
-    def log(self, limit: int = 10) -> list[CommitInfo]:
+    def log(
+        self,
+        limit: int = 20,
+        *,
+        op_filter: CommitOperation | None = None,
+    ) -> list[CommitInfo]:
         """Walk commit history from HEAD backward.
 
         Args:
-            limit: Maximum number of commits to return.
+            limit: Maximum number of commits to return.  Default 20.
+            op_filter: If set, only include commits with this operation type.
 
         Returns:
             List of :class:`CommitInfo` in reverse chronological order
@@ -472,8 +480,136 @@ class Tract:
         if current_head is None:
             return []
 
-        ancestors = self._commit_repo.get_ancestors(current_head, limit=limit)
+        ancestors = self._commit_repo.get_ancestors(
+            current_head, limit=limit, op_filter=op_filter,
+        )
         return [self._commit_engine._row_to_info(row) for row in ancestors]
+
+    def status(self) -> StatusInfo:
+        """Get current tract status.
+
+        Returns :class:`StatusInfo` with HEAD position, branch name,
+        detached state, compiled token count, budget info, and last 3 commits.
+        """
+        from tract.operations.history import StatusInfo
+
+        current_head = self.head
+        branch_name = self._ref_repo.get_current_branch(self._tract_id)
+        is_detached = self._ref_repo.is_detached(self._tract_id)
+
+        # Get compiled token count (uses cache if available)
+        token_count = 0
+        token_source = ""
+        commit_count = 0
+        if current_head is not None:
+            compiled = self.compile()
+            token_count = compiled.token_count
+            token_source = compiled.token_source
+            commit_count = compiled.commit_count
+
+        # Get token budget max
+        token_budget_max = None
+        if self._config.token_budget and self._config.token_budget.max_tokens:
+            token_budget_max = self._config.token_budget.max_tokens
+
+        # Get last 3 commits for preview
+        recent = self.log(limit=3)
+
+        return StatusInfo(
+            head_hash=current_head,
+            branch_name=branch_name,
+            is_detached=is_detached,
+            commit_count=commit_count,
+            token_count=token_count,
+            token_budget_max=token_budget_max,
+            token_source=token_source,
+            recent_commits=recent,
+        )
+
+    def _compile_at(self, commit_hash: str) -> CompiledContext:
+        """Compile at a specific commit, using LRU cache if available.
+
+        Args:
+            commit_hash: The commit hash to compile at.
+
+        Returns:
+            CompiledContext for the given commit.
+        """
+        # Check LRU cache first
+        cached = self._cache_get(commit_hash)
+        if cached is not None:
+            return self._snapshot_to_compiled(cached)
+        # Cache miss: compile fresh
+        return self._compiler.compile(self._tract_id, commit_hash)
+
+    def diff(
+        self,
+        commit_a: str | None = None,
+        commit_b: str | None = None,
+    ) -> DiffResult:
+        """Compare two commits and return structured diff.
+
+        Args:
+            commit_a: First commit (hash or prefix).  If None and commit_b is
+                an EDIT commit, auto-resolves to the edit target (response_to).
+                If None and commit_b is not EDIT, uses commit_b's parent.
+            commit_b: Second commit (hash or prefix).  Defaults to HEAD.
+
+        Returns:
+            :class:`DiffResult` with per-message diffs, token deltas,
+            and config changes.
+
+        Raises:
+            TraceError: If no commits exist.
+            CommitNotFoundError: If references can't be resolved.
+        """
+        from tract.operations.diff import compute_diff
+
+        # Default commit_b to HEAD
+        if commit_b is None:
+            current_head = self.head
+            if current_head is None:
+                raise TraceError("No commits to diff")
+            commit_b = current_head
+        else:
+            commit_b = self.resolve_commit(commit_b)
+
+        # Look up commit_b row
+        row_b = self._commit_repo.get(commit_b)
+        if row_b is None:
+            raise CommitNotFoundError(commit_b)
+
+        # Auto-resolve commit_a
+        if commit_a is None:
+            if row_b.operation == CommitOperation.EDIT and row_b.response_to:
+                commit_a = row_b.response_to
+            elif row_b.parent_hash:
+                commit_a = row_b.parent_hash
+            else:
+                # First commit, diff against empty
+                commit_a = None
+        else:
+            commit_a = self.resolve_commit(commit_a)
+
+        # Compile both commits to get their messages
+        if commit_a is not None:
+            compiled_a = self._compile_at(commit_a)
+        else:
+            compiled_a = CompiledContext(
+                messages=[], token_count=0, commit_count=0,
+                token_source="", generation_configs=[], commit_hashes=[],
+            )
+
+        compiled_b = self._compile_at(commit_b)
+
+        return compute_diff(
+            commit_a_hash=commit_a or "(empty)",
+            commit_b_hash=commit_b,
+            messages_a=compiled_a.messages,
+            messages_b=compiled_b.messages,
+            configs_a=compiled_a.generation_configs,
+            configs_b=compiled_b.generation_configs,
+        )
 
     def query_by_config(
         self,

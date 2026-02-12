@@ -60,8 +60,21 @@ class SqliteCommitRepository(CommitRepository):
         self._session.add(commit)
         self._session.flush()
 
-    def get_ancestors(self, commit_hash: str, limit: int | None = None) -> Sequence[CommitRow]:
+    def get_ancestors(
+        self,
+        commit_hash: str,
+        limit: int | None = None,
+        *,
+        op_filter: object | None = None,
+    ) -> Sequence[CommitRow]:
         """Walk parent chain from commit to root.
+
+        Args:
+            commit_hash: Starting commit hash.
+            limit: Maximum number of matching commits to return.
+            op_filter: If set (a CommitOperation value), only include commits
+                whose operation matches.  The chain walk continues through
+                non-matching commits so all matching ancestors are found.
 
         Returns commits in reverse chronological order (newest first).
         """
@@ -74,7 +87,8 @@ class SqliteCommitRepository(CommitRepository):
             commit = self.get(current_hash)
             if commit is None:
                 break
-            ancestors.append(commit)
+            if op_filter is None or commit.operation == op_filter:
+                ancestors.append(commit)
             current_hash = commit.parent_hash
 
         return ancestors

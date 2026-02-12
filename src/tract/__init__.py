@@ -41,6 +41,10 @@ from tract.protocols import (
     TokenUsage,
 )
 
+# Operations data models
+from tract.operations.history import StatusInfo
+from tract.operations.diff import DiffResult, MessageDiff, DiffStat
+
 # Exceptions
 from tract.exceptions import (
     TraceError,
@@ -85,6 +89,11 @@ __all__ = [
     "CompiledContext",
     "CompileSnapshot",
     "TokenUsage",
+    # Operations
+    "StatusInfo",
+    "DiffResult",
+    "MessageDiff",
+    "DiffStat",
     # Exceptions
     "TraceError",
     "CommitNotFoundError",
