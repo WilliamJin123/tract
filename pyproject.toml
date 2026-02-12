@@ -17,13 +17,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cli = [
+    "click>=8.1,<9",
+    "rich>=13.0,<15",
+]
 dev = [
     "pytest>=8.0",
     "hypothesis>=6.150",
     "pytest-cov>=7.0",
     "ruff>=0.15",
     "mypy>=1.14",
+    "click>=8.1,<9",
+    "rich>=13.0,<15",
 ]
+
+[project.scripts]
+tract = "tract.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tract"]
