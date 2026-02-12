@@ -117,11 +117,12 @@ Plans:
   3. User can compare any two commits (diff) and see textual differences in content
   4. User can reset HEAD to a previous commit (soft keeps content accessible, hard discards forward history) and checkout a specific commit for read-only inspection
   5. User can perform all of the above via a CLI (`tract log`, `tract status`, `tract diff`, `tract reset`, `tract checkout`) with readable terminal output
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Linear history operations (log, status, diff, reset, checkout)
-- [ ] 02-02: CLI wrapper with Click + Rich
+- [ ] 02-01-PLAN.md -- Storage infrastructure (symbolic refs, prefix matching) and navigation operations (reset, checkout)
+- [ ] 02-02-PLAN.md -- SDK operations (enhanced log with op_filter, status, diff with structured DiffResult)
+- [ ] 02-03-PLAN.md -- CLI layer with Click + Rich (5 commands, formatting helpers, optional deps)
 
 ### Phase 3: Branching & Merging
 **Goal**: Users can create divergent context branches and merge them back together, including LLM-mediated semantic merge for conflicting content
@@ -186,7 +187,7 @@ Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 1.4 -> 2 -> 3 -> 4 ->
 | 1.2 Rename Repo to Tract | 1/1 | Complete | 2026-02-11 |
 | 1.3 Hyperparameter Config Storage | 1/1 | Complete | 2026-02-11 |
 | 1.4 LRU Cache & Snapshot Patching | 1/1 | Complete | 2026-02-11 |
-| 2. Linear History & CLI | 0/2 | Not started | - |
+| 2. Linear History & CLI | 0/3 | Not started | - |
 | 3. Branching & Merging | 0/4 | Not started | - |
 | 4. Compression | 0/2 | Not started | - |
 | 5. Multi-Agent & Release | 0/3 | Not started | - |
