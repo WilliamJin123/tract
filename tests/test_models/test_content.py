@@ -128,52 +128,18 @@ class TestDiscriminatedUnion:
 
     adapter = TypeAdapter(ContentPayload)
 
-    def test_instruction_dispatch(self):
-        result = self.adapter.validate_python(
-            {"content_type": "instruction", "text": "test"}
-        )
-        assert isinstance(result, InstructionContent)
-
-    def test_dialogue_dispatch(self):
-        result = self.adapter.validate_python(
-            {"content_type": "dialogue", "role": "user", "text": "test"}
-        )
-        assert isinstance(result, DialogueContent)
-
-    def test_tool_io_dispatch(self):
-        result = self.adapter.validate_python(
-            {
-                "content_type": "tool_io",
-                "tool_name": "search",
-                "direction": "call",
-                "payload": {},
-            }
-        )
-        assert isinstance(result, ToolIOContent)
-
-    def test_reasoning_dispatch(self):
-        result = self.adapter.validate_python(
-            {"content_type": "reasoning", "text": "thinking..."}
-        )
-        assert isinstance(result, ReasoningContent)
-
-    def test_artifact_dispatch(self):
-        result = self.adapter.validate_python(
-            {"content_type": "artifact", "artifact_type": "code", "content": "x=1"}
-        )
-        assert isinstance(result, ArtifactContent)
-
-    def test_output_dispatch(self):
-        result = self.adapter.validate_python(
-            {"content_type": "output", "text": "done"}
-        )
-        assert isinstance(result, OutputContent)
-
-    def test_freeform_dispatch(self):
-        result = self.adapter.validate_python(
-            {"content_type": "freeform", "payload": {"any": "thing"}}
-        )
-        assert isinstance(result, FreeformContent)
+    @pytest.mark.parametrize("data,expected_type", [
+        ({"content_type": "instruction", "text": "test"}, InstructionContent),
+        ({"content_type": "dialogue", "role": "user", "text": "test"}, DialogueContent),
+        ({"content_type": "tool_io", "tool_name": "search", "direction": "call", "payload": {}}, ToolIOContent),
+        ({"content_type": "reasoning", "text": "thinking..."}, ReasoningContent),
+        ({"content_type": "artifact", "artifact_type": "code", "content": "x=1"}, ArtifactContent),
+        ({"content_type": "output", "text": "done"}, OutputContent),
+        ({"content_type": "freeform", "payload": {"any": "thing"}}, FreeformContent),
+    ])
+    def test_dispatch_by_content_type(self, data, expected_type):
+        result = self.adapter.validate_python(data)
+        assert isinstance(result, expected_type)
 
     def test_invalid_content_type(self):
         with pytest.raises(Exception):

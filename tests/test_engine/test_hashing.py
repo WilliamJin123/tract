@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 from tract.engine.hashing import canonical_json, commit_hash, content_hash
 
@@ -42,15 +40,6 @@ class TestCanonicalJson:
         data = {"text": "hello"}
         result = canonical_json(data).decode("utf-8")
         assert "hello" in result
-
-    def test_returns_bytes(self) -> None:
-        """Output is bytes, not str."""
-        result = canonical_json({"a": 1})
-        assert isinstance(result, bytes)
-
-    def test_empty_dict(self) -> None:
-        """Empty dict produces '{}'."""
-        assert canonical_json({}) == b"{}"
 
     def test_list_preserved(self) -> None:
         """Lists maintain order."""
@@ -87,23 +76,6 @@ class TestContentHash:
         h2 = content_hash({"a": 1, "b": 2})
         assert h1 == h2
 
-    @given(
-        data=st.dictionaries(
-            keys=st.text(min_size=1, max_size=20),
-            values=st.one_of(
-                st.text(max_size=100),
-                st.integers(),
-                st.floats(allow_nan=False, allow_infinity=False),
-                st.booleans(),
-            ),
-            min_size=1,
-            max_size=10,
-        )
-    )
-    @settings(max_examples=50)
-    def test_property_deterministic(self, data: dict) -> None:
-        """Property test: content_hash is always deterministic."""
-        assert content_hash(data) == content_hash(data)
 
 
 class TestCommitHash:

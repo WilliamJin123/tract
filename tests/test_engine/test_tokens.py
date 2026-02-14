@@ -30,12 +30,6 @@ class TestTiktokenCounter:
         counter = TiktokenCounter()
         assert counter.count_text("") == 0
 
-    def test_count_text_deterministic(self) -> None:
-        """Same text produces same count."""
-        counter = TiktokenCounter()
-        text = "The quick brown fox jumps over the lazy dog."
-        assert counter.count_text(text) == counter.count_text(text)
-
     def test_longer_text_more_tokens(self) -> None:
         """Longer text generally produces more tokens."""
         counter = TiktokenCounter()

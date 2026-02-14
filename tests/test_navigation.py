@@ -18,27 +18,7 @@ from tract import (
     Tract,
     TraceError,
 )
-
-
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
-
-def make_tract(**kwargs) -> Tract:
-    """Create an in-memory Tract for testing."""
-    return Tract.open(":memory:", **kwargs)
-
-
-def populate_tract(t: Tract, n: int = 3) -> list[str]:
-    """Commit n messages and return their hashes."""
-    hashes = []
-    for i in range(n):
-        if i == 0:
-            info = t.commit(InstructionContent(text=f"System prompt {i}"))
-        else:
-            info = t.commit(DialogueContent(role="user", text=f"Message {i}"))
-        hashes.append(info.commit_hash)
-    return hashes
+from tests.conftest import make_tract, populate_tract
 
 
 # ==================================================================
@@ -89,26 +69,11 @@ class TestSymbolicRefs:
 class TestPrefixMatching:
     """Tests for commit hash prefix resolution."""
 
-    def test_resolve_by_full_hash(self):
-        """Full hash resolves to itself."""
+    @pytest.mark.parametrize("prefix_len", [64, 8, 4])
+    def test_resolve_by_prefix(self, prefix_len):
         t = make_tract()
         hashes = populate_tract(t, 1)
-        resolved = t.resolve_commit(hashes[0])
-        assert resolved == hashes[0]
-
-    def test_resolve_by_prefix(self):
-        """4+ char prefix resolves to the commit."""
-        t = make_tract()
-        hashes = populate_tract(t, 1)
-        prefix = hashes[0][:8]
-        resolved = t.resolve_commit(prefix)
-        assert resolved == hashes[0]
-
-    def test_resolve_by_min_prefix(self):
-        """Exactly 4-char prefix works."""
-        t = make_tract()
-        hashes = populate_tract(t, 1)
-        prefix = hashes[0][:4]
+        prefix = hashes[0][:prefix_len]
         resolved = t.resolve_commit(prefix)
         assert resolved == hashes[0]
 
@@ -134,12 +99,28 @@ class TestPrefixMatching:
             t.resolve_commit("nonexistent_branch")
 
     def test_prefix_ambiguous_error(self):
-        """AmbiguousPrefixError raised when prefix matches multiple commits."""
+        """AmbiguousPrefixError propagates through resolve_commit."""
+        from unittest.mock import patch
+        from tract.storage.schema import CommitRow
+
         t = make_tract()
-        # Create many commits to increase chance of collision at short prefix
-        # We test the error path by calling get_by_prefix directly
         hashes = populate_tract(t, 1)
-        # Manually test with the repo; use full hash as prefix (guaranteed unique)
+
+        # Mock get_by_prefix to raise AmbiguousPrefixError
+        with patch.object(
+            t._commit_repo,
+            "get_by_prefix",
+            side_effect=AmbiguousPrefixError("abcd", ["abcd1111", "abcd2222"]),
+        ):
+            with pytest.raises(AmbiguousPrefixError) as exc_info:
+                t.resolve_commit("abcdef")  # 6-char prefix triggers step 3
+            assert exc_info.value.prefix == "abcd"
+            assert len(exc_info.value.candidates) == 2
+
+    def test_prefix_resolves_via_get_by_prefix(self):
+        """Successful prefix resolution via get_by_prefix."""
+        t = make_tract()
+        hashes = populate_tract(t, 1)
         row = t._commit_repo.get_by_prefix(hashes[0][:8], tract_id=t.tract_id)
         assert row is not None
         assert row.commit_hash == hashes[0]
@@ -152,24 +133,13 @@ class TestPrefixMatching:
 class TestReset:
     """Tests for Tract.reset()."""
 
-    def test_reset_soft_moves_head(self):
-        """Soft reset moves HEAD to target."""
+    @pytest.mark.parametrize("mode", ["soft", "hard"])
+    def test_reset_moves_head(self, mode):
         t = make_tract()
         hashes = populate_tract(t, 3)
-        assert t.head == hashes[2]
-
-        result = t.reset(hashes[0], mode="soft")
+        result = t.reset(hashes[0], mode=mode)
         assert result == hashes[0]
         assert t.head == hashes[0]
-
-    def test_reset_hard_moves_head(self):
-        """Hard reset moves HEAD to target (same as soft in Trace)."""
-        t = make_tract()
-        hashes = populate_tract(t, 3)
-
-        result = t.reset(hashes[1], mode="hard")
-        assert result == hashes[1]
-        assert t.head == hashes[1]
 
     def test_reset_stores_orig_head(self):
         """Reset stores the previous HEAD as ORIG_HEAD."""
@@ -282,6 +252,23 @@ class TestCheckout:
         t.checkout(hashes[0])
         prev = t._ref_repo.get_ref(t.tract_id, "PREV_HEAD")
         assert prev == old_head
+
+    def test_checkout_dash_restores_branch_attachment(self):
+        """checkout('-') re-attaches to branch if previous position was on a branch."""
+        t = make_tract()
+        hashes = populate_tract(t, 3)
+        assert not t.is_detached
+        assert t.current_branch == "main"
+
+        # Checkout a specific commit (detach)
+        t.checkout(hashes[0])
+        assert t.is_detached
+
+        # Return via "-" should re-attach to main
+        t.checkout("-")
+        assert not t.is_detached
+        assert t.current_branch == "main"
+        assert t.head == hashes[-1]
 
 
 # ==================================================================
@@ -415,19 +402,12 @@ class TestNavigationEdgeCases:
         resolved = t.resolve_commit(hashes[0])
         assert resolved == hashes[0]
 
-    def test_checkout_nonexistent_raises(self):
-        """Checkout of nonexistent target raises CommitNotFoundError."""
+    @pytest.mark.parametrize("op", ["checkout", "reset"])
+    def test_nonexistent_target_raises(self, op):
         t = make_tract()
         populate_tract(t, 1)
         with pytest.raises(CommitNotFoundError):
-            t.checkout("nonexistent")
-
-    def test_reset_nonexistent_raises(self):
-        """Reset to nonexistent target raises CommitNotFoundError."""
-        t = make_tract()
-        populate_tract(t, 1)
-        with pytest.raises(CommitNotFoundError):
-            t.reset("nonexistent")
+            getattr(t, op)("nonexistent")
 
     def test_detached_head_error_message(self):
         """DetachedHeadError has descriptive message."""

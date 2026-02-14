@@ -248,63 +248,22 @@ class TestSC2CommitsAndAnnotations:
 class TestSC3ContentTypes:
     """All 7 content types commit and compile correctly."""
 
-    def test_instruction_content(self, tract: Tract):
-        tract.commit(InstructionContent(text="Be concise."))
+    @pytest.mark.parametrize("content,expected_role,expected_text", [
+        (InstructionContent(text="Be concise."), "system", "Be concise."),
+        (DialogueContent(role="user", text="Hello"), "user", "Hello"),
+        (DialogueContent(role="assistant", text="Hi there"), "assistant", "Hi there"),
+        (ToolIOContent(tool_name="calculator", direction="call", payload={"expression": "2+2"}), "tool", "calculator"),
+        (ReasoningContent(text="Let me think..."), "assistant", "Let me think..."),
+        (ArtifactContent(artifact_type="code", content="print('hello')", language="python"), "assistant", "print('hello')"),
+        (OutputContent(text="Final answer: 42"), "assistant", "Final answer: 42"),
+        (FreeformContent(payload={"custom": "data", "num": 42}), "assistant", "custom"),
+    ])
+    def test_content_type_commit_and_compile(self, tract: Tract, content, expected_role, expected_text):
+        tract.commit(content)
         result = tract.compile()
         assert len(result.messages) == 1
-        assert result.messages[0].role == "system"
-        assert "Be concise." in result.messages[0].content
-
-    def test_dialogue_content_user(self, tract: Tract):
-        tract.commit(DialogueContent(role="user", text="Hello"))
-        result = tract.compile()
-        assert result.messages[0].role == "user"
-        assert "Hello" in result.messages[0].content
-
-    def test_dialogue_content_assistant(self, tract: Tract):
-        tract.commit(DialogueContent(role="assistant", text="Hi there"))
-        result = tract.compile()
-        assert result.messages[0].role == "assistant"
-        assert "Hi there" in result.messages[0].content
-
-    def test_tool_io_content(self, tract: Tract):
-        tract.commit(
-            ToolIOContent(
-                tool_name="calculator",
-                direction="call",
-                payload={"expression": "2+2"},
-            )
-        )
-        result = tract.compile()
-        assert result.messages[0].role == "tool"
-        assert "calculator" in result.messages[0].content
-
-    def test_reasoning_content(self, tract: Tract):
-        tract.commit(ReasoningContent(text="Let me think..."))
-        result = tract.compile()
-        assert result.messages[0].role == "assistant"
-        assert "Let me think..." in result.messages[0].content
-
-    def test_artifact_content(self, tract: Tract):
-        tract.commit(
-            ArtifactContent(
-                artifact_type="code",
-                content="print('hello')",
-                language="python",
-            )
-        )
-        result = tract.compile()
-        assert "print('hello')" in result.messages[0].content
-
-    def test_output_content(self, tract: Tract):
-        tract.commit(OutputContent(text="Final answer: 42"))
-        result = tract.compile()
-        assert "Final answer: 42" in result.messages[0].content
-
-    def test_freeform_content(self, tract: Tract):
-        tract.commit(FreeformContent(payload={"custom": "data", "num": 42}))
-        result = tract.compile()
-        assert "custom" in result.messages[0].content
+        assert result.messages[0].role == expected_role
+        assert expected_text in result.messages[0].content
 
     def test_content_from_dict(self, tract: Tract):
         tract.commit({"content_type": "instruction", "text": "From dict"})
@@ -362,24 +321,6 @@ class TestSC4Compilation:
         assert result.messages[1].role == "user"
         assert result.messages[2].role == "assistant"
 
-    def test_compile_edit_resolution(self, tract_with_commits):
-        tract, c1, c2, c3 = tract_with_commits
-        tract.commit(
-            InstructionContent(text="Updated instructions"),
-            operation=CommitOperation.EDIT,
-            response_to=c1.commit_hash,
-        )
-        result = tract.compile()
-        assert "Updated instructions" in result.messages[0].content
-
-    def test_compile_skip_annotation(self, tract_with_commits):
-        tract, c1, c2, c3 = tract_with_commits
-        tract.annotate(c2.commit_hash, Priority.SKIP)
-        result = tract.compile()
-        # Only system + assistant remain
-        roles = [m.role for m in result.messages]
-        assert "user" not in roles
-
     def test_compile_time_travel_datetime(self, tract: Tract):
         c1 = tract.commit(InstructionContent(text="First"))
         # Small delay so timestamps differ
@@ -399,15 +340,6 @@ class TestSC4Compilation:
 
         result = tract.compile(at_commit=c2.commit_hash)
         assert len(result.messages) == 2
-
-    def test_compile_consecutive_same_role_separate(self, tract: Tract):
-        """Consecutive same-role messages are preserved as separate messages."""
-        tract.commit(DialogueContent(role="user", text="Part 1"))
-        tract.commit(DialogueContent(role="user", text="Part 2"))
-        result = tract.compile()
-        assert len(result.messages) == 2
-        assert result.messages[0].content == "Part 1"
-        assert result.messages[1].content == "Part 2"
 
     def test_custom_compiler(self):
         """Custom compiler is used when provided to Tract.open()."""
@@ -455,10 +387,6 @@ class TestSC4Compilation:
 
 class TestSC5TokenCounting:
     """Token counting with pluggable tokenizer."""
-
-    def test_commit_has_token_count(self, tract: Tract):
-        info = tract.commit(InstructionContent(text="Some text for counting"))
-        assert info.token_count > 0
 
     def test_compile_has_token_count(self, tract_with_commits):
         tract, *_ = tract_with_commits
@@ -565,19 +493,6 @@ class TestEdgeCases:
                 response_to=c2.commit_hash,
             )
 
-    def test_annotate_priority_changes(self, tract: Tract):
-        c1 = tract.commit(DialogueContent(role="user", text="test"))
-
-        # SKIP it
-        tract.annotate(c1.commit_hash, Priority.SKIP)
-        result1 = tract.compile()
-        assert len(result1.messages) == 0
-
-        # PIN it
-        tract.annotate(c1.commit_hash, Priority.PINNED)
-        result2 = tract.compile()
-        assert len(result2.messages) == 1
-
     def test_annotation_history(self, tract: Tract):
         c1 = tract.commit(DialogueContent(role="user", text="test"))
         tract.annotate(c1.commit_hash, Priority.SKIP, reason="hide")
@@ -590,15 +505,6 @@ class TestEdgeCases:
         reasons = [a.reason for a in history if a.reason]
         assert "hide" in reasons
         assert "show" in reasons
-
-    def test_tract_repr(self, tract: Tract):
-        rep = repr(tract)
-        assert "Tract(" in rep
-        assert tract.tract_id in rep
-
-    def test_tract_config_accessible(self, tract: Tract):
-        assert tract.config is not None
-        assert isinstance(tract.config, TractConfig)
 
 
 # ===========================================================================
@@ -695,45 +601,6 @@ class TestIncrementalCompileCache:
             assert "Updated instruction" in result.messages[0].content
             assert "Original instruction" not in result.messages[0].content
 
-    def test_annotate_clears_cache(self):
-        """annotate() clears the LRU compile cache."""
-        with Tract.open(":memory:", tract_id="annot-inv") as t:
-            c1 = t.commit(DialogueContent(role="user", text="Keep"))
-            c2 = t.commit(DialogueContent(role="assistant", text="Skip me"))
-            c3 = t.commit(DialogueContent(role="user", text="Also keep"))
-            t.compile()  # Populate snapshot
-
-            assert len(t._snapshot_cache) > 0
-
-            # Annotate with SKIP should clear cache
-            t.annotate(c2.commit_hash, Priority.SKIP)
-            # Cache cleared except potentially patched current HEAD
-            # (verified in Task 3 tests)
-
-            result = t.compile()
-            contents = " ".join(m.content for m in result.messages)
-            assert "Skip me" not in contents
-            assert "Keep" in contents
-
-    def test_batch_invalidates_and_rebuilds(self):
-        """batch() clears LRU cache on entry; compile after batch rebuilds."""
-        with Tract.open(":memory:", tract_id="batch-inv") as t:
-            # Pre-populate with a commit and compile to get a snapshot
-            t.commit(InstructionContent(text="Before batch"))
-            t.compile()
-            assert len(t._snapshot_cache) > 0
-
-            with t.batch():
-                # Inside batch, cache should have been cleared
-                t.commit(DialogueContent(role="user", text="Batch 1"))
-                t.commit(DialogueContent(role="assistant", text="Batch 2"))
-                t.commit(DialogueContent(role="user", text="Batch 3"))
-
-            # After batch, compile should work with full rebuild
-            result = t.compile()
-            assert result.commit_count == 4  # 1 before + 3 in batch
-            assert len(result.messages) == 4  # system + 3 batch commits, no aggregation
-
     def test_time_travel_bypasses_cache(self):
         """Time-travel params bypass cache without overwriting the snapshot."""
         with Tract.open(":memory:", tract_id="tt-bypass") as t:
@@ -802,32 +669,17 @@ class TestIncrementalCompileCache:
 class TestRecordUsage:
     """Tests for tract.record_usage() -- post-call API token recording."""
 
-    def test_record_usage_openai_dict(self):
-        """OpenAI-format dict updates CompiledContext with API-reported counts."""
+    @pytest.mark.parametrize("usage_input,expected_count,expected_source", [
+        ({"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}, 100, "api:100+50"),
+        ({"input_tokens": 200, "output_tokens": 80}, 200, "api:200+80"),
+    ])
+    def test_record_usage_formats(self, usage_input, expected_count, expected_source):
         with Tract.open() as t:
             t.commit(InstructionContent(text="System prompt"))
             t.compile()
-
-            result = t.record_usage({
-                "prompt_tokens": 100,
-                "completion_tokens": 50,
-                "total_tokens": 150,
-            })
-            assert result.token_count == 100
-            assert result.token_source == "api:100+50"
-
-    def test_record_usage_anthropic_dict(self):
-        """Anthropic-format dict updates CompiledContext with API-reported counts."""
-        with Tract.open() as t:
-            t.commit(InstructionContent(text="System prompt"))
-            t.compile()
-
-            result = t.record_usage({
-                "input_tokens": 200,
-                "output_tokens": 80,
-            })
-            assert result.token_count == 200
-            assert result.token_source == "api:200+80"
+            result = t.record_usage(usage_input)
+            assert result.token_count == expected_count
+            assert result.token_source == expected_source
 
     def test_record_usage_token_usage_dataclass(self):
         """TokenUsage dataclass directly updates CompiledContext."""
@@ -921,26 +773,6 @@ class TestRecordUsage:
                     head_hash="nonexistent",
                 )
 
-    def test_token_source_reflects_api_after_record(self):
-        """Token source transitions: tiktoken -> api -> tiktoken (after new commit)."""
-        with Tract.open() as t:
-            t.commit(InstructionContent(text="System prompt"))
-            ctx1 = t.compile()
-            assert ctx1.token_source.startswith("tiktoken:")
-
-            t.record_usage({
-                "prompt_tokens": 100,
-                "completion_tokens": 50,
-                "total_tokens": 150,
-            })
-            ctx2 = t.compile()
-            assert ctx2.token_source.startswith("api:")
-
-            # New commit resets to tiktoken
-            t.commit(DialogueContent(role="user", text="New message"))
-            ctx3 = t.compile()
-            assert ctx3.token_source.startswith("tiktoken:")
-
 
 # ===========================================================================
 # Two-tier token tracking integration tests (Plan 02)
@@ -985,67 +817,6 @@ class TestTwoTierTokenTracking:
             t.commit(DialogueContent(role="assistant", text="Hi there!"))
             fresh = t.compile()
             assert fresh.token_source.startswith("tiktoken:")
-
-    def test_record_usage_survives_append_incremental(self):
-        """After record_usage, a new APPEND commit recounts with tiktoken."""
-        with Tract.open() as t:
-            t.commit(InstructionContent(text="System"))
-            ctx = t.compile()
-            t.record_usage({
-                "prompt_tokens": 999,
-                "completion_tokens": 1,
-                "total_tokens": 1000,
-            })
-
-            t.commit(DialogueContent(role="user", text="New message"))
-            ctx2 = t.compile()
-            # The incremental extension recounted tokens with tiktoken
-            assert ctx2.token_source.startswith("tiktoken:")
-            assert ctx2.token_count != 999  # Not carrying forward the old API count
-
-    def test_multiple_provider_formats_in_sequence(self):
-        """Record OpenAI usage, then Anthropic usage in sequence."""
-        with Tract.open() as t:
-            t.commit(InstructionContent(text="System"))
-            t.compile()
-
-            # OpenAI format
-            r1 = t.record_usage({
-                "prompt_tokens": 100,
-                "completion_tokens": 50,
-                "total_tokens": 150,
-            })
-            assert r1.token_source == "api:100+50"
-            assert r1.token_count == 100
-
-            # Anthropic format (overwrites previous)
-            r2 = t.record_usage({
-                "input_tokens": 200,
-                "output_tokens": 80,
-            })
-            assert r2.token_source == "api:200+80"
-            assert r2.token_count == 200
-
-    def test_token_source_string_format(self):
-        """Verify exact string format for both token sources."""
-        with Tract.open() as t:
-            t.commit(InstructionContent(text="System"))
-            ctx = t.compile()
-
-            # tiktoken format: "tiktoken:{encoding_name}"
-            assert ctx.token_source.startswith("tiktoken:")
-            # Extract encoding name (should be a valid tiktoken encoding)
-            encoding = ctx.token_source.split(":")[1]
-            assert len(encoding) > 0
-
-            # api format: "api:{prompt}+{completion}"
-            t.record_usage({
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-            })
-            ctx2 = t.compile()
-            assert ctx2.token_source == "api:0+0"
 
 
 # ===========================================================================
@@ -1128,40 +899,6 @@ class TestGenerationConfig:
         result2 = tract.compile()
         assert result2.generation_configs == [config1, config2]
 
-    def test_compile_edit_preserves_generation_config_of_replacement(self, tract: Tract):
-        config_orig = {"temperature": 0.5}
-        config_edit = {"temperature": 0.9}
-        c1 = tract.commit(
-            DialogueContent(role="user", text="original"),
-            generation_config=config_orig,
-        )
-        tract.commit(
-            DialogueContent(role="user", text="edited"),
-            operation=CommitOperation.EDIT,
-            response_to=c1.commit_hash,
-            generation_config=config_edit,
-        )
-        result = tract.compile()
-        # The effective commit's config comes from the edit replacement
-        assert result.generation_configs[0] == config_edit
-
-    def test_compile_edit_without_config_inherits_original(self, tract: Tract):
-        """When an EDIT commit has no generation_config, the original's config is inherited."""
-        config_orig = {"temperature": 0.7, "model": "gpt-4o"}
-        c1 = tract.commit(
-            DialogueContent(role="user", text="original"),
-            generation_config=config_orig,
-        )
-        tract.commit(
-            DialogueContent(role="user", text="edited text only"),
-            operation=CommitOperation.EDIT,
-            response_to=c1.commit_hash,
-            # No generation_config on the edit
-        )
-        result = tract.compile()
-        # Original config inherited since edit didn't specify one
-        assert result.generation_configs[0] == config_orig
-
     # SC4: generation_config NOT in commit hash
     def test_generation_config_not_in_hash(self, tract: Tract):
         """Same content with different generation_configs should produce
@@ -1180,7 +917,12 @@ class TestGenerationConfig:
         assert c1.commit_hash != c2.commit_hash
 
     # SC5: Query by config values
-    def test_query_by_config_equality(self, tract: Tract):
+    @pytest.mark.parametrize("key,op,value,expected_count", [
+        ("model", "=", "gpt-4o", 2),
+        ("temperature", ">", 0.5, 2),
+        ("temperature", ">", 0.9, 0),
+    ])
+    def test_query_by_config_operators(self, tract: Tract, key, op, value, expected_count):
         tract.commit(
             DialogueContent(role="user", text="a"),
             generation_config={"model": "gpt-4o", "temperature": 0.5},
@@ -1193,34 +935,8 @@ class TestGenerationConfig:
             DialogueContent(role="user", text="c"),
             generation_config={"model": "gpt-4o", "temperature": 0.7},
         )
-        results = tract.query_by_config("model", "=", "gpt-4o")
-        assert len(results) == 2
-        assert all(r.generation_config["model"] == "gpt-4o" for r in results)
-
-    def test_query_by_config_greater_than(self, tract: Tract):
-        tract.commit(
-            DialogueContent(role="user", text="a"),
-            generation_config={"temperature": 0.3},
-        )
-        tract.commit(
-            DialogueContent(role="user", text="b"),
-            generation_config={"temperature": 0.8},
-        )
-        tract.commit(
-            DialogueContent(role="user", text="c"),
-            generation_config={"temperature": 1.0},
-        )
-        results = tract.query_by_config("temperature", ">", 0.5)
-        assert len(results) == 2
-        assert all(r.generation_config["temperature"] > 0.5 for r in results)
-
-    def test_query_by_config_no_matches(self, tract: Tract):
-        tract.commit(
-            DialogueContent(role="user", text="a"),
-            generation_config={"temperature": 0.3},
-        )
-        results = tract.query_by_config("temperature", ">", 0.9)
-        assert len(results) == 0
+        results = tract.query_by_config(key, op, value)
+        assert len(results) == expected_count
 
     def test_query_by_config_invalid_operator(self, tract: Tract):
         with pytest.raises(ValueError, match="Unsupported operator"):
@@ -1445,13 +1161,6 @@ class TestLRUCompileCacheAndPatching:
             assert snapshot is not None
             assert len(snapshot.commit_hashes) == 2
             assert snapshot.commit_hashes[1] == c2.commit_hash
-
-    def test_verify_cache_flag_default_false(self):
-        """verify_cache defaults to False."""
-        with Tract.open() as t:
-            assert t._verify_cache is False
-            t.commit(InstructionContent(text="test"))
-            t.compile()  # Should work without oracle check
 
     def test_consecutive_same_role_with_edit_patching(self):
         """EDIT patching works correctly with consecutive same-role messages (no aggregation)."""

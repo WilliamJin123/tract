@@ -22,27 +22,7 @@ from tract import (
     TokenBudgetConfig,
     TraceError,
 )
-
-
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
-
-def make_tract(**kwargs) -> Tract:
-    """Create an in-memory Tract for testing."""
-    return Tract.open(":memory:", **kwargs)
-
-
-def populate_tract(t: Tract, n: int = 3) -> list[str]:
-    """Commit n dialogue messages and return their hashes."""
-    hashes = []
-    for i in range(n):
-        if i == 0:
-            info = t.commit(InstructionContent(text=f"System prompt {i}"))
-        else:
-            info = t.commit(DialogueContent(role="user", text=f"Message {i}"))
-        hashes.append(info.commit_hash)
-    return hashes
+from tests.conftest import make_tract, populate_tract
 
 
 # ==================================================================
@@ -63,24 +43,11 @@ class TestLogEnhanced:
         result = t.log()
         assert len(result) == 20
 
-    def test_log_with_op_filter_append(self):
-        """op_filter=APPEND returns only APPEND commits."""
-        t = make_tract()
-        h1 = t.commit(DialogueContent(role="user", text="Hello")).commit_hash
-        h2 = t.commit(DialogueContent(role="assistant", text="Hi")).commit_hash
-        # Edit h1
-        t.commit(
-            DialogueContent(role="user", text="Hello edited"),
-            operation=CommitOperation.EDIT,
-            response_to=h1,
-        )
-        result = t.log(op_filter=CommitOperation.APPEND)
-        ops = [c.operation for c in result]
-        assert all(op == CommitOperation.APPEND for op in ops)
-        assert len(result) == 2  # h1 and h2
-
-    def test_log_with_op_filter_edit(self):
-        """op_filter=EDIT returns only EDIT commits."""
+    @pytest.mark.parametrize("op,expected_count", [
+        (CommitOperation.APPEND, 2),
+        (CommitOperation.EDIT, 1),
+    ])
+    def test_log_with_op_filter(self, op, expected_count):
         t = make_tract()
         h1 = t.commit(DialogueContent(role="user", text="Hello")).commit_hash
         t.commit(DialogueContent(role="assistant", text="Hi"))
@@ -89,9 +56,9 @@ class TestLogEnhanced:
             operation=CommitOperation.EDIT,
             response_to=h1,
         )
-        result = t.log(op_filter=CommitOperation.EDIT)
-        assert len(result) == 1
-        assert result[0].operation == CommitOperation.EDIT
+        result = t.log(op_filter=op)
+        assert len(result) == expected_count
+        assert all(c.operation == op for c in result)
 
     def test_log_empty_tract(self):
         """Log on empty tract returns empty list."""
@@ -362,3 +329,17 @@ class TestDiff:
         result = t.diff(hashes[-1], h3)  # oldest vs newest
         indices = [d.index for d in result.message_diffs]
         assert indices == list(range(len(indices)))
+
+    def test_diff_removed_messages(self):
+        """Diff where commit B has fewer messages than commit A shows 'removed'."""
+        t = make_tract()
+        h1 = t.commit(DialogueContent(role="user", text="Hello")).commit_hash
+        h2 = t.commit(DialogueContent(role="assistant", text="World")).commit_hash
+        h3 = t.commit(DialogueContent(role="user", text="Follow up")).commit_hash
+        # h3 has 3 messages, h1 has 1 message
+        # Diffing h3 (A, 3 msgs) vs h1 (B, 1 msg) should show 2 removed
+        result = t.diff(h3, h1)
+        removed = [d for d in result.message_diffs if d.status == "removed"]
+        assert len(removed) == 2
+        assert result.stat.messages_removed == 2
+        assert result.stat.messages_unchanged == 1  # the first message is common

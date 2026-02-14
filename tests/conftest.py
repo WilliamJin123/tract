@@ -57,3 +57,26 @@ def ref_repo(session: Session) -> SqliteRefRepository:
 @pytest.fixture
 def annotation_repo(session: Session) -> SqliteAnnotationRepository:
     return SqliteAnnotationRepository(session)
+
+
+# ------------------------------------------------------------------
+# Shared test helpers (used by test_navigation.py, test_operations.py)
+# ------------------------------------------------------------------
+
+def make_tract(**kwargs) -> "Tract":
+    """Create an in-memory Tract for testing."""
+    from tract import Tract
+    return Tract.open(":memory:", **kwargs)
+
+
+def populate_tract(t: "Tract", n: int = 3) -> list[str]:
+    """Commit n messages and return their hashes."""
+    from tract import InstructionContent, DialogueContent
+    hashes = []
+    for i in range(n):
+        if i == 0:
+            info = t.commit(InstructionContent(text=f"System prompt {i}"))
+        else:
+            info = t.commit(DialogueContent(role="user", text=f"Message {i}"))
+        hashes.append(info.commit_hash)
+    return hashes

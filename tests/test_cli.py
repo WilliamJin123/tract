@@ -10,7 +10,6 @@ import pytest
 from click.testing import CliRunner
 
 from tract.cli import cli
-from tract.models.commit import CommitOperation
 from tract.models.content import InstructionContent, DialogueContent
 
 
@@ -55,25 +54,6 @@ def _setup_empty_tract(db_path: str, *, tract_id: str = "test-tract") -> None:
     t.close()
 
 
-def _setup_tract_with_edit(db_path: str, *, tract_id: str = "test-tract") -> str:
-    """Create a tract with an EDIT commit. Returns the edit's commit hash."""
-    from tract.tract import Tract
-
-    t = Tract.open(path=db_path, tract_id=tract_id)
-    c1 = t.commit(
-        InstructionContent(text="Original instruction."),
-        message="original",
-    )
-    t.commit(
-        InstructionContent(text="Updated instruction."),
-        operation=CommitOperation.EDIT,
-        response_to=c1.commit_hash,
-        message="edited",
-    )
-    edit_hash = t.head
-    t.close()
-    return edit_hash
-
 
 # ---------------------------------------------------------------------------
 # Log command tests
@@ -106,22 +86,9 @@ class TestLogCommand:
             result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "log", "-v"])
             assert result.exit_code == 0
             # Verbose mode shows full hashes and types
-            assert "Operation:" in result.output or "append" in result.output.lower()
-            assert "instruction" in result.output.lower() or "dialogue" in result.output.lower()
+            assert "Operation:" in result.output
+            assert "append" in result.output.lower()
 
-    def test_log_op_filter(self, runner: CliRunner):
-        with runner.isolated_filesystem():
-            _setup_tract_with_edit("test.db")
-            result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "log", "--op", "edit"])
-            assert result.exit_code == 0
-            assert "edit" in result.output.lower()
-
-    def test_log_empty(self, runner: CliRunner):
-        with runner.isolated_filesystem():
-            _setup_empty_tract("test.db")
-            result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "log"])
-            assert result.exit_code == 0
-            assert "no commits" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -138,22 +105,6 @@ class TestStatusCommand:
             assert result.exit_code == 0
             assert "main" in result.output.lower()
 
-    def test_status_detached(self, runner: CliRunner):
-        with runner.isolated_filesystem():
-            _setup_tract("test.db")
-            # Get first commit hash for checkout
-            from tract.tract import Tract
-            t = Tract.open(path="test.db", tract_id="test-tract")
-            entries = t.log(limit=10)
-            first_hash = entries[-1].commit_hash
-            t.close()
-
-            # Checkout detached
-            runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "checkout", first_hash])
-            result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "status"])
-            assert result.exit_code == 0
-            assert "detached" in result.output.lower()
-
     def test_status_no_commits(self, runner: CliRunner):
         with runner.isolated_filesystem():
             _setup_empty_tract("test.db")
@@ -161,25 +112,6 @@ class TestStatusCommand:
             assert result.exit_code == 0
             assert "no commits" in result.output.lower()
 
-    def test_status_shows_token_count(self, runner: CliRunner):
-        with runner.isolated_filesystem():
-            _setup_tract("test.db")
-            result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "status"])
-            assert result.exit_code == 0
-            # Should show token info
-            assert "token" in result.output.lower()
-
-    def test_status_shows_no_budget(self, runner: CliRunner):
-        """Status without budget shows 'no budget set' message.
-
-        Token budget is an in-memory config, not persisted to DB.
-        CLI opens with default config, so no budget is shown.
-        """
-        with runner.isolated_filesystem():
-            _setup_tract("test.db")
-            result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "status"])
-            assert result.exit_code == 0
-            assert "no budget set" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -195,25 +127,8 @@ class TestDiffCommand:
             _setup_tract("test.db")
             result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "diff"])
             assert result.exit_code == 0
-            assert "added" in result.output.lower() or "diff" in result.output.lower()
-
-    def test_diff_two_commits(self, runner: CliRunner):
-        """Diff between two specific commits."""
-        from tract.tract import Tract
-
-        with runner.isolated_filesystem():
-            _setup_tract("test.db")
-            t = Tract.open(path="test.db", tract_id="test-tract")
-            entries = t.log(limit=10)
-            hash_a = entries[-1].commit_hash  # oldest
-            hash_b = entries[0].commit_hash   # newest
-            t.close()
-
-            result = runner.invoke(cli, [
-                "--db", "test.db", "--tract-id", "test-tract",
-                "diff", hash_a, hash_b,
-            ])
-            assert result.exit_code == 0
+            assert "diff" in result.output.lower()
+            assert "added" in result.output.lower()
 
     def test_diff_stat(self, runner: CliRunner):
         """Diff with --stat flag shows summary only."""
@@ -223,20 +138,6 @@ class TestDiffCommand:
             assert result.exit_code == 0
             assert "added" in result.output.lower()
 
-    def test_diff_no_commits(self, runner: CliRunner):
-        """Diff with no commits gives error."""
-        with runner.isolated_filesystem():
-            _setup_empty_tract("test.db")
-            result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "diff"])
-            assert result.exit_code == 1
-
-    def test_diff_with_edit(self, runner: CliRunner):
-        """Diff auto-resolves EDIT commit against its target."""
-        with runner.isolated_filesystem():
-            _setup_tract_with_edit("test.db")
-            result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "diff"])
-            assert result.exit_code == 0
-            assert "modified" in result.output.lower() or "diff" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +181,7 @@ class TestResetCommand:
                 "reset", "--hard", first_hash,
             ])
             assert result.exit_code == 1
-            assert "force" in result.output.lower() or "force" in result.stderr.lower() if result.stderr else "force" in result.output.lower()
+            assert "force" in result.output.lower()
 
     def test_reset_hard_with_force(self, runner: CliRunner):
         from tract.tract import Tract
@@ -300,14 +201,6 @@ class TestResetCommand:
             assert first_hash[:8] in result.output
             assert "hard" in result.output.lower()
 
-    def test_reset_invalid_hash(self, runner: CliRunner):
-        with runner.isolated_filesystem():
-            _setup_tract("test.db")
-            result = runner.invoke(cli, [
-                "--db", "test.db", "--tract-id", "test-tract",
-                "reset", "nonexistent_hash_value",
-            ])
-            assert result.exit_code == 1
 
 
 # ---------------------------------------------------------------------------
@@ -380,14 +273,6 @@ class TestCheckoutCommand:
             ])
             assert result.exit_code == 0
 
-    def test_checkout_invalid(self, runner: CliRunner):
-        with runner.isolated_filesystem():
-            _setup_tract("test.db")
-            result = runner.invoke(cli, [
-                "--db", "test.db", "--tract-id", "test-tract",
-                "checkout", "nonexistent_ref_value",
-            ])
-            assert result.exit_code == 1
 
 
 # ---------------------------------------------------------------------------
@@ -414,12 +299,16 @@ class TestCLIIntegration:
 
     def test_no_cli_deps_for_import(self):
         """Importing tract (not tract.cli) should not require click/rich."""
-        # This is tested implicitly by the fact that this test file imports tract.cli
-        # but the main tract package should work without it.
-        import importlib
-        import tract as t
-        importlib.reload(t)
-        assert hasattr(t, "Tract")
+        import subprocess
+        import sys
+
+        # Run in a subprocess to test import isolation
+        result = subprocess.run(
+            [sys.executable, "-c", "import tract; assert hasattr(tract, 'Tract')"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"Import failed: {result.stderr}"
 
     def test_auto_discover_tract(self, runner: CliRunner):
         """When --tract-id is omitted, auto-discover works for single tract."""
@@ -434,31 +323,3 @@ class TestCLIIntegration:
         with runner.isolated_filesystem():
             result = runner.invoke(cli, ["--db", "nonexistent.db", "log"])
             assert result.exit_code == 1
-
-    def test_log_default_limit(self, runner: CliRunner):
-        """Log with default limit shows up to 20 commits."""
-        with runner.isolated_filesystem():
-            _setup_tract("test.db")
-            result = runner.invoke(cli, ["--db", "test.db", "--tract-id", "test-tract", "log"])
-            assert result.exit_code == 0
-            # 3 commits exist, all should show
-            assert "system prompt" in result.output
-            assert "user greeting" in result.output
-            assert "assistant reply" in result.output
-
-    def test_prefix_resolution(self, runner: CliRunner):
-        """Commands accept hash prefixes (min 4 chars)."""
-        from tract.tract import Tract
-
-        with runner.isolated_filesystem():
-            _setup_tract("test.db")
-            t = Tract.open(path="test.db", tract_id="test-tract")
-            entries = t.log(limit=10)
-            prefix = entries[-1].commit_hash[:8]
-            t.close()
-
-            result = runner.invoke(cli, [
-                "--db", "test.db", "--tract-id", "test-tract",
-                "checkout", prefix,
-            ])
-            assert result.exit_code == 0

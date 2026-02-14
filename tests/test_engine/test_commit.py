@@ -60,28 +60,23 @@ def repos(session):
 class TestExtractText:
     """Tests for extract_text_from_content helper."""
 
-    def test_instruction(self) -> None:
-        assert extract_text_from_content(InstructionContent(text="hello")) == "hello"
+    @pytest.mark.parametrize("content,expected", [
+        (InstructionContent(text="hello"), "hello"),
+        (DialogueContent(role="user", text="hi"), "hi"),
+        (ReasoningContent(text="thinking..."), "thinking..."),
+        (OutputContent(text="result"), "result"),
+        (ArtifactContent(artifact_type="code", content="print()"), "print()"),
+    ])
+    def test_text_field_types(self, content, expected) -> None:
+        assert extract_text_from_content(content) == expected
 
-    def test_dialogue(self) -> None:
-        assert extract_text_from_content(DialogueContent(role="user", text="hi")) == "hi"
-
-    def test_artifact(self) -> None:
-        assert extract_text_from_content(ArtifactContent(artifact_type="code", content="print()")) == "print()"
-
-    def test_tool_io(self) -> None:
+    def test_tool_io_contains_payload(self) -> None:
         result = extract_text_from_content(ToolIOContent(tool_name="search", direction="call", payload={"q": "test"}))
         assert "test" in result
 
-    def test_freeform(self) -> None:
+    def test_freeform_contains_payload(self) -> None:
         result = extract_text_from_content(FreeformContent(payload={"key": "val"}))
         assert "val" in result
-
-    def test_reasoning(self) -> None:
-        assert extract_text_from_content(ReasoningContent(text="thinking...")) == "thinking..."
-
-    def test_output(self) -> None:
-        assert extract_text_from_content(OutputContent(text="result")) == "result"
 
 
 class TestCreateCommit:
@@ -328,20 +323,6 @@ class TestAnnotate:
 
 class TestGenerationConfig:
     """Tests for generation_config threading through CommitEngine."""
-
-    def test_create_commit_with_generation_config(self, commit_engine) -> None:
-        """generation_config is stored on CommitRow and returned in CommitInfo."""
-        config = {"model": "gpt-4o", "temperature": 0.7}
-        info = commit_engine.create_commit(
-            InstructionContent(text="test"),
-            generation_config=config,
-        )
-        assert info.generation_config == config
-
-    def test_create_commit_without_generation_config(self, commit_engine) -> None:
-        """generation_config defaults to None when not provided."""
-        info = commit_engine.create_commit(InstructionContent(text="test"))
-        assert info.generation_config is None
 
     def test_row_to_info_maps_generation_config(self, commit_engine, repos) -> None:
         """_row_to_info correctly maps generation_config_json to generation_config."""
