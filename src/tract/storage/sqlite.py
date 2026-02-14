@@ -327,6 +327,28 @@ class SqliteRefRepository(RefRepository):
             self._session.delete(ref)
             self._session.flush()
 
+    def set_symbolic_ref(self, tract_id: str, ref_name: str, symbolic_target: str) -> None:
+        """Set a ref to point symbolically (commit_hash=None, symbolic_target set)."""
+        ref = self._get_ref_row(tract_id, ref_name)
+        if ref is None:
+            self._session.add(
+                RefRow(
+                    tract_id=tract_id,
+                    ref_name=ref_name,
+                    commit_hash=None,
+                    symbolic_target=symbolic_target,
+                )
+            )
+        else:
+            ref.commit_hash = None
+            ref.symbolic_target = symbolic_target
+        self._session.flush()
+
+    def get_symbolic_ref(self, tract_id: str, ref_name: str) -> str | None:
+        """Get the symbolic target of a ref. Returns None if not found or not symbolic."""
+        ref = self._get_ref_row(tract_id, ref_name)
+        return ref.symbolic_target if ref else None
+
     def get_current_branch(self, tract_id: str) -> str | None:
         """Get the current branch name if HEAD is attached."""
         head_ref = self._get_ref_row(tract_id, "HEAD")

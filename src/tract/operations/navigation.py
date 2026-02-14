@@ -41,9 +41,9 @@ def resolve_commit(
         CommitNotFoundError: If no commit can be resolved.
         AmbiguousPrefixError: If a prefix matches multiple commits.
     """
-    # 1. Exact commit hash
+    # 1. Exact commit hash (scoped to tract_id)
     row = commit_repo.get(ref_or_prefix)
-    if row is not None:
+    if row is not None and row.tract_id == tract_id:
         return row.commit_hash
 
     # 2. Branch name
@@ -133,16 +133,38 @@ def checkout(
         prev_head = ref_repo.get_ref(tract_id, "PREV_HEAD")
         if prev_head is None:
             raise TraceError("No previous position to return to (PREV_HEAD not set)")
-        # Now store current HEAD as PREV_HEAD (swap)
+        prev_branch_ref = ref_repo.get_symbolic_ref(tract_id, "PREV_BRANCH")
+
+        # Store current state as PREV_HEAD/PREV_BRANCH (swap)
         if current_head is not None:
             ref_repo.set_ref(tract_id, "PREV_HEAD", current_head)
-        # When returning via "-", detach at the previous commit
-        ref_repo.detach_head(tract_id, prev_head)
-        return prev_head, True
+            current_branch = ref_repo.get_current_branch(tract_id)
+            if current_branch:
+                ref_repo.set_symbolic_ref(
+                    tract_id, "PREV_BRANCH", f"refs/heads/{current_branch}"
+                )
+            else:
+                ref_repo.delete_ref(tract_id, "PREV_BRANCH")
+
+        # Restore previous position with branch attachment
+        if prev_branch_ref:
+            branch_name = prev_branch_ref.removeprefix("refs/heads/")
+            ref_repo.attach_head(tract_id, branch_name)
+            return prev_head, False
+        else:
+            ref_repo.detach_head(tract_id, prev_head)
+            return prev_head, True
 
     # Store current HEAD as PREV_HEAD before switching
     if current_head is not None:
         ref_repo.set_ref(tract_id, "PREV_HEAD", current_head)
+        current_branch = ref_repo.get_current_branch(tract_id)
+        if current_branch:
+            ref_repo.set_symbolic_ref(
+                tract_id, "PREV_BRANCH", f"refs/heads/{current_branch}"
+            )
+        else:
+            ref_repo.delete_ref(tract_id, "PREV_BRANCH")
 
     # Check if target is a branch name
     branch_hash = ref_repo.get_branch(tract_id, target)

@@ -6,10 +6,10 @@ Rich auto-detects TTY and degrades gracefully when piped (no ANSI codes).
 
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 from rich.text import Text
 
@@ -39,7 +39,7 @@ def format_log_compact(entries: list[CommitInfo], console: Console) -> None:
 
     for entry in entries:
         time_str = entry.created_at.strftime("%Y-%m-%d %H:%M")
-        msg = entry.message or ""
+        msg = escape(entry.message) if entry.message else ""
         table.add_row(
             entry.commit_hash[:8],
             time_str,
@@ -63,7 +63,7 @@ def format_log_verbose(entries: list[CommitInfo], console: Console) -> None:
 
         console.print(f"[yellow]commit {entry.commit_hash}[/yellow]")
         console.print(f"  Operation: [cyan]{entry.operation.value}[/cyan]")
-        console.print(f"  Type:      {entry.content_type}")
+        console.print(f"  Type:      {escape(entry.content_type)}")
         console.print(f"  Tokens:    [green]{entry.token_count}[/green]")
         console.print(f"  Date:      {entry.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -72,10 +72,10 @@ def format_log_verbose(entries: list[CommitInfo], console: Console) -> None:
         if entry.response_to:
             console.print(f"  Edits:     {entry.response_to[:8]}")
         if entry.message:
-            console.print(f"  Message:   {entry.message}")
+            console.print(f"  Message:   {escape(entry.message)}")
         if entry.generation_config:
             config_parts = [f"{k}={v}" for k, v in entry.generation_config.items()]
-            console.print(f"  Config:    {', '.join(config_parts)}")
+            console.print(f"  Config:    {escape(', '.join(config_parts))}")
 
 
 def format_status(info: StatusInfo, console: Console) -> None:
@@ -89,7 +89,7 @@ def format_status(info: StatusInfo, console: Console) -> None:
         console.print(f"HEAD detached at [yellow]{info.head_hash[:8]}[/yellow]")
     else:
         console.print(
-            f"On branch [green]{info.branch_name}[/green]  "
+            f"On branch [green]{escape(info.branch_name)}[/green]  "
             f"([yellow]{info.head_hash[:8]}[/yellow])"
         )
 
@@ -128,7 +128,7 @@ def format_status(info: StatusInfo, console: Console) -> None:
         console.print("[bold]Recent commits:[/bold]")
         for entry in info.recent_commits:
             time_str = entry.created_at.strftime("%H:%M:%S")
-            msg = entry.message or ""
+            msg = escape(entry.message) if entry.message else ""
             op = entry.operation.value
             console.print(
                 f"  [yellow]{entry.commit_hash[:8]}[/yellow] "
@@ -136,6 +136,30 @@ def format_status(info: StatusInfo, console: Console) -> None:
                 f"[cyan]{op}[/cyan] "
                 f"{msg}"
             )
+
+
+def _format_stat_summary(
+    stat: "DiffStat",
+    generation_config_changes: dict,
+    console: Console,
+) -> None:
+    """Print the stat summary block (shared between full and stat-only diff)."""
+    from tract.operations.diff import DiffStat  # noqa: F811
+
+    console.print(
+        f"[green]+{stat.messages_added}[/green] added  "
+        f"[red]-{stat.messages_removed}[/red] removed  "
+        f"[yellow]~{stat.messages_modified}[/yellow] modified  "
+        f"[dim]={stat.messages_unchanged} unchanged[/dim]"
+    )
+    if stat.total_token_delta != 0:
+        delta_sign = "+" if stat.total_token_delta > 0 else ""
+        console.print(f"Token delta: {delta_sign}{stat.total_token_delta}")
+    if generation_config_changes:
+        console.print()
+        console.print("[bold]Config changes:[/bold]")
+        for field_name, (old_val, new_val) in generation_config_changes.items():
+            console.print(f"  {field_name}: {old_val} -> {new_val}")
 
 
 def format_diff(result: DiffResult, console: Console, stat_only: bool = False) -> None:
@@ -146,26 +170,8 @@ def format_diff(result: DiffResult, console: Console, stat_only: bool = False) -
         console: Rich console
         stat_only: If True, show only stat summary (like git diff --stat)
     """
-    stat = result.stat
-
     if stat_only:
-        # Stat-only summary
-        console.print(
-            f"[green]+{stat.messages_added}[/green] added  "
-            f"[red]-{stat.messages_removed}[/red] removed  "
-            f"[yellow]~{stat.messages_modified}[/yellow] modified  "
-            f"[dim]={stat.messages_unchanged} unchanged[/dim]"
-        )
-        if stat.total_token_delta != 0:
-            delta_sign = "+" if stat.total_token_delta > 0 else ""
-            console.print(
-                f"Token delta: {delta_sign}{stat.total_token_delta}"
-            )
-        if result.generation_config_changes:
-            console.print()
-            console.print("[bold]Config changes:[/bold]")
-            for field_name, (old_val, new_val) in result.generation_config_changes.items():
-                console.print(f"  {field_name}: {old_val} -> {new_val}")
+        _format_stat_summary(result.stat, result.generation_config_changes, console)
         return
 
     # Full diff display
@@ -201,22 +207,7 @@ def format_diff(result: DiffResult, console: Console, stat_only: bool = False) -
 
     # Summary
     console.print()
-    console.print(
-        f"[green]+{stat.messages_added}[/green] added  "
-        f"[red]-{stat.messages_removed}[/red] removed  "
-        f"[yellow]~{stat.messages_modified}[/yellow] modified  "
-        f"[dim]={stat.messages_unchanged} unchanged[/dim]"
-    )
-
-    if stat.total_token_delta != 0:
-        delta_sign = "+" if stat.total_token_delta > 0 else ""
-        console.print(f"Token delta: {delta_sign}{stat.total_token_delta}")
-
-    if result.generation_config_changes:
-        console.print()
-        console.print("[bold]Config changes:[/bold]")
-        for field_name, (old_val, new_val) in result.generation_config_changes.items():
-            console.print(f"  {field_name}: {old_val} -> {new_val}")
+    _format_stat_summary(result.stat, result.generation_config_changes, console)
 
 
 def format_error(message: str, console: Console) -> None:

@@ -71,30 +71,32 @@ def _discover_tract(db_path: str) -> str:
         raise SystemExit(1)
 
     engine = create_trace_engine(db_path)
-    session_factory = create_session_factory(engine)
-    session = session_factory()
-
     try:
-        # Query distinct tract_ids from refs table
-        result = session.execute(text("SELECT DISTINCT tract_id FROM refs"))
-        tract_ids = [row[0] for row in result]
+        session_factory = create_session_factory(engine)
+        session = session_factory()
 
-        if len(tract_ids) == 0:
-            console = get_console()
-            format_error("No tracts found in database.", console)
-            raise SystemExit(1)
-        elif len(tract_ids) == 1:
-            return tract_ids[0]
-        else:
-            console = get_console()
-            format_error(
-                f"Multiple tracts found ({len(tract_ids)}). "
-                f"Use --tract-id to specify one.",
-                console,
-            )
-            raise SystemExit(1)
+        try:
+            # Query distinct tract_ids from refs table
+            result = session.execute(text("SELECT DISTINCT tract_id FROM refs"))
+            tract_ids = [row[0] for row in result]
+
+            if len(tract_ids) == 0:
+                console = get_console()
+                format_error("No tracts found in database.", console)
+                raise SystemExit(1)
+            elif len(tract_ids) == 1:
+                return tract_ids[0]
+            else:
+                console = get_console()
+                format_error(
+                    f"Multiple tracts found ({len(tract_ids)}). "
+                    f"Use --tract-id to specify one.",
+                    console,
+                )
+                raise SystemExit(1)
+        finally:
+            session.close()
     finally:
-        session.close()
         engine.dispose()
 
 

@@ -160,6 +160,16 @@ class RefRepository(ABC):
         ...
 
     @abstractmethod
+    def set_symbolic_ref(self, tract_id: str, ref_name: str, symbolic_target: str) -> None:
+        """Set a ref to point at another ref symbolically (commit_hash=None)."""
+        ...
+
+    @abstractmethod
+    def get_symbolic_ref(self, tract_id: str, ref_name: str) -> str | None:
+        """Get the symbolic target of a ref. Returns None if not found or not symbolic."""
+        ...
+
+    @abstractmethod
     def get_current_branch(self, tract_id: str) -> str | None:
         """Get the current branch name if HEAD is attached. Returns None if detached."""
         ...

@@ -8,7 +8,7 @@ from tract.cli.formatting import format_error, format_log_compact, format_log_ve
 
 
 @click.command()
-@click.option("-n", "--limit", default=20, type=int, help="Maximum number of commits to show.")
+@click.option("-n", "--limit", default=20, type=click.IntRange(min=1), help="Maximum number of commits to show.")
 @click.option("-v", "--verbose", is_flag=True, help="Show verbose commit details.")
 @click.option("--op", "op_filter", default=None, type=click.Choice(["append", "edit"], case_sensitive=False), help="Filter by operation type.")
 @click.pass_context

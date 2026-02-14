@@ -9,7 +9,7 @@ from tract.cli.formatting import format_error, get_console
 
 @click.command()
 @click.argument("target")
-@click.option("--soft", "mode", flag_value="soft", default=True, help="Soft reset (default).")
+@click.option("--soft", "mode", flag_value="soft", default="soft", help="Soft reset (default).")
 @click.option("--hard", "mode", flag_value="hard", help="Hard reset (same as soft in Trace; requires --force).")
 @click.option("--force", is_flag=True, help="Required for --hard reset.")
 @click.pass_context

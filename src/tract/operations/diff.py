@@ -23,8 +23,6 @@ class MessageDiff:
         status: One of "added", "removed", "modified", "unchanged".
         role_a: Role in commit A (None if added).
         role_b: Role in commit B (None if removed).
-        content_type_a: Content type hint from commit A (None if added).
-        content_type_b: Content type hint from commit B (None if removed).
         content_diff_lines: Unified diff output lines for modified messages.
         token_delta: Token count change (positive = more tokens in B).
     """
@@ -33,8 +31,6 @@ class MessageDiff:
     status: Literal["added", "removed", "modified", "unchanged"]
     role_a: str | None = None  # role in commit A (None if added)
     role_b: str | None = None  # role in commit B (None if removed)
-    content_type_a: str | None = None
-    content_type_b: str | None = None
     content_diff_lines: list[str] = field(default_factory=list)  # unified diff lines
     token_delta: int = 0
 
@@ -202,8 +198,8 @@ def compute_diff(
             for k in range(paired):
                 msg_a = messages_a[i1 + k]
                 msg_b = messages_b[j1 + k]
-                old_lines = _serialize_message(msg_a).splitlines(keepends=True)
-                new_lines = _serialize_message(msg_b).splitlines(keepends=True)
+                old_lines = serialized_a[i1 + k].splitlines(keepends=True)
+                new_lines = serialized_b[j1 + k].splitlines(keepends=True)
                 diff_lines = list(difflib.unified_diff(
                     old_lines, new_lines,
                     fromfile=f"commit {commit_a_hash[:8]}",
