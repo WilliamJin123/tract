@@ -6,7 +6,9 @@ Trace is a Python library that brings git-like version control to LLM context wi
 
 ## Core Value
 
-Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource instead of an append-only log.
+1. Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource instead of an append-only log.
+
+2. Context operations exist on an autonomy spectrum. Every operation that transforms context (merge, rebase, cherry-pick, compression) supports three modes: **manual** (human only), **collaborative** (LLM resolves, human reviews and approves), and **autonomous** (LLM handles end-to-end). The default is collaborative — the LLM is a tool in the pipeline, not a gatekeeper. Humans can intercept at any point: before (guide via prompt), during (provide a custom resolver), or after (review and edit results before commit). This same pattern applies across all interfaces: the programmatic SDK, the human-facing CLI, and future agent toolkits.
 
 ## Requirements
 
