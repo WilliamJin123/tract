@@ -44,6 +44,9 @@ from tract.protocols import (
 # Branch model
 from tract.models.branch import BranchInfo
 
+# Merge models
+from tract.models.merge import ConflictInfo, MergeResult
+
 # Operations data models
 from tract.operations.history import StatusInfo
 from tract.operations.diff import DiffResult, MessageDiff, DiffStat
@@ -62,6 +65,9 @@ from tract.exceptions import (
     BranchNotFoundError,
     InvalidBranchNameError,
     UnmergedBranchError,
+    MergeError,
+    MergeConflictError,
+    NothingToMergeError,
 )
 
 __all__ = [
@@ -98,6 +104,9 @@ __all__ = [
     "TokenUsage",
     # Branch model
     "BranchInfo",
+    # Merge models
+    "ConflictInfo",
+    "MergeResult",
     # Operations
     "StatusInfo",
     "DiffResult",
@@ -116,4 +125,7 @@ __all__ = [
     "BranchNotFoundError",
     "InvalidBranchNameError",
     "UnmergedBranchError",
+    "MergeError",
+    "MergeConflictError",
+    "NothingToMergeError",
 ]

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from tract.storage.repositories import (
         AnnotationRepository,
         BlobRepository,
+        CommitParentRepository,
         CommitRepository,
         RefRepository,
     )
@@ -80,6 +81,7 @@ class CommitEngine:
         token_counter: TokenCounter,
         tract_id: str,
         token_budget: TokenBudgetConfig | None = None,
+        parent_repo: CommitParentRepository | None = None,
     ) -> None:
         self._commit_repo = commit_repo
         self._blob_repo = blob_repo
@@ -88,6 +90,7 @@ class CommitEngine:
         self._token_counter = token_counter
         self._tract_id = tract_id
         self._token_budget = token_budget
+        self._parent_repo = parent_repo
 
     def create_commit(
         self,
@@ -231,6 +234,121 @@ class CommitEngine:
             content_type=content_type,
             operation=operation,
             response_to=response_to,
+            message=message,
+            token_count=token_count,
+            metadata=metadata,
+            generation_config=generation_config,
+            created_at=timestamp,
+        )
+
+    def create_merge_commit(
+        self,
+        content: BaseModel,
+        parent_hashes: list[str],
+        *,
+        message: str | None = None,
+        metadata: dict | None = None,
+        generation_config: dict | None = None,
+    ) -> CommitInfo:
+        """Create a merge commit with multiple parents.
+
+        Similar to create_commit() but:
+        - Sets parent_hash to parent_hashes[0] (first parent = current branch).
+        - Includes extra_parents in the commit hash computation.
+        - Records all parents in the commit_parents table via parent_repo.
+        - Operation is always APPEND.
+        - No edit constraint checks.
+
+        Args:
+            content: Pydantic content model instance.
+            parent_hashes: List of parent hashes. [0] = current branch tip,
+                [1] = source branch tip.
+            message: Optional commit message.
+            metadata: Optional metadata dict.
+            generation_config: Optional generation config dict.
+
+        Returns:
+            CommitInfo for the new merge commit.
+
+        Raises:
+            MergeError: If parent_repo is not configured.
+        """
+        if self._parent_repo is None:
+            from tract.exceptions import MergeError
+
+            raise MergeError("CommitEngine has no parent_repo -- cannot create merge commit")
+
+        # 1. Serialize content
+        content_dict = content.model_dump(mode="json")
+        content_type = content_dict.get("content_type", "unknown")
+
+        # 2. Compute content hash
+        c_hash = compute_content_hash(content_dict)
+
+        # 3. Count tokens
+        text = extract_text_from_content(content)
+        token_count = self._token_counter.count_text(text)
+
+        # 4. Store blob
+        now = datetime.now(timezone.utc)
+        blob = BlobRow(
+            content_hash=c_hash,
+            payload_json=json.dumps(content_dict, sort_keys=True, ensure_ascii=False),
+            byte_size=len(json.dumps(content_dict).encode("utf-8")),
+            token_count=token_count,
+            created_at=now,
+        )
+        self._blob_repo.save_if_absent(blob)
+
+        # 5. Parent hashes
+        first_parent = parent_hashes[0] if parent_hashes else None
+        extra_parents = parent_hashes[1:] if len(parent_hashes) > 1 else None
+
+        # 6. Generate timestamp and commit hash
+        timestamp = datetime.now(timezone.utc)
+        timestamp_iso = timestamp.isoformat()
+
+        c_commit_hash = compute_commit_hash(
+            content_hash=c_hash,
+            parent_hash=first_parent,
+            content_type=content_type,
+            operation=CommitOperation.APPEND.value,
+            timestamp_iso=timestamp_iso,
+            extra_parents=extra_parents,
+        )
+
+        # 7. Create and save CommitRow
+        commit_row = CommitRow(
+            commit_hash=c_commit_hash,
+            tract_id=self._tract_id,
+            parent_hash=first_parent,
+            content_hash=c_hash,
+            content_type=content_type,
+            operation=CommitOperation.APPEND,
+            response_to=None,
+            message=message,
+            token_count=token_count,
+            metadata_json=metadata,
+            generation_config_json=generation_config,
+            created_at=timestamp,
+        )
+        self._commit_repo.save(commit_row)
+
+        # 8. Record all parents in commit_parents table
+        self._parent_repo.add_parents(c_commit_hash, parent_hashes)
+
+        # 9. Update HEAD
+        self._ref_repo.update_head(self._tract_id, c_commit_hash)
+
+        # 10. Return CommitInfo
+        return CommitInfo(
+            commit_hash=c_commit_hash,
+            tract_id=self._tract_id,
+            parent_hash=first_parent,
+            content_hash=c_hash,
+            content_type=content_type,
+            operation=CommitOperation.APPEND,
+            response_to=None,
             message=message,
             token_count=token_count,
             metadata=metadata,

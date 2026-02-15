@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from tract.models.branch import BranchInfo
+    from tract.models.merge import MergeResult
     from tract.operations.diff import DiffResult
     from tract.operations.history import StatusInfo
     from tract.storage.schema import CommitRow
@@ -166,6 +167,7 @@ class Tract:
             token_counter=token_counter,
             tract_id=tract_id,
             token_budget=config.token_budget,
+            parent_repo=parent_repo,
         )
 
         # Context compiler
@@ -842,6 +844,179 @@ class Tract:
             force=force,
         )
         self._session.commit()
+
+    def configure_llm(self, client: object) -> None:
+        """Configure the LLM client for semantic operations.
+
+        Stores the client and creates a default OpenAIResolver from it.
+
+        Args:
+            client: An LLM client conforming to the LLMClient protocol.
+        """
+        from tract.llm.resolver import OpenAIResolver
+
+        self._llm_client = client
+        self._default_resolver = OpenAIResolver(client)
+
+    def merge(
+        self,
+        source_branch: str,
+        *,
+        resolver: object | None = None,
+        strategy: str = "auto",
+        no_ff: bool = False,
+        auto_commit: bool = False,
+        model: str | None = None,
+        delete_branch: bool = False,
+    ) -> MergeResult:
+        """Merge a source branch into the current branch.
+
+        Args:
+            source_branch: Name of the branch to merge.
+            resolver: Optional conflict resolver (ResolverCallable).
+                Falls back to self._default_resolver if configured.
+            strategy: ``"auto"`` (default) or ``"semantic"``.
+            no_ff: If True, always create a merge commit (no fast-forward).
+            auto_commit: If True, auto-commit even with resolved conflicts.
+            model: Override model for the default resolver.
+            delete_branch: If True, delete the source branch after merge.
+
+        Returns:
+            :class:`MergeResult` describing the outcome.
+        """
+        from tract.models.merge import MergeResult
+        from tract.operations.merge import merge_branches
+
+        # Determine resolver
+        effective_resolver = resolver
+        if effective_resolver is None:
+            effective_resolver = getattr(self, "_default_resolver", None)
+
+        # If model override and using default resolver, create new one with that model
+        if model is not None and effective_resolver is getattr(self, "_default_resolver", None):
+            if hasattr(self, "_llm_client"):
+                from tract.llm.resolver import OpenAIResolver
+
+                effective_resolver = OpenAIResolver(self._llm_client, model=model)
+
+        result = merge_branches(
+            tract_id=self._tract_id,
+            source_branch=source_branch,
+            commit_repo=self._commit_repo,
+            ref_repo=self._ref_repo,
+            parent_repo=self._parent_repo,
+            blob_repo=self._blob_repo,
+            annotation_repo=self._annotation_repo,
+            commit_engine=self._commit_engine,
+            token_counter=self._token_counter,
+            resolver=effective_resolver,
+            strategy=strategy,
+            no_ff=no_ff,
+        )
+
+        # Auto-commit resolved conflicts
+        if (
+            auto_commit
+            and result.merge_type == "conflict"
+            and result.resolutions
+            and len(result.resolutions) >= len(result.conflicts)
+        ):
+            return self.commit_merge(result)
+
+        # Persist any changes (branch pointer moves, merge commits)
+        self._session.commit()
+
+        # Delete source branch if requested and merge was committed
+        if delete_branch and (result.committed or result.merge_type == "fast_forward"):
+            from tract.operations.branch import delete_branch as _delete_branch
+
+            _delete_branch(
+                source_branch,
+                self._tract_id,
+                self._ref_repo,
+                self._commit_repo,
+                self._parent_repo,
+                force=True,
+            )
+            self._session.commit()
+
+        # Clear compile cache (merge changes HEAD)
+        self._cache_clear()
+
+        return result
+
+    def commit_merge(self, result: MergeResult) -> MergeResult:
+        """Finalize a conflict merge after reviewing/editing resolutions.
+
+        Args:
+            result: A MergeResult from a previous merge() call with conflicts.
+
+        Returns:
+            Updated MergeResult with committed=True and merge_commit_hash set.
+
+        Raises:
+            MergeError: If not all conflicts are resolved.
+        """
+        from tract.exceptions import MergeError
+        from tract.models.content import FreeformContent
+        from tract.operations.merge import create_merge_commit
+
+        # Validate all conflicts have resolutions
+        unresolved = []
+        for conflict in result.conflicts:
+            target_key = conflict.target_hash or conflict.commit_b.commit_hash
+            if target_key not in result.resolutions:
+                unresolved.append(target_key)
+
+        if unresolved:
+            raise MergeError(
+                f"Cannot commit merge: {len(unresolved)} unresolved conflict(s)"
+            )
+
+        # Build merge content from resolutions
+        resolution_text = "\n\n".join(
+            f"Resolution for {k}:\n{v}" for k, v in result.resolutions.items()
+        )
+        merge_content = FreeformContent(
+            payload={
+                "message": f"Merged {result.source_branch} into {result.target_branch}",
+                "resolutions": result.resolutions,
+            }
+        )
+
+        # Determine parent hashes
+        source_hash = result._source_tip_hash
+        target_hash = result._target_tip_hash
+        if source_hash is None or target_hash is None:
+            # Fallback: resolve from ref_repo
+            source_hash = self._ref_repo.get_branch(self._tract_id, result.source_branch)
+            target_hash = self._ref_repo.get_head(self._tract_id)
+
+        parent_hashes = [target_hash, source_hash] if target_hash and source_hash else []
+
+        # Collect generation config from resolver resolutions
+        gen_config = None
+        if result.generation_configs:
+            gen_config = next(iter(result.generation_configs.values()), None)
+
+        merge_info = create_merge_commit(
+            commit_engine=self._commit_engine,
+            parent_repo=self._parent_repo,
+            content=merge_content,
+            parent_hashes=parent_hashes,
+            message=f"Merge branch '{result.source_branch}' into {result.target_branch}",
+            generation_config=gen_config,
+        )
+
+        self._session.commit()
+
+        result.committed = True
+        result.merge_commit_hash = merge_info.commit_hash
+
+        # Clear compile cache
+        self._cache_clear()
+
+        return result
 
     def record_usage(
         self,
