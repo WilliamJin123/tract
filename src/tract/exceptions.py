@@ -116,3 +116,26 @@ class UnmergedBranchError(TraceError):
             f"Branch '{branch_name}' has unmerged commits. "
             f"Use force=True to delete anyway."
         )
+
+
+class MergeError(TraceError):
+    """Base exception for all merge errors."""
+
+
+class MergeConflictError(MergeError):
+    """Raised when merge conflicts are detected and no resolver is available."""
+
+    def __init__(self, conflict_count: int, details: str = "") -> None:
+        self.conflict_count = conflict_count
+        msg = f"Merge has {conflict_count} conflict(s) requiring resolution"
+        if details:
+            msg += f": {details}"
+        super().__init__(msg)
+
+
+class NothingToMergeError(MergeError):
+    """Raised when the source branch is already merged (up-to-date)."""
+
+    def __init__(self, source_branch: str) -> None:
+        self.source_branch = source_branch
+        super().__init__(f"Branch '{source_branch}' is already up-to-date")
