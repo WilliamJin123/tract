@@ -80,3 +80,39 @@ class AmbiguousPrefixError(TraceError):
         super().__init__(
             f"Ambiguous prefix '{prefix}'. Matches: {candidate_str}"
         )
+
+
+class BranchExistsError(TraceError):
+    """Raised when trying to create a branch that already exists."""
+
+    def __init__(self, branch_name: str) -> None:
+        self.branch_name = branch_name
+        super().__init__(f"Branch already exists: {branch_name}")
+
+
+class BranchNotFoundError(TraceError):
+    """Raised when a branch lookup fails."""
+
+    def __init__(self, branch_name: str) -> None:
+        self.branch_name = branch_name
+        super().__init__(f"Branch not found: {branch_name}")
+
+
+class InvalidBranchNameError(TraceError):
+    """Raised when a branch name violates naming rules."""
+
+    def __init__(self, name: str, reason: str) -> None:
+        self.name = name
+        self.reason = reason
+        super().__init__(f"Invalid branch name '{name}': {reason}")
+
+
+class UnmergedBranchError(TraceError):
+    """Raised when trying to delete a branch with unmerged commits."""
+
+    def __init__(self, branch_name: str) -> None:
+        self.branch_name = branch_name
+        super().__init__(
+            f"Branch '{branch_name}' has unmerged commits. "
+            f"Use force=True to delete anyway."
+        )

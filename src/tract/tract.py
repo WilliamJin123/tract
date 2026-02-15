@@ -25,12 +25,19 @@ from tract.models.annotations import Priority, PriorityAnnotation
 from tract.models.commit import CommitInfo, CommitOperation
 from tract.models.config import TractConfig
 from tract.models.content import validate_content
-from tract.exceptions import CommitNotFoundError, ContentValidationError, DetachedHeadError, TraceError
+from tract.exceptions import (
+    BranchNotFoundError,
+    CommitNotFoundError,
+    ContentValidationError,
+    DetachedHeadError,
+    TraceError,
+)
 from tract.protocols import CompiledContext, CompileSnapshot, ContextCompiler, Message, TokenCounter, TokenUsage
 from tract.storage.engine import create_session_factory, create_trace_engine, init_db
 from tract.storage.sqlite import (
     SqliteAnnotationRepository,
     SqliteBlobRepository,
+    SqliteCommitParentRepository,
     SqliteCommitRepository,
     SqliteRefRepository,
 )
@@ -41,6 +48,7 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
     from sqlalchemy.orm import Session
 
+    from tract.models.branch import BranchInfo
     from tract.operations.diff import DiffResult
     from tract.operations.history import StatusInfo
     from tract.storage.schema import CommitRow
@@ -79,6 +87,7 @@ class Tract:
         ref_repo: SqliteRefRepository,
         annotation_repo: SqliteAnnotationRepository,
         token_counter: TokenCounter,
+        parent_repo: SqliteCommitParentRepository | None = None,
         verify_cache: bool = False,
     ) -> None:
         self._engine = engine
@@ -92,6 +101,7 @@ class Tract:
         self._ref_repo = ref_repo
         self._annotation_repo = annotation_repo
         self._token_counter = token_counter
+        self._parent_repo = parent_repo
         self._custom_type_registry: dict[str, type[BaseModel]] = {}
         self._snapshot_cache: OrderedDict[str, CompileSnapshot] = OrderedDict()
         self._snapshot_cache_maxsize: int = config.compile_cache_maxsize
@@ -140,6 +150,7 @@ class Tract:
         blob_repo = SqliteBlobRepository(session)
         ref_repo = SqliteRefRepository(session)
         annotation_repo = SqliteAnnotationRepository(session)
+        parent_repo = SqliteCommitParentRepository(session)
 
         # Token counter
         token_counter = tokenizer or TiktokenCounter(
@@ -163,6 +174,7 @@ class Tract:
             blob_repo=blob_repo,
             annotation_repo=annotation_repo,
             token_counter=token_counter,
+            parent_repo=parent_repo,
         )
 
         # Ensure "main" branch ref exists (idempotent)
@@ -183,6 +195,7 @@ class Tract:
             ref_repo=ref_repo,
             annotation_repo=annotation_repo,
             token_counter=token_counter,
+            parent_repo=parent_repo,
             verify_cache=verify_cache,
         )
 
@@ -715,6 +728,120 @@ class Tract:
         )
         self._session.commit()
         return commit_hash
+
+    def branch(
+        self,
+        name: str,
+        *,
+        source: str | None = None,
+        switch: bool = True,
+    ) -> str:
+        """Create a new branch.
+
+        Args:
+            name: Branch name (git-style naming rules apply).
+            source: Commit hash to branch from.  Defaults to HEAD.
+            switch: If True (default), switch HEAD to the new branch.
+
+        Returns:
+            The commit hash the new branch points to.
+
+        Raises:
+            BranchExistsError: If branch name already exists.
+            InvalidBranchNameError: If branch name is invalid.
+            TraceError: If no commits exist and no source specified.
+        """
+        from tract.operations.branch import create_branch
+
+        result = create_branch(
+            name,
+            self._tract_id,
+            self._ref_repo,
+            self._commit_repo,
+            source=source,
+            switch=switch,
+        )
+        self._session.commit()
+        return result
+
+    def switch(self, target: str) -> str:
+        """Switch to a branch (branch-only, unlike checkout).
+
+        Unlike :meth:`checkout`, this method ONLY accepts branch names.
+        It will not silently detach HEAD on commit hashes -- use
+        :meth:`checkout` for that.
+
+        Args:
+            target: A branch name.
+
+        Returns:
+            The commit hash at the target branch HEAD.
+
+        Raises:
+            BranchNotFoundError: If target is not a valid branch name.
+        """
+        # Validate that target is a branch
+        branch_hash = self._ref_repo.get_branch(self._tract_id, target)
+        if branch_hash is None:
+            raise BranchNotFoundError(target)
+
+        from tract.operations.navigation import checkout as _checkout
+
+        commit_hash, _is_detached = _checkout(
+            target, self._tract_id, self._commit_repo, self._ref_repo
+        )
+        self._session.commit()
+        return commit_hash
+
+    def list_branches(self) -> list[BranchInfo]:
+        """List all branches with current branch indicator.
+
+        Returns:
+            List of :class:`BranchInfo` with ``is_current=True`` for
+            the active branch.
+        """
+        from tract.models.branch import BranchInfo
+        from tract.operations.branch import list_branches
+
+        branch_names = list_branches(self._tract_id, self._ref_repo)
+        current = self._ref_repo.get_current_branch(self._tract_id)
+
+        branches: list[BranchInfo] = []
+        for name in branch_names:
+            commit_hash = self._ref_repo.get_branch(self._tract_id, name)
+            if commit_hash is not None:
+                branches.append(
+                    BranchInfo(
+                        name=name,
+                        commit_hash=commit_hash,
+                        is_current=(name == current),
+                    )
+                )
+        return branches
+
+    def delete_branch(self, name: str, *, force: bool = False) -> None:
+        """Delete a branch.
+
+        Args:
+            name: Branch name to delete.
+            force: If True, delete even if branch has unmerged commits.
+
+        Raises:
+            BranchNotFoundError: If branch doesn't exist.
+            TraceError: If trying to delete the current branch.
+            UnmergedBranchError: If branch has unmerged commits (without force).
+        """
+        from tract.operations.branch import delete_branch
+
+        delete_branch(
+            name,
+            self._tract_id,
+            self._ref_repo,
+            self._commit_repo,
+            self._parent_repo,
+            force=force,
+        )
+        self._session.commit()
 
     def record_usage(
         self,

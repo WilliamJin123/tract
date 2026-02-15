@@ -41,6 +41,9 @@ from tract.protocols import (
     TokenUsage,
 )
 
+# Branch model
+from tract.models.branch import BranchInfo
+
 # Operations data models
 from tract.operations.history import StatusInfo
 from tract.operations.diff import DiffResult, MessageDiff, DiffStat
@@ -55,6 +58,10 @@ from tract.exceptions import (
     EditTargetError,
     DetachedHeadError,
     AmbiguousPrefixError,
+    BranchExistsError,
+    BranchNotFoundError,
+    InvalidBranchNameError,
+    UnmergedBranchError,
 )
 
 __all__ = [
@@ -89,6 +96,8 @@ __all__ = [
     "CompiledContext",
     "CompileSnapshot",
     "TokenUsage",
+    # Branch model
+    "BranchInfo",
     # Operations
     "StatusInfo",
     "DiffResult",
@@ -103,4 +112,8 @@ __all__ = [
     "EditTargetError",
     "DetachedHeadError",
     "AmbiguousPrefixError",
+    "BranchExistsError",
+    "BranchNotFoundError",
+    "InvalidBranchNameError",
+    "UnmergedBranchError",
 ]
