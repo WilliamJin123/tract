@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-10)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 3 in progress (Branching & Merging). Plan 03-02 (LLM Client) complete.
+**Current focus:** Phase 3 in progress (Branching & Merging). Plans 03-01 and 03-02 complete.
 
 ## Current Position
 
 Phase: 3 of 5 (Branching & Merging)
 Plan: 2 of 5 in current phase
-Status: In progress -- Plan 03-02 complete
-Last activity: 2026-02-14 - Completed 03-02-PLAN.md (LLM Client Infrastructure, 56 tests, 357 total)
+Status: In progress -- Plans 03-01 and 03-02 complete
+Last activity: 2026-02-15 - Completed 03-01-PLAN.md (Branch Infrastructure, 59 tests, 417 total)
 
-Progress: [############..] 60% (12/20 plans)
+Progress: [#############.] 65% (13/20 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
+- Total plans completed: 13
 - Average duration: 5m
-- Total execution time: 1.08 hours
+- Total execution time: 1.2 hours
 
 **By Phase:**
 
@@ -33,11 +33,11 @@ Progress: [############..] 60% (12/20 plans)
 | 1.3 | 1/1 | 3m | 3m |
 | 1.4 | 1/1 | 4m | 4m |
 | 2 | 3/3 | 14m | 4.7m |
-| 3 | 1/5 | 6m | 6m |
+| 3 | 2/5 | 13m | 6.5m |
 
 **Recent Trend:**
-- Last 5 plans: 01.4-01 (4m), 02-01 (5m), 02-02 (4m), 02-03 (5m), 03-02 (6m)
-- Trend: stable execution times around 4-6m per plan
+- Last 5 plans: 02-01 (5m), 02-02 (4m), 02-03 (5m), 03-02 (6m), 03-01 (7m)
+- Trend: stable execution times around 4-7m per plan
 
 *Updated after each plan completion*
 
@@ -100,6 +100,12 @@ Recent decisions affecting current work:
 - [02-03]: Token budget not persisted to DB; CLI opens with default config
 - [02-03]: --force guard on hard reset as safety mechanism
 - [02-03]: CLI tests use file-backed databases (not :memory:) since CLI opens own connection
+- [03-01]: CommitParentRow association table for multi-parent commits (position 0 = first parent, 1 = merged)
+- [03-01]: parent_hash column on CommitRow unchanged -- backward compat for first-parent walks
+- [03-01]: Schema version bumped 1 -> 2 with auto-migration for existing databases
+- [03-01]: commit_hash() includes sorted parent_hashes when extra_parents provided
+- [03-01]: Compiler branch-blocks ordering: first-parent chain + second-parent's unique ancestors before merge
+- [03-01]: switch() is branch-only (raises BranchNotFoundError on commit hashes); use checkout() for detached HEAD
 - [03-02]: Programmatic tenacity.Retrying (not decorator) for per-instance max_retries
 - [03-02]: Status codes checked before raise_for_status() for domain-specific errors (LLMAuthError, LLMRateLimitError)
 - [03-02]: Duck-typed resolver with getattr() for cross-plan type access (ConflictInfo defined in 03-03)
@@ -188,12 +194,13 @@ Total test suite: 359 tests passing.
 
 | Plan | Name | Tests | Duration |
 |------|------|-------|----------|
+| 03-01 | Branch Infrastructure | 59 | 7m |
 | 03-02 | LLM Client Infrastructure | 56 | 6m |
 
-Total test suite: 357 tests passing.
+Total test suite: 417 tests passing.
 
 ## Session Continuity
 
-Last session: 2026-02-14
-Stopped at: Completed 03-02-PLAN.md (LLM Client Infrastructure).
+Last session: 2026-02-15
+Stopped at: Completed 03-01-PLAN.md (Branch Infrastructure). Phase 3 plans 1-2/5 done.
 Resume file: None
