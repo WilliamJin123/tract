@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-10)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 3 in progress (Branching & Merging). Plans 03-01 and 03-02 complete.
+**Current focus:** Phase 3 in progress (Branching & Merging). Plans 03-01, 03-02, and 03-03 complete.
 
 ## Current Position
 
 Phase: 3 of 5 (Branching & Merging)
-Plan: 2 of 5 in current phase
-Status: In progress -- Plans 03-01 and 03-02 complete
-Last activity: 2026-02-15 - Completed 03-01-PLAN.md (Branch Infrastructure, 59 tests, 417 total)
+Plan: 3 of 5 in current phase
+Status: In progress -- Plans 03-01, 03-02, and 03-03 complete
+Last activity: 2026-02-15 - Completed 03-03-PLAN.md (Merge Strategies, 34 tests, 451 total)
 
-Progress: [#############.] 65% (13/20 plans)
+Progress: [##############.] 70% (14/20 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
-- Average duration: 5m
-- Total execution time: 1.2 hours
+- Total plans completed: 14
+- Average duration: 5.2m
+- Total execution time: 1.3 hours
 
 **By Phase:**
 
@@ -33,11 +33,11 @@ Progress: [#############.] 65% (13/20 plans)
 | 1.3 | 1/1 | 3m | 3m |
 | 1.4 | 1/1 | 4m | 4m |
 | 2 | 3/3 | 14m | 4.7m |
-| 3 | 2/5 | 13m | 6.5m |
+| 3 | 3/5 | 21m | 7m |
 
 **Recent Trend:**
-- Last 5 plans: 02-01 (5m), 02-02 (4m), 02-03 (5m), 03-02 (6m), 03-01 (7m)
-- Trend: stable execution times around 4-7m per plan
+- Last 5 plans: 02-02 (4m), 02-03 (5m), 03-02 (6m), 03-01 (7m), 03-03 (8m)
+- Trend: slightly increasing as Phase 3 complexity grows
 
 *Updated after each plan completion*
 
@@ -110,6 +110,11 @@ Recent decisions affecting current work:
 - [03-02]: Status codes checked before raise_for_status() for domain-specific errors (LLMAuthError, LLMRateLimitError)
 - [03-02]: Duck-typed resolver with getattr() for cross-plan type access (ConflictInfo defined in 03-03)
 - [03-02]: Resolution.content_text as string alternative to Resolution.content (BaseModel)
+- [03-03]: Merge commit created via CommitEngine.create_merge_commit() with parent_repo parameter
+- [03-03]: Pre-loaded content text in ConflictInfo at detect_conflicts() time
+- [03-03]: EDIT + APPEND conflict only for pre-merge-base targets (post-merge-base edits not conflicting)
+- [03-03]: MergeResult._source_tip_hash/_target_tip_hash for commit_merge parent resolution
+- [03-03]: configure_llm() creates default OpenAIResolver; merge() uses it as fallback
 
 ### Pending Todos
 
@@ -196,11 +201,12 @@ Total test suite: 359 tests passing.
 |------|------|-------|----------|
 | 03-01 | Branch Infrastructure | 59 | 7m |
 | 03-02 | LLM Client Infrastructure | 56 | 6m |
+| 03-03 | Merge Strategies | 34 | 8m |
 
-Total test suite: 417 tests passing.
+Total test suite: 451 tests passing.
 
 ## Session Continuity
 
 Last session: 2026-02-15
-Stopped at: Completed 03-01-PLAN.md (Branch Infrastructure). Phase 3 plans 1-2/5 done.
+Stopped at: Completed 03-03-PLAN.md (Merge Strategies). Phase 3 plans 1-3/5 done.
 Resume file: None
