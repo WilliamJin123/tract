@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-10)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 3 in progress (Branching & Merging). Plans 03-01, 03-02, and 03-03 complete.
+**Current focus:** Phase 3 in progress (Branching & Merging). Plans 03-01 through 03-04 complete.
 
 ## Current Position
 
 Phase: 3 of 5 (Branching & Merging)
-Plan: 3 of 5 in current phase
-Status: In progress -- Plans 03-01, 03-02, and 03-03 complete
-Last activity: 2026-02-15 - Completed 03-03-PLAN.md (Merge Strategies, 34 tests, 451 total)
+Plan: 4 of 5 in current phase
+Status: In progress -- Plans 03-01, 03-02, 03-03, and 03-04 complete
+Last activity: 2026-02-15 - Completed 03-04-PLAN.md (Rebase & Cherry-Pick, 26 tests, 477 total)
 
-Progress: [##############.] 70% (14/20 plans)
+Progress: [###############] 75% (15/20 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 14
-- Average duration: 5.2m
-- Total execution time: 1.3 hours
+- Total plans completed: 15
+- Average duration: 5.3m
+- Total execution time: 1.4 hours
 
 **By Phase:**
 
@@ -33,11 +33,11 @@ Progress: [##############.] 70% (14/20 plans)
 | 1.3 | 1/1 | 3m | 3m |
 | 1.4 | 1/1 | 4m | 4m |
 | 2 | 3/3 | 14m | 4.7m |
-| 3 | 3/5 | 21m | 7m |
+| 3 | 4/5 | 27m | 6.75m |
 
 **Recent Trend:**
-- Last 5 plans: 02-02 (4m), 02-03 (5m), 03-02 (6m), 03-01 (7m), 03-03 (8m)
-- Trend: slightly increasing as Phase 3 complexity grows
+- Last 5 plans: 02-03 (5m), 03-02 (6m), 03-01 (7m), 03-03 (8m), 03-04 (6m)
+- Trend: steady at ~6-8m for Phase 3 complexity
 
 *Updated after each plan completion*
 
@@ -115,6 +115,10 @@ Recent decisions affecting current work:
 - [03-03]: EDIT + APPEND conflict only for pre-merge-base targets (post-merge-base edits not conflicting)
 - [03-03]: MergeResult._source_tip_hash/_target_tip_hash for commit_merge parent resolution
 - [03-03]: configure_llm() creates default OpenAIResolver; merge() uses it as fallback
+- [03-04]: Cherry-pick resolved EDIT content becomes APPEND (no valid response_to on target branch)
+- [03-04]: Rebase blocks on branches containing merge commits (cannot flatten multi-parent history)
+- [03-04]: Noop rebase when current branch is already ahead of target (returns empty result)
+- [03-04]: Replay via CommitEngine.create_commit() -- engine reads HEAD internally for parent assignment
 
 ### Pending Todos
 
@@ -202,11 +206,12 @@ Total test suite: 359 tests passing.
 | 03-01 | Branch Infrastructure | 59 | 7m |
 | 03-02 | LLM Client Infrastructure | 56 | 6m |
 | 03-03 | Merge Strategies | 34 | 8m |
+| 03-04 | Rebase & Cherry-Pick | 26 | 6m |
 
-Total test suite: 451 tests passing.
+Total test suite: 477 tests passing.
 
 ## Session Continuity
 
 Last session: 2026-02-15
-Stopped at: Completed 03-03-PLAN.md (Merge Strategies). Phase 3 plans 1-3/5 done.
+Stopped at: Completed 03-04-PLAN.md (Rebase & Cherry-Pick). Phase 3 plans 1-4/5 done.
 Resume file: None
