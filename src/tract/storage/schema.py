@@ -129,6 +129,34 @@ class AnnotationRow(Base):
     )
 
 
+class CommitParentRow(Base):
+    """Association table for multi-parent commits (merge commits).
+
+    For non-merge commits, only CommitRow.parent_hash is used (single parent).
+    For merge commits, this table stores ALL parents (including the first).
+    The 'position' column preserves parent ordering (important for merge semantics).
+    """
+
+    __tablename__ = "commit_parents"
+
+    commit_hash: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("commits.commit_hash"),
+        primary_key=True,
+    )
+    parent_hash: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("commits.commit_hash"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    # position 0 = first parent (current branch tip), 1 = merged branch tip
+
+    __table_args__ = (
+        Index("ix_commit_parents_commit", "commit_hash"),
+    )
+
+
 class TraceMetaRow(Base):
     """Key-value metadata for the Trace database itself (e.g., schema version)."""
 

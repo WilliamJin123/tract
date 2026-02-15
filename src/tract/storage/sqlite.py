@@ -14,12 +14,14 @@ from sqlalchemy.orm import Session
 from tract.storage.repositories import (
     AnnotationRepository,
     BlobRepository,
+    CommitParentRepository,
     CommitRepository,
     RefRepository,
 )
 from tract.storage.schema import (
     AnnotationRow,
     BlobRow,
+    CommitParentRow,
     CommitRow,
     RefRow,
 )
@@ -358,6 +360,42 @@ class SqliteRefRepository(RefRepository):
         if head_ref.symbolic_target.startswith(prefix):
             return head_ref.symbolic_target[len(prefix):]
         return None
+
+
+class SqliteCommitParentRepository(CommitParentRepository):
+    """SQLite implementation of multi-parent commit storage."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add_parent(self, commit_hash: str, parent_hash: str, position: int) -> None:
+        self._session.add(
+            CommitParentRow(
+                commit_hash=commit_hash,
+                parent_hash=parent_hash,
+                position=position,
+            )
+        )
+        self._session.flush()
+
+    def get_parents(self, commit_hash: str) -> list[str]:
+        stmt = (
+            select(CommitParentRow.parent_hash)
+            .where(CommitParentRow.commit_hash == commit_hash)
+            .order_by(CommitParentRow.position)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def add_parents(self, commit_hash: str, parent_hashes: list[str]) -> None:
+        for i, ph in enumerate(parent_hashes):
+            self._session.add(
+                CommitParentRow(
+                    commit_hash=commit_hash,
+                    parent_hash=ph,
+                    position=i,
+                )
+            )
+        self._session.flush()
 
 
 class SqliteAnnotationRepository(AnnotationRepository):

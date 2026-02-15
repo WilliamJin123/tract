@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-    from tract.storage.schema import AnnotationRow, BlobRow, CommitRow
+    from tract.storage.schema import AnnotationRow, BlobRow, CommitParentRow, CommitRow
 
 
 class CommitRepository(ABC):
@@ -172,6 +172,28 @@ class RefRepository(ABC):
     @abstractmethod
     def get_current_branch(self, tract_id: str) -> str | None:
         """Get the current branch name if HEAD is attached. Returns None if detached."""
+        ...
+
+
+class CommitParentRepository(ABC):
+    """Abstract interface for multi-parent commit storage (merge commits)."""
+
+    @abstractmethod
+    def add_parent(self, commit_hash: str, parent_hash: str, position: int) -> None:
+        """Add a single parent entry for a commit."""
+        ...
+
+    @abstractmethod
+    def get_parents(self, commit_hash: str) -> list[str]:
+        """Get parent hashes for a commit, ordered by position.
+
+        Returns empty list for non-merge commits (no entries in table).
+        """
+        ...
+
+    @abstractmethod
+    def add_parents(self, commit_hash: str, parent_hashes: list[str]) -> None:
+        """Batch add parents for a commit. Position = list index."""
         ...
 
 

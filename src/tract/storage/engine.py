@@ -48,12 +48,12 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 def init_db(engine: Engine) -> None:
     """Initialize the database: create all tables and set schema version.
 
-    Creates all tables defined in Base.metadata, then inserts
-    schema_version=1 into _trace_meta if not already present.
+    Creates all tables defined in Base.metadata, then sets schema_version.
+    For new databases, schema_version is set to "2".
+    For existing v1 databases, migrates to v2 by creating commit_parents table.
     """
     Base.metadata.create_all(engine)
 
-    # Set schema version if not already present
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
     with SessionLocal() as session:
         existing = session.execute(
@@ -61,5 +61,11 @@ def init_db(engine: Engine) -> None:
         ).scalar_one_or_none()
 
         if existing is None:
-            session.add(TraceMetaRow(key="schema_version", value="1"))
+            # New database: set schema version to 2
+            session.add(TraceMetaRow(key="schema_version", value="2"))
+            session.commit()
+        elif existing.value == "1":
+            # Migrate v1 -> v2: create commit_parents table
+            Base.metadata.tables["commit_parents"].create(engine, checkfirst=True)
+            existing.value = "2"
             session.commit()

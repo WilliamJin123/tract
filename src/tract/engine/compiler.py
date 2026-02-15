@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from tract.storage.repositories import (
         AnnotationRepository,
         BlobRepository,
+        CommitParentRepository,
         CommitRepository,
     )
     from tract.storage.schema import CommitRow
@@ -53,12 +54,14 @@ class DefaultContextCompiler:
         annotation_repo: AnnotationRepository,
         token_counter: TokenCounter,
         type_to_role_map: dict[str, str] | None = None,
+        parent_repo: CommitParentRepository | None = None,
     ) -> None:
         self._commit_repo = commit_repo
         self._blob_repo = blob_repo
         self._annotation_repo = annotation_repo
         self._token_counter = token_counter
         self._type_to_role_override = type_to_role_map or {}
+        self._parent_repo = parent_repo
 
     def compile(
         self,
@@ -149,10 +152,21 @@ class DefaultContextCompiler:
         at_time: datetime | None = None,
         at_commit: str | None = None,
     ) -> list[CommitRow]:
-        """Walk parent chain from head to root, apply time filters, return root-to-head order."""
+        """Walk parent chain from head to root, apply time filters, return root-to-head order.
+
+        When parent_repo is available, detects merge commits and includes
+        commits from both parents using "branch blocks" ordering: all
+        first-parent commits in order, then second-parent's unique commits
+        before the merge point, in order.
+        """
+        # First-parent walk (linear chain)
         ancestors = self._commit_repo.get_ancestors(head_hash)
         # ancestors is head-first (newest first), reverse to root-first
         commits = list(reversed(ancestors))
+
+        # If parent_repo is available, handle merge commits
+        if self._parent_repo is not None:
+            commits = self._walk_with_merge_parents(commits)
 
         # Apply at_commit filter: include only up to and including the specified hash
         if at_commit is not None:
@@ -169,6 +183,64 @@ class DefaultContextCompiler:
             commits = [c for c in commits if _normalize_dt(c.created_at) <= at_time_naive]
 
         return commits
+
+    def _walk_with_merge_parents(
+        self,
+        first_parent_commits: list[CommitRow],
+    ) -> list[CommitRow]:
+        """Expand a first-parent commit list to include merge parent branches.
+
+        Uses "branch blocks" ordering: for each merge commit found,
+        the second parent's unique commits (not already in the list)
+        are inserted before the merge commit in chronological order.
+        """
+        assert self._parent_repo is not None
+
+        seen: set[str] = {c.commit_hash for c in first_parent_commits}
+        result: list[CommitRow] = []
+
+        for commit in first_parent_commits:
+            # Check if this commit is a merge commit
+            parents = self._parent_repo.get_parents(commit.commit_hash)
+
+            if len(parents) >= 2:
+                # Walk the second parent's chain to find unique commits
+                second_parent_hash = parents[1]
+                second_branch_commits = self._collect_unique_ancestors(
+                    second_parent_hash, seen
+                )
+                # Insert second branch's commits before the merge commit
+                for sc in second_branch_commits:
+                    seen.add(sc.commit_hash)
+                result.extend(second_branch_commits)
+
+            result.append(commit)
+
+        return result
+
+    def _collect_unique_ancestors(
+        self,
+        start_hash: str,
+        seen: set[str],
+    ) -> list[CommitRow]:
+        """Collect ancestors from start_hash that are not in 'seen'.
+
+        Returns commits in chronological order (root to tip).
+        Stops when hitting a commit already in 'seen'.
+        """
+        unique: list[CommitRow] = []
+        current_hash: str | None = start_hash
+
+        while current_hash is not None and current_hash not in seen:
+            commit = self._commit_repo.get(current_hash)
+            if commit is None:
+                break
+            unique.append(commit)
+            current_hash = commit.parent_hash
+
+        # Reverse to chronological order (root first)
+        unique.reverse()
+        return unique
 
     def _build_edit_map(
         self,

@@ -33,7 +33,7 @@ class TestTableCreation:
         """Verify all 5 expected tables are created."""
         inspector = inspect(engine)
         table_names = set(inspector.get_table_names())
-        expected = {"blobs", "commits", "refs", "annotations", "_trace_meta"}
+        expected = {"blobs", "commits", "refs", "annotations", "commit_parents", "_trace_meta"}
         assert expected <= table_names, f"Missing tables: {expected - table_names}"
 
     def test_trace_meta_has_schema_version(self, session):
@@ -42,7 +42,7 @@ class TestTableCreation:
             select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
         ).scalar_one_or_none()
         assert row is not None
-        assert row.value == "1"
+        assert row.value == "2"
 
 
 class TestBlobRow:
