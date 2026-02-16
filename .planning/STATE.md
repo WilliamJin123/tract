@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-10)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 3 COMPLETE (Branching & Merging). All 5 plans done. Ready for Phase 4.
+**Current focus:** Phase 4 in progress (Compression). Plan 04-01 complete. Next: 04-02.
 
 ## Current Position
 
-Phase: 3 of 5 (Branching & Merging) -- COMPLETE
-Plan: 5 of 5 in current phase
-Status: Phase complete -- All plans 03-01 through 03-05 done
-Last activity: 2026-02-15 - Completed 03-05-PLAN.md (CLI Commands, 12 tests, 489 total)
+Phase: 4 of 5 (Compression)
+Plan: 1 of 3 in current phase
+Status: In progress
+Last activity: 2026-02-16 - Completed 04-01-PLAN.md (Compression Storage Foundation, 21 tests, 510 total)
 
-Progress: [################] 80% (16/20 plans)
+Progress: [#################] 85% (17/20 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 16
-- Average duration: 5.3m
-- Total execution time: 1.45 hours
+- Total plans completed: 17
+- Average duration: 5.4m
+- Total execution time: 1.55 hours
 
 **By Phase:**
 
@@ -34,10 +34,11 @@ Progress: [################] 80% (16/20 plans)
 | 1.4 | 1/1 | 4m | 4m |
 | 2 | 3/3 | 14m | 4.7m |
 | 3 | 5/5 | 30m | 6m |
+| 4 | 1/3 | 6m | 6m |
 
 **Recent Trend:**
-- Last 5 plans: 03-02 (6m), 03-01 (7m), 03-03 (8m), 03-04 (6m), 03-05 (3m)
-- Trend: steady at ~3-8m for Phase 3 complexity
+- Last 5 plans: 03-03 (8m), 03-04 (6m), 03-05 (3m), 04-01 (6m)
+- Trend: steady at ~3-8m
 
 *Updated after each plan completion*
 
@@ -119,6 +120,10 @@ Recent decisions affecting current work:
 - [03-04]: Rebase blocks on branches containing merge commits (cannot flatten multi-parent history)
 - [03-04]: Noop rebase when current branch is already ahead of target (returns empty result)
 - [03-04]: Replay via CommitEngine.create_commit() -- engine reads HEAD internally for parent assignment
+- [04-01]: Schema version bumped 2->3 with auto-migration for compression tables
+- [04-01]: CompressionRepository follows same ABC+SQLite pattern as other repositories
+- [04-01]: PendingCompression is mutable (not frozen) to allow summary editing before approval
+- [04-01]: v1->v2->v3 migration chain runs sequentially for v1 databases
 
 ### Pending Todos
 
@@ -212,8 +217,18 @@ Total test suite: 359 tests passing.
 
 Total test suite: 489 tests passing.
 
+## Phase 4 Stats (in progress)
+
+| Plan | Name | Tests | Duration |
+|------|------|-------|----------|
+| 04-01 | Compression Storage Foundation | 21 | 6m |
+| 04-02 | Compression Engine | - | - |
+| 04-03 | GC & CLI | - | - |
+
+Total test suite: 510 tests passing.
+
 ## Session Continuity
 
-Last session: 2026-02-15
-Stopped at: Completed 03-05-PLAN.md (CLI Commands). Phase 3 COMPLETE (5/5 plans).
+Last session: 2026-02-16
+Stopped at: Completed 04-01-PLAN.md (Compression Storage Foundation). Phase 4 in progress (1/3 plans).
 Resume file: None
