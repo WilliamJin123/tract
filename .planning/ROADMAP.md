@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1.4: LRU Compile Cache & Snapshot Patching** - Replace single-snapshot cache with LRU keyed by head_hash, EDIT/annotate snapshot patching instead of invalidation (INSERTED)
 - [x] **Phase 2: Linear History & CLI** - Log, status, diff, reset, checkout, and CLI wrapper for inspection
 - [x] **Phase 3: Branching & Merging** - Branch, switch, merge (fast-forward + semantic), rebase, cherry-pick, and LLM client
-- [ ] **Phase 4: Compression** - Token-budget-aware compression, pinned commit preservation, commit reordering, garbage collection
+- [x] **Phase 4: Compression** - Token-budget-aware compression, pinned commit preservation, commit reordering, garbage collection
 - [ ] **Phase 5: Multi-Agent & Release** - Spawn/collapse for subagents, session persistence, crash recovery, cross-repo queries, packaging
 
 ## Phase Details
@@ -155,9 +155,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 04-01-PLAN.md -- CompressionRecord schema (3 new tables), storage repo, domain models, migration v2->v3, summarization prompt
-- [ ] 04-02-PLAN.md -- Compression engine (compress_range operation, Tract.compress facade, 3 autonomy modes, PINNED preservation, provenance)
-- [ ] 04-03-PLAN.md -- Compile-time reordering (order parameter, safety checks) and garbage collection (retention policies, reachability)
+- [x] 04-01-PLAN.md -- CompressionRecord schema (3 new tables), storage repo, domain models, migration v2->v3, summarization prompt
+- [x] 04-02-PLAN.md -- Compression engine (compress_range operation, Tract.compress facade, 3 autonomy modes, PINNED preservation, provenance)
+- [x] 04-03-PLAN.md -- Compile-time reordering (order parameter, safety checks) and garbage collection (retention policies, reachability)
 
 ### Phase 5: Multi-Agent & Release
 **Goal**: Users can coordinate multiple agent traces with spawn/collapse semantics, recover from crashes, and install Trace as a pip package
@@ -191,5 +191,5 @@ Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 1.4 -> 2 -> 3 -> 4 ->
 | 1.4 LRU Cache & Snapshot Patching | 1/1 | Complete | 2026-02-11 |
 | 2. Linear History & CLI | 3/3 | Complete | 2026-02-12 |
 | 3. Branching & Merging | 5/5 | Complete | 2026-02-14 |
-| 4. Compression | 0/3 | Not started | - |
+| 4. Compression | 3/3 | Complete | 2026-02-16 |
 | 5. Multi-Agent & Release | 0/3 | Not started | - |

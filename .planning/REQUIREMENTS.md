@@ -30,10 +30,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Compression
 
-- [ ] **COMP-01**: User can compress a range of commits into a summary commit with token budget target
-- [ ] **COMP-02**: Pinned commits survive compression verbatim (hash verification)
-- [ ] **COMP-03**: User can reorder commits with semantic safety checks (warn when order change affects meaning)
-- [ ] **COMP-04**: User can run garbage collection to clean up unreachable commits with configurable retention policies
+- [x] **COMP-01**: User can compress a range of commits into a summary commit with token budget target
+- [x] **COMP-02**: Pinned commits survive compression verbatim (hash verification)
+- [x] **COMP-03**: User can reorder commits with semantic safety checks (warn when order change affects meaning)
+- [x] **COMP-04**: User can run garbage collection to clean up unreachable commits with configurable retention policies
 
 ### Multi-Agent
 
@@ -120,10 +120,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BRNC-04 | Phase 3 | Complete |
 | BRNC-05 | Phase 3 | Complete |
 | BRNC-06 | Phase 3 | Complete |
-| COMP-01 | Phase 4 | Pending |
-| COMP-02 | Phase 4 | Pending |
-| COMP-03 | Phase 4 | Pending |
-| COMP-04 | Phase 4 | Pending |
+| COMP-01 | Phase 4 | Complete |
+| COMP-02 | Phase 4 | Complete |
+| COMP-03 | Phase 4 | Complete |
+| COMP-04 | Phase 4 | Complete |
 | MAGT-01 | Phase 5 | Pending |
 | MAGT-02 | Phase 5 | Pending |
 | MAGT-03 | Phase 5 | Pending |
