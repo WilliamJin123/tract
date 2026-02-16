@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from tract.models.branch import BranchInfo
-    from tract.models.compression import CompressResult, PendingCompression
+    from tract.models.compression import CompressResult, GCResult, PendingCompression
     from tract.models.merge import CherryPickResult, MergeResult, RebaseResult
     from tract.operations.diff import DiffResult
     from tract.operations.history import StatusInfo
@@ -1355,6 +1355,59 @@ class Tract:
             CompressResult with committed compression details.
         """
         return self._finalize_compression(pending)
+
+    def gc(
+        self,
+        *,
+        orphan_retention_days: int = 7,
+        archive_retention_days: int | None = None,
+        branch: str | None = None,
+    ) -> GCResult:
+        """Garbage-collect unreachable commits.
+
+        Removes commits not reachable from any branch tip, subject to
+        configurable retention policies.
+
+        Args:
+            orphan_retention_days: Days before orphaned commits become
+                eligible for removal. Default 7.
+            archive_retention_days: If set, days before archived (compression
+                source) commits become eligible for removal. None (default)
+                means archives are never removed.
+            branch: If set, only check this branch for reachability.
+                WARNING: commits reachable from other branches may be removed.
+
+        Returns:
+            :class:`GCResult` with removal counts and duration.
+
+        Raises:
+            CompressionError: If compression repository is not available.
+        """
+        from tract.models.compression import GCResult as _GCResult
+        from tract.operations.compression import gc as _gc
+
+        if self._compression_repo is None:
+            from tract.exceptions import CompressionError
+            raise CompressionError("Compression repository not available")
+
+        if self._parent_repo is None:
+            from tract.exceptions import CompressionError
+            raise CompressionError("Parent repository not available")
+
+        result = _gc(
+            tract_id=self._tract_id,
+            commit_repo=self._commit_repo,
+            ref_repo=self._ref_repo,
+            parent_repo=self._parent_repo,
+            blob_repo=self._blob_repo,
+            compression_repo=self._compression_repo,
+            orphan_retention_days=orphan_retention_days,
+            archive_retention_days=archive_retention_days,
+            branch=branch,
+        )
+
+        self._session.commit()
+        return result
 
     def record_usage(
         self,

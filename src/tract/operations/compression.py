@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from tract.exceptions import CompressionError
 from tract.models.annotations import Priority
 from tract.models.commit import CommitOperation
-from tract.models.compression import CompressResult, PendingCompression
+from tract.models.compression import CompressResult, GCResult, PendingCompression
 from tract.models.content import DialogueContent
 from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM, build_summarize_prompt
 
@@ -778,3 +778,168 @@ def _clear_head_for_root(
     # HEAD -> refs/heads/main and refs/heads/main doesn't exist,
     # get_head returns None. That's what we want.
     pass
+
+
+# ===========================================================================
+# Garbage Collection
+# ===========================================================================
+
+
+def _get_all_reachable(
+    tract_id: str,
+    ref_repo: RefRepository,
+    commit_repo: CommitRepository,
+    parent_repo: CommitParentRepository,
+    *,
+    branch: str | None = None,
+) -> set[str]:
+    """Get all reachable commit hashes from branch tips (and detached HEAD).
+
+    If ``branch`` is specified, only that branch's ancestors are considered.
+    Otherwise, all branches AND a potentially detached HEAD are scanned.
+
+    Args:
+        tract_id: Tract identifier.
+        ref_repo: Ref repository for branch listings.
+        commit_repo: Commit repository for hash lookups.
+        parent_repo: Parent repository for multi-parent traversal.
+        branch: Optional specific branch to scan.
+
+    Returns:
+        Set of reachable commit hashes.
+    """
+    from tract.operations.dag import get_all_ancestors
+
+    reachable: set[str] = set()
+
+    if branch is not None:
+        # Scan only the specified branch
+        tip = ref_repo.get_branch(tract_id, branch)
+        if tip is not None:
+            reachable |= get_all_ancestors(tip, commit_repo, parent_repo)
+        return reachable
+
+    # Scan ALL branches
+    for branch_name in ref_repo.list_branches(tract_id):
+        tip = ref_repo.get_branch(tract_id, branch_name)
+        if tip is not None:
+            reachable |= get_all_ancestors(tip, commit_repo, parent_repo)
+
+    # Also check detached HEAD (may point to a commit not on any branch)
+    if ref_repo.is_detached(tract_id):
+        head = ref_repo.get_head(tract_id)
+        if head is not None:
+            reachable |= get_all_ancestors(head, commit_repo, parent_repo)
+
+    return reachable
+
+
+def _normalize_dt(dt: datetime) -> datetime:
+    """Strip timezone info for SQLite naive datetime comparison."""
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+
+def gc(
+    tract_id: str,
+    commit_repo: CommitRepository,
+    ref_repo: RefRepository,
+    parent_repo: CommitParentRepository,
+    blob_repo: BlobRepository,
+    compression_repo: CompressionRepository,
+    *,
+    orphan_retention_days: int = 7,
+    archive_retention_days: int | None = None,
+    branch: str | None = None,
+) -> GCResult:
+    """Garbage-collect unreachable commits with configurable retention.
+
+    Finds all commits not reachable from any branch tip (or a specific
+    branch if ``branch`` is set), then removes eligible ones based on
+    age and archive status.
+
+    Retention policies:
+    - Orphans (not archived): removed if older than ``orphan_retention_days``
+    - Archives (compression sources): preserved by default. Removed only
+      if ``archive_retention_days`` is set and the commit is old enough.
+
+    Args:
+        tract_id: Tract identifier.
+        commit_repo: Commit repository.
+        ref_repo: Ref repository.
+        parent_repo: Commit parent repository.
+        blob_repo: Blob repository.
+        compression_repo: Compression provenance repository.
+        orphan_retention_days: Days before orphans become eligible for removal.
+        archive_retention_days: If set, days before archived commits become
+            eligible for removal. None means archives are never removed.
+        branch: If set, only this branch's reachability is considered.
+
+    Returns:
+        GCResult with removal counts and duration.
+    """
+    import time
+
+    start = time.monotonic()
+
+    # a. Find reachable commits
+    reachable = _get_all_reachable(
+        tract_id, ref_repo, commit_repo, parent_repo, branch=branch,
+    )
+
+    # b. Find all commits in tract
+    all_commits = commit_repo.get_all(tract_id)
+
+    # c. Compute unreachable
+    unreachable = [c for c in all_commits if c.commit_hash not in reachable]
+
+    # d. Classify and apply retention
+    now = _normalize_dt(datetime.now(timezone.utc))
+    commits_to_remove = []
+    archives_removed = 0
+
+    for commit in unreachable:
+        is_archive = compression_repo.is_source_of(commit.commit_hash)
+        created = _normalize_dt(commit.created_at)
+        age_days = (now - created).total_seconds() / 86400
+
+        if is_archive:
+            # Archive: only remove if archive_retention_days is set and old enough
+            if archive_retention_days is not None and age_days >= archive_retention_days:
+                commits_to_remove.append(commit)
+                archives_removed += 1
+            # Otherwise: preserve (skip)
+        else:
+            # Orphan: remove if old enough
+            if age_days >= orphan_retention_days:
+                commits_to_remove.append(commit)
+
+    # e. Delete eligible commits
+    blobs_removed = 0
+    tokens_freed = 0
+
+    for commit in commits_to_remove:
+        content_hash = commit.content_hash
+        tokens_freed += commit.token_count
+
+        # Clean up compression provenance
+        compression_repo.delete_source(commit.commit_hash)
+        compression_repo.delete_result(commit.commit_hash)
+
+        # Delete the commit
+        commit_repo.delete(commit.commit_hash)
+
+        # Try to delete the blob if no other commit references it
+        if blob_repo.delete_if_orphaned(content_hash):
+            blobs_removed += 1
+
+    duration = time.monotonic() - start
+
+    return GCResult(
+        commits_removed=len(commits_to_remove),
+        blobs_removed=blobs_removed,
+        tokens_freed=tokens_freed,
+        archives_removed=archives_removed,
+        duration_seconds=duration,
+    )

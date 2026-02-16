@@ -52,6 +52,25 @@ class SqliteBlobRepository(BlobRepository):
             self._session.add(blob)
             self._session.flush()
 
+    def delete_if_orphaned(self, content_hash: str) -> bool:
+        """Delete a blob if no commit still references it.
+
+        Returns True if deleted, False if still referenced.
+        """
+        # Check if any commit still references this content_hash
+        ref_stmt = select(CommitRow).where(
+            CommitRow.content_hash == content_hash
+        ).limit(1)
+        if self._session.execute(ref_stmt).first() is not None:
+            return False
+
+        blob = self.get(content_hash)
+        if blob is not None:
+            self._session.delete(blob)
+            self._session.flush()
+            return True
+        return False
+
 
 class SqliteCommitRepository(CommitRepository):
     """SQLite implementation of commit repository."""
@@ -175,6 +194,67 @@ class SqliteCommitRepository(CommitRepository):
             .order_by(CommitRow.created_at)
         )
         return list(self._session.execute(stmt).scalars().all())
+
+    def get_all(self, tract_id: str) -> Sequence[CommitRow]:
+        """Get all commits for a tract, ordered by created_at ascending."""
+        stmt = (
+            select(CommitRow)
+            .where(CommitRow.tract_id == tract_id)
+            .order_by(CommitRow.created_at)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def delete(self, commit_hash: str) -> None:
+        """Delete a commit by hash. Also cleans up related rows.
+
+        Removes CommitParentRow, AnnotationRow, RefRow pointing to this
+        commit, and nullifies parent_hash/response_to references from
+        other commits before deleting the commit itself.
+        """
+        # Delete CommitParentRow entries where this commit is child or parent
+        parent_stmts = select(CommitParentRow).where(
+            (CommitParentRow.commit_hash == commit_hash)
+            | (CommitParentRow.parent_hash == commit_hash)
+        )
+        for row in self._session.execute(parent_stmts).scalars().all():
+            self._session.delete(row)
+
+        # Delete AnnotationRow entries referencing this commit
+        annotation_stmts = select(AnnotationRow).where(
+            AnnotationRow.target_hash == commit_hash
+        )
+        for row in self._session.execute(annotation_stmts).scalars().all():
+            self._session.delete(row)
+
+        # Delete RefRow entries pointing to this commit (e.g., ORIG_HEAD)
+        ref_stmts = select(RefRow).where(
+            RefRow.commit_hash == commit_hash
+        )
+        for row in self._session.execute(ref_stmts).scalars().all():
+            self._session.delete(row)
+
+        # Nullify parent_hash on children (SET NULL semantics)
+        child_stmts = select(CommitRow).where(
+            CommitRow.parent_hash == commit_hash
+        )
+        for child in self._session.execute(child_stmts).scalars().all():
+            child.parent_hash = None
+
+        # Nullify response_to references (SET NULL semantics)
+        resp_stmts = select(CommitRow).where(
+            CommitRow.response_to == commit_hash
+        )
+        for resp in self._session.execute(resp_stmts).scalars().all():
+            resp.response_to = None
+
+        # Flush all modifications BEFORE deleting the commit itself
+        self._session.flush()
+
+        # Now delete the commit
+        commit = self.get(commit_hash)
+        if commit is not None:
+            self._session.delete(commit)
+            self._session.flush()
 
 
 class SqliteRefRepository(RefRepository):
@@ -569,3 +649,21 @@ class SqliteCompressionRepository(CompressionRepository):
             .where(CompressionRow.tract_id == tract_id)
         )
         return set(self._session.execute(stmt).scalars().all())
+
+    def delete_source(self, commit_hash: str) -> None:
+        """Delete CompressionSourceRow entries for a commit hash."""
+        stmt = select(CompressionSourceRow).where(
+            CompressionSourceRow.commit_hash == commit_hash
+        )
+        for row in self._session.execute(stmt).scalars().all():
+            self._session.delete(row)
+        self._session.flush()
+
+    def delete_result(self, commit_hash: str) -> None:
+        """Delete CompressionResultRow entries for a commit hash."""
+        stmt = select(CompressionResultRow).where(
+            CompressionResultRow.commit_hash == commit_hash
+        )
+        for row in self._session.execute(stmt).scalars().all():
+            self._session.delete(row)
+        self._session.flush()

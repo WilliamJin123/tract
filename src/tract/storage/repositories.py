@@ -93,6 +93,16 @@ class CommitRepository(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_all(self, tract_id: str) -> Sequence[CommitRow]:
+        """Get all commits for a tract, ordered by created_at ascending."""
+        ...
+
+    @abstractmethod
+    def delete(self, commit_hash: str) -> None:
+        """Delete a commit by hash. Also cleans up CommitParentRow entries."""
+        ...
+
 
 class BlobRepository(ABC):
     """Abstract interface for blob storage operations."""
@@ -107,6 +117,14 @@ class BlobRepository(ABC):
         """Store a blob only if its content_hash is not already present.
 
         Content-addressable: same content = same hash = stored once.
+        """
+        ...
+
+    @abstractmethod
+    def delete_if_orphaned(self, content_hash: str) -> bool:
+        """Delete a blob if no commit still references it.
+
+        Returns True if the blob was deleted, False if still referenced.
         """
         ...
 
@@ -294,4 +312,14 @@ class CompressionRepository(ABC):
     @abstractmethod
     def get_all_source_hashes(self, tract_id: str) -> set[str]:
         """Get all source commit hashes for a tract across all compressions."""
+        ...
+
+    @abstractmethod
+    def delete_source(self, commit_hash: str) -> None:
+        """Delete CompressionSourceRow entries for a commit hash."""
+        ...
+
+    @abstractmethod
+    def delete_result(self, commit_hash: str) -> None:
+        """Delete CompressionResultRow entries for a commit hash."""
         ...
