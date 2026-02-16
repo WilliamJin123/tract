@@ -39,6 +39,7 @@ from tract.storage.sqlite import (
     SqliteBlobRepository,
     SqliteCommitParentRepository,
     SqliteCommitRepository,
+    SqliteCompressionRepository,
     SqliteRefRepository,
 )
 
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from tract.models.branch import BranchInfo
+    from tract.models.compression import CompressResult, PendingCompression
     from tract.models.merge import CherryPickResult, MergeResult, RebaseResult
     from tract.operations.diff import DiffResult
     from tract.operations.history import StatusInfo
@@ -89,6 +91,7 @@ class Tract:
         annotation_repo: SqliteAnnotationRepository,
         token_counter: TokenCounter,
         parent_repo: SqliteCommitParentRepository | None = None,
+        compression_repo: SqliteCompressionRepository | None = None,
         verify_cache: bool = False,
     ) -> None:
         self._engine = engine
@@ -103,6 +106,7 @@ class Tract:
         self._annotation_repo = annotation_repo
         self._token_counter = token_counter
         self._parent_repo = parent_repo
+        self._compression_repo = compression_repo
         self._custom_type_registry: dict[str, type[BaseModel]] = {}
         self._cache = CacheManager(
             maxsize=config.compile_cache_maxsize,
@@ -156,6 +160,7 @@ class Tract:
         ref_repo = SqliteRefRepository(session)
         annotation_repo = SqliteAnnotationRepository(session)
         parent_repo = SqliteCommitParentRepository(session)
+        compression_repo = SqliteCompressionRepository(session)
 
         # Token counter
         token_counter = tokenizer or TiktokenCounter(
@@ -202,6 +207,7 @@ class Tract:
             annotation_repo=annotation_repo,
             token_counter=token_counter,
             parent_repo=parent_repo,
+            compression_repo=compression_repo,
             verify_cache=verify_cache,
         )
 
@@ -1116,6 +1122,155 @@ class Tract:
         self._cache.clear()
 
         return result
+
+    def compress(
+        self,
+        *,
+        commits: list[str] | None = None,
+        from_commit: str | None = None,
+        to_commit: str | None = None,
+        target_tokens: int | None = None,
+        preserve: list[str] | None = None,
+        auto_commit: bool = True,
+        content: str | None = None,
+        instructions: str | None = None,
+        system_prompt: str | None = None,
+    ) -> CompressResult | PendingCompression:
+        """Compress commit chains into summaries.
+
+        Supports three modes:
+        - **Manual** (``content`` provided): Uses your text as the summary.
+        - **LLM** (``configure_llm()`` called): Uses LLM for summarization.
+        - **Collaborative** (``auto_commit=False``): Returns PendingCompression
+          for review; call ``.approve()`` or :meth:`approve_compression` to finalize.
+
+        PINNED commits survive verbatim. SKIP commits are excluded.
+        Original commits remain in DB (non-destructive).
+
+        Args:
+            commits: Explicit list of commit hashes to compress.
+            from_commit: Start of range (inclusive).
+            to_commit: End of range (inclusive).
+            target_tokens: Target token count for summaries.
+            preserve: Hashes to treat as temporarily PINNED.
+            auto_commit: If True, commit immediately.
+            content: Manual summary text (bypasses LLM).
+            instructions: Additional LLM instructions.
+            system_prompt: Custom system prompt for LLM.
+
+        Returns:
+            :class:`CompressResult` or :class:`PendingCompression`.
+
+        Raises:
+            DetachedHeadError: If HEAD is detached.
+            CompressionError: On various error conditions.
+        """
+        from tract.operations.compression import compress_range
+
+        # Guard: detached HEAD blocks compression
+        if self._ref_repo.is_detached(self._tract_id):
+            raise DetachedHeadError()
+
+        if self._compression_repo is None:
+            from tract.exceptions import CompressionError
+            raise CompressionError("Compression repository not available")
+
+        llm_client = getattr(self, "_llm_client", None)
+
+        result = compress_range(
+            tract_id=self._tract_id,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            annotation_repo=self._annotation_repo,
+            ref_repo=self._ref_repo,
+            commit_engine=self._commit_engine,
+            token_counter=self._token_counter,
+            compression_repo=self._compression_repo,
+            parent_repo=self._parent_repo,
+            commits=commits,
+            from_commit=from_commit,
+            to_commit=to_commit,
+            target_tokens=target_tokens,
+            preserve=preserve,
+            auto_commit=auto_commit,
+            llm_client=llm_client,
+            content=content,
+            instructions=instructions,
+            system_prompt=system_prompt,
+            type_registry=self._custom_type_registry,
+        )
+
+        if isinstance(result, PendingCompression):
+            # Set the commit function for later approval
+            result._commit_fn = self._finalize_compression
+            return result
+
+        # Auto-commit mode: persist to DB
+        self._session.commit()
+
+        # Clear compile cache
+        self._cache.clear()
+
+        return result
+
+    def _finalize_compression(
+        self, pending: PendingCompression
+    ) -> CompressResult:
+        """Finalize a pending compression by creating commits.
+
+        Called by PendingCompression.approve() via the _commit_fn closure,
+        or directly by approve_compression().
+
+        Args:
+            pending: The PendingCompression to finalize.
+
+        Returns:
+            CompressResult with committed compression details.
+        """
+        from tract.operations.compression import _commit_compression
+
+        if self._compression_repo is None:
+            from tract.exceptions import CompressionError
+            raise CompressionError("Compression repository not available")
+
+        result = _commit_compression(
+            tract_id=self._tract_id,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            ref_repo=self._ref_repo,
+            commit_engine=self._commit_engine,
+            token_counter=self._token_counter,
+            compression_repo=self._compression_repo,
+            summaries=pending.summaries,
+            range_commits=pending._range_commits,  # type: ignore[attr-defined]
+            pinned_commits=pending._pinned_commits,  # type: ignore[attr-defined]
+            normal_commits=pending._normal_commits,  # type: ignore[attr-defined]
+            pinned_hashes=pending._pinned_hashes,  # type: ignore[attr-defined]
+            skip_hashes=pending._skip_hashes,  # type: ignore[attr-defined]
+            groups=pending._groups,  # type: ignore[attr-defined]
+            original_tokens=pending.original_tokens,
+            target_tokens=pending._target_tokens,  # type: ignore[attr-defined]
+            instructions=pending._instructions,  # type: ignore[attr-defined]
+            branch_name=pending._branch_name,  # type: ignore[attr-defined]
+            type_registry=self._custom_type_registry,
+        )
+
+        self._session.commit()
+        self._cache.clear()
+        return result
+
+    def approve_compression(
+        self, pending: PendingCompression
+    ) -> CompressResult:
+        """Finalize a pending compression (alternative to pending.approve()).
+
+        Args:
+            pending: The PendingCompression to finalize.
+
+        Returns:
+            CompressResult with committed compression details.
+        """
+        return self._finalize_compression(pending)
 
     def record_usage(
         self,

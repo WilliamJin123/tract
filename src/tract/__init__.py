@@ -54,6 +54,9 @@ from tract.models.merge import (
     RebaseWarning,
 )
 
+# Compression models
+from tract.models.compression import CompressResult, PendingCompression
+
 # Operations data models
 from tract.operations.history import StatusInfo
 from tract.operations.diff import DiffResult, MessageDiff, DiffStat
@@ -78,6 +81,7 @@ from tract.exceptions import (
     RebaseError,
     CherryPickError,
     SemanticSafetyError,
+    CompressionError,
 )
 
 __all__ = [
@@ -145,4 +149,8 @@ __all__ = [
     "RebaseError",
     "CherryPickError",
     "SemanticSafetyError",
+    # Compression models
+    "CompressResult",
+    "PendingCompression",
+    "CompressionError",
 ]

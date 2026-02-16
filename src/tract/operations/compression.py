@@ -1,0 +1,713 @@
+"""Compression operations for Trace.
+
+Implements context compression: summarizing commit chains into shorter
+summaries to fit token budgets. Supports three autonomy modes:
+- Autonomous (LLM summarization with auto-commit)
+- Collaborative (LLM summarization, review before commit)
+- Manual (user-provided summary text)
+
+PINNED commits survive compression verbatim. SKIP commits are ignored.
+Original commits remain in DB as unreachable (non-destructive).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+from tract.exceptions import CompressionError
+from tract.models.annotations import Priority
+from tract.models.compression import CompressResult, PendingCompression
+from tract.models.content import DialogueContent
+from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM, build_summarize_prompt
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from tract.engine.commit import CommitEngine
+    from tract.protocols import TokenCounter
+    from tract.storage.repositories import (
+        AnnotationRepository,
+        BlobRepository,
+        CommitParentRepository,
+        CommitRepository,
+        CompressionRepository,
+        RefRepository,
+    )
+    from tract.storage.schema import CommitRow
+
+
+from tract.operations import row_to_info as _row_to_info
+
+
+def _resolve_commit_range(
+    commit_repo: CommitRepository,
+    ref_repo: RefRepository,
+    annotation_repo: AnnotationRepository,
+    tract_id: str,
+    head_hash: str,
+    *,
+    commits: list[str] | None = None,
+    from_commit: str | None = None,
+    to_commit: str | None = None,
+) -> list[CommitRow]:
+    """Resolve commits to compress into an ordered list of CommitRows.
+
+    Uses first-parent chain walking (same as compiler). Returns commits
+    in chain order (oldest first).
+
+    Args:
+        commit_repo: Commit repository.
+        ref_repo: Ref repository.
+        annotation_repo: Annotation repository.
+        tract_id: Tract identifier.
+        head_hash: Current HEAD hash.
+        commits: Explicit list of commit hashes to compress.
+        from_commit: Start of range (inclusive).
+        to_commit: End of range (inclusive).
+
+    Returns:
+        List of CommitRow in chain order (oldest first).
+
+    Raises:
+        CompressionError: If range is empty or invalid.
+    """
+    # Walk full first-parent chain from HEAD (newest first)
+    all_ancestors = list(commit_repo.get_ancestors(head_hash))
+
+    if not all_ancestors:
+        raise CompressionError("No commits to compress")
+
+    # Reverse to oldest-first order for processing
+    chain = list(reversed(all_ancestors))
+
+    if commits is not None:
+        # Explicit commit list: filter chain to those hashes, preserve chain order
+        commit_set = set(commits)
+        result = [row for row in chain if row.commit_hash in commit_set]
+        missing = commit_set - {r.commit_hash for r in result}
+        if missing:
+            raise CompressionError(
+                f"Commits not found in current chain: {', '.join(sorted(missing))}"
+            )
+        if not result:
+            raise CompressionError("No commits matched the provided list")
+        return result
+
+    if from_commit is not None or to_commit is not None:
+        # Range: filter chain to from_commit..to_commit (inclusive)
+        chain_hashes = [r.commit_hash for r in chain]
+
+        start_idx = 0
+        end_idx = len(chain) - 1
+
+        if from_commit is not None:
+            try:
+                start_idx = chain_hashes.index(from_commit)
+            except ValueError:
+                raise CompressionError(f"from_commit not found in chain: {from_commit}")
+
+        if to_commit is not None:
+            try:
+                end_idx = chain_hashes.index(to_commit)
+            except ValueError:
+                raise CompressionError(f"to_commit not found in chain: {to_commit}")
+
+        if start_idx > end_idx:
+            raise CompressionError(
+                "Invalid range: from_commit is after to_commit in chain"
+            )
+
+        result = chain[start_idx : end_idx + 1]
+        if not result:
+            raise CompressionError("Empty commit range")
+        return result
+
+    # Default: return all commits (full chain)
+    return chain
+
+
+def _classify_by_priority(
+    range_commits: list[CommitRow],
+    annotation_repo: AnnotationRepository,
+    preserve: list[str] | None = None,
+) -> tuple[list[CommitRow], list[CommitRow], list[CommitRow]]:
+    """Classify commits by their priority annotation.
+
+    Args:
+        range_commits: Commits to classify.
+        annotation_repo: For looking up priorities.
+        preserve: Additional hashes to treat as PINNED for this invocation.
+
+    Returns:
+        (pinned_commits, normal_commits, skip_commits)
+    """
+    preserve_set = set(preserve) if preserve else set()
+    target_hashes = [r.commit_hash for r in range_commits]
+    latest_annotations = annotation_repo.batch_get_latest(target_hashes)
+
+    pinned: list[CommitRow] = []
+    normal: list[CommitRow] = []
+    skip: list[CommitRow] = []
+
+    for row in range_commits:
+        h = row.commit_hash
+
+        # Check preserve list first (temporary PINNED for this invocation)
+        if h in preserve_set:
+            pinned.append(row)
+            continue
+
+        annotation = latest_annotations.get(h)
+        if annotation is not None:
+            if annotation.priority == Priority.PINNED:
+                pinned.append(row)
+            elif annotation.priority == Priority.SKIP:
+                skip.append(row)
+            else:
+                normal.append(row)
+        else:
+            normal.append(row)
+
+    return pinned, normal, skip
+
+
+def _partition_around_pinned(
+    range_commits: list[CommitRow],
+    pinned_hashes: set[str],
+    skip_hashes: set[str],
+) -> list[list[CommitRow]]:
+    """Partition commits into groups of consecutive NORMAL commits.
+
+    PINNED commits act as boundaries. SKIP commits are excluded entirely.
+
+    Args:
+        range_commits: All commits in chain order (oldest first).
+        pinned_hashes: Set of hashes that are PINNED.
+        skip_hashes: Set of hashes that are SKIP.
+
+    Returns:
+        List of groups, where each group is consecutive NORMAL commits.
+    """
+    groups: list[list[CommitRow]] = []
+    current_group: list[CommitRow] = []
+
+    for row in range_commits:
+        h = row.commit_hash
+        if h in pinned_hashes:
+            # PINNED: boundary -- save current group if non-empty
+            if current_group:
+                groups.append(current_group)
+                current_group = []
+        elif h in skip_hashes:
+            # SKIP: just skip entirely
+            continue
+        else:
+            # NORMAL: add to current group
+            current_group.append(row)
+
+    # Don't forget the last group
+    if current_group:
+        groups.append(current_group)
+
+    return groups
+
+
+def _build_messages_text(
+    group: list[CommitRow],
+    blob_repo: BlobRepository,
+) -> str:
+    """Build text representation of a group of commits for LLM summarization.
+
+    Args:
+        group: List of CommitRow in chain order.
+        blob_repo: For loading blob content.
+
+    Returns:
+        Formatted text with role labels.
+    """
+    parts: list[str] = []
+
+    for row in group:
+        blob = blob_repo.get(row.content_hash)
+        if blob is None:
+            logger.warning("Blob not found for content_hash=%s", row.content_hash)
+            parts.append("[content unavailable]")
+            continue
+
+        try:
+            data = json.loads(blob.payload_json)
+        except (json.JSONDecodeError, TypeError):
+            parts.append("[content unavailable]")
+            continue
+
+        # Format based on content type
+        role = data.get("role", row.content_type)
+        text = data.get("text", "")
+        if not text:
+            if "content" in data and isinstance(data["content"], str):
+                text = data["content"]
+            elif "payload" in data:
+                text = json.dumps(data["payload"], sort_keys=True)
+            else:
+                text = json.dumps(data, sort_keys=True)
+
+        parts.append(f"[{role}]: {text}")
+
+    return "\n\n".join(parts)
+
+
+def _reconstruct_content(
+    commit_row: CommitRow,
+    blob_repo: BlobRepository,
+    type_registry: dict[str, type] | None = None,
+) -> BaseModel:
+    """Reconstruct a content model from a commit's blob.
+
+    Args:
+        commit_row: The commit whose content to reconstruct.
+        blob_repo: For loading the blob.
+        type_registry: Optional custom type registry.
+
+    Returns:
+        Validated Pydantic content model.
+
+    Raises:
+        CompressionError: If blob not found or can't be parsed.
+    """
+    from tract.models.content import validate_content
+
+    blob = blob_repo.get(commit_row.content_hash)
+    if blob is None:
+        raise CompressionError(
+            f"Blob not found for commit {commit_row.commit_hash}"
+        )
+
+    try:
+        data = json.loads(blob.payload_json)
+        return validate_content(data, custom_registry=type_registry)
+    except Exception as exc:
+        raise CompressionError(
+            f"Failed to reconstruct content for commit {commit_row.commit_hash}: {exc}"
+        ) from exc
+
+
+def _summarize_group(
+    messages_text: str,
+    llm_client: object,
+    token_counter: TokenCounter,
+    *,
+    target_tokens: int | None = None,
+    instructions: str | None = None,
+    system_prompt: str | None = None,
+) -> str:
+    """Summarize a group of messages using the LLM client.
+
+    Args:
+        messages_text: Text to summarize.
+        llm_client: LLM client with chat() method.
+        token_counter: For token counting.
+        target_tokens: Optional target token count.
+        instructions: Optional additional instructions.
+        system_prompt: Optional custom system prompt.
+
+    Returns:
+        Summary text string.
+
+    Raises:
+        CompressionError: If LLM returns empty response.
+    """
+    system = system_prompt if system_prompt is not None else DEFAULT_SUMMARIZE_SYSTEM
+    user_prompt = build_summarize_prompt(
+        messages_text,
+        target_tokens=target_tokens,
+        instructions=instructions,
+    )
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    response = llm_client.chat(messages)  # type: ignore[union-attr]
+
+    try:
+        content = response["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise CompressionError(f"Invalid LLM response structure: {exc}") from exc
+
+    if not content or not content.strip():
+        raise CompressionError("LLM returned empty summary")
+
+    return content
+
+
+def compress_range(
+    tract_id: str,
+    commit_repo: CommitRepository,
+    blob_repo: BlobRepository,
+    annotation_repo: AnnotationRepository,
+    ref_repo: RefRepository,
+    commit_engine: CommitEngine,
+    token_counter: TokenCounter,
+    compression_repo: CompressionRepository,
+    parent_repo: CommitParentRepository,
+    *,
+    commits: list[str] | None = None,
+    from_commit: str | None = None,
+    to_commit: str | None = None,
+    target_tokens: int | None = None,
+    preserve: list[str] | None = None,
+    auto_commit: bool = True,
+    llm_client: object | None = None,
+    content: str | None = None,
+    instructions: str | None = None,
+    system_prompt: str | None = None,
+    type_registry: dict[str, type] | None = None,
+) -> CompressResult | PendingCompression:
+    """Core compression operation.
+
+    Compresses a range of commits into summaries, preserving PINNED commits
+    and ignoring SKIP commits. Supports three modes:
+    - Manual (content provided): uses user text as summary
+    - LLM (llm_client provided): uses LLM for summarization
+    - Error: neither provided
+
+    Args:
+        tract_id: Tract identifier.
+        commit_repo: Commit repository.
+        blob_repo: Blob repository.
+        annotation_repo: Annotation repository.
+        ref_repo: Ref repository.
+        commit_engine: Commit engine for creating commits.
+        token_counter: Token counter.
+        compression_repo: Compression provenance repository.
+        parent_repo: Commit parent repository.
+        commits: Optional explicit list of commit hashes.
+        from_commit: Optional range start (inclusive).
+        to_commit: Optional range end (inclusive).
+        target_tokens: Optional target token count for summaries.
+        preserve: Optional list of hashes to treat as PINNED.
+        auto_commit: If True, commit immediately. If False, return PendingCompression.
+        llm_client: Optional LLM client for summarization.
+        content: Optional manual summary text (bypasses LLM).
+        instructions: Optional LLM instructions.
+        system_prompt: Optional custom system prompt for LLM.
+        type_registry: Optional custom content type registry.
+
+    Returns:
+        CompressResult (if auto_commit=True) or PendingCompression (if auto_commit=False).
+
+    Raises:
+        CompressionError: On various error conditions.
+    """
+    # a. Resolve HEAD and current branch
+    head_hash = ref_repo.get_head(tract_id)
+    if head_hash is None:
+        raise CompressionError("No commits to compress")
+
+    branch_name = ref_repo.get_current_branch(tract_id)
+
+    # b. Resolve commit range
+    range_commits = _resolve_commit_range(
+        commit_repo, ref_repo, annotation_repo, tract_id, head_hash,
+        commits=commits, from_commit=from_commit, to_commit=to_commit,
+    )
+
+    # c. Classify by priority
+    pinned_commits, normal_commits, skip_commits = _classify_by_priority(
+        range_commits, annotation_repo, preserve=preserve,
+    )
+
+    # d. Nothing to compress?
+    if not normal_commits:
+        raise CompressionError(
+            "Nothing to compress -- all commits are pinned or skipped"
+        )
+
+    # e. Partition around pinned
+    pinned_hashes = {r.commit_hash for r in pinned_commits}
+    skip_hashes = {r.commit_hash for r in skip_commits}
+    groups = _partition_around_pinned(range_commits, pinned_hashes, skip_hashes)
+
+    # f. Generate summaries
+    if content is not None:
+        # Manual mode: single summary for all groups
+        summaries = [content]
+    elif llm_client is not None:
+        # LLM mode: one summary per group
+        summaries = []
+        for group in groups:
+            text = _build_messages_text(group, blob_repo)
+            summary = _summarize_group(
+                text, llm_client, token_counter,
+                target_tokens=target_tokens,
+                instructions=instructions,
+                system_prompt=system_prompt,
+            )
+            summaries.append(summary)
+    else:
+        raise CompressionError(
+            "No LLM client configured and no manual content provided. "
+            "Call configure_llm() first or pass content='...'."
+        )
+
+    # g. Calculate token counts
+    original_tokens = sum(c.token_count for c in normal_commits)
+    estimated_tokens = sum(token_counter.count_text(s) for s in summaries)
+
+    # h. Collaborative mode: return PendingCompression
+    if not auto_commit:
+        pending = PendingCompression(
+            summaries=summaries,
+            source_commits=[c.commit_hash for c in normal_commits],
+            preserved_commits=[c.commit_hash for c in pinned_commits],
+            original_tokens=original_tokens,
+            estimated_tokens=estimated_tokens,
+        )
+        # Store context needed for later commit
+        pending._range_commits = range_commits  # type: ignore[attr-defined]
+        pending._pinned_commits = pinned_commits  # type: ignore[attr-defined]
+        pending._normal_commits = normal_commits  # type: ignore[attr-defined]
+        pending._pinned_hashes = pinned_hashes  # type: ignore[attr-defined]
+        pending._skip_hashes = skip_hashes  # type: ignore[attr-defined]
+        pending._groups = groups  # type: ignore[attr-defined]
+        pending._branch_name = branch_name  # type: ignore[attr-defined]
+        pending._target_tokens = target_tokens  # type: ignore[attr-defined]
+        pending._instructions = instructions  # type: ignore[attr-defined]
+        return pending
+
+    # i. Autonomous mode: commit immediately
+    return _commit_compression(
+        tract_id=tract_id,
+        commit_repo=commit_repo,
+        blob_repo=blob_repo,
+        ref_repo=ref_repo,
+        commit_engine=commit_engine,
+        token_counter=token_counter,
+        compression_repo=compression_repo,
+        summaries=summaries,
+        range_commits=range_commits,
+        pinned_commits=pinned_commits,
+        normal_commits=normal_commits,
+        pinned_hashes=pinned_hashes,
+        skip_hashes=skip_hashes,
+        groups=groups,
+        original_tokens=original_tokens,
+        target_tokens=target_tokens,
+        instructions=instructions,
+        branch_name=branch_name,
+        type_registry=type_registry,
+    )
+
+
+def _commit_compression(
+    *,
+    tract_id: str,
+    commit_repo: CommitRepository,
+    blob_repo: BlobRepository,
+    ref_repo: RefRepository,
+    commit_engine: CommitEngine,
+    token_counter: TokenCounter,
+    compression_repo: CompressionRepository,
+    summaries: list[str],
+    range_commits: list[CommitRow],
+    pinned_commits: list[CommitRow],
+    normal_commits: list[CommitRow],
+    pinned_hashes: set[str],
+    skip_hashes: set[str],
+    groups: list[list[CommitRow]],
+    original_tokens: int,
+    target_tokens: int | None,
+    instructions: str | None,
+    branch_name: str | None,
+    type_registry: dict[str, type] | None = None,
+) -> CompressResult:
+    """Create summary commits, interleave with PINNED, record provenance.
+
+    This is the core commit logic shared between autonomous and collaborative modes.
+
+    Args:
+        See compress_range() for parameter descriptions.
+
+    Returns:
+        CompressResult with all fields populated.
+    """
+    # a. Find the parent of the compressed range
+    first_in_range = range_commits[0]
+    pre_range_parent_hash = first_in_range.parent_hash
+
+    # a2. CRITICAL: Reset branch ref to pre-range parent
+    if pre_range_parent_hash is not None:
+        ref_repo.update_head(tract_id, pre_range_parent_hash)
+    else:
+        # Range starts at root: clear HEAD by creating a state where
+        # next create_commit will have no parent.
+        # We set HEAD to None by updating to a special sentinel...
+        # Actually, we need to carefully handle this. The create_commit
+        # reads HEAD for parent_hash. If range starts at root,
+        # we need HEAD to return None.
+        # Let's use the ref_repo to clear HEAD.
+        # We'll delete the HEAD ref and the branch ref.
+        _clear_head_for_root(ref_repo, tract_id, branch_name)
+
+    # b. Generate compression_id
+    compression_id = uuid.uuid4().hex
+
+    # c. Create summary commits in chain order, interleaving with PINNED
+    summary_commit_hashes: list[str] = []
+    all_new_commit_hashes: list[str] = []
+    group_idx = 0
+
+    # Walk the range in order. When we encounter a group boundary or PINNED,
+    # handle appropriately.
+    # Strategy: iterate through range_commits. Track which group we're in.
+    # When we see the first commit of a group, emit the summary.
+    # When we see a PINNED commit, re-create it.
+    # Skip SKIP commits.
+
+    # Build a map of group-first-commit to group index
+    group_first_commits: dict[str, int] = {}
+    for gidx, group in enumerate(groups):
+        if group:
+            group_first_commits[group[0].commit_hash] = gidx
+
+    # Track which groups have been emitted
+    emitted_groups: set[int] = set()
+    # Track which NORMAL commits have been seen (to know when a group boundary is hit)
+    seen_normal: set[str] = set()
+
+    for row in range_commits:
+        h = row.commit_hash
+
+        if h in skip_hashes:
+            continue
+
+        if h in pinned_hashes:
+            # Re-create PINNED commit with correct parent pointer
+            content_model = _reconstruct_content(row, blob_repo, type_registry)
+            info = commit_engine.create_commit(
+                content=content_model,
+                operation=row.operation,
+                message=row.message or f"Preserved pinned commit",
+                metadata=row.metadata_json,
+                generation_config=row.generation_config_json,
+            )
+            all_new_commit_hashes.append(info.commit_hash)
+            continue
+
+        # NORMAL commit: check if this is the first commit of a group
+        if h in group_first_commits:
+            gidx = group_first_commits[h]
+            if gidx not in emitted_groups:
+                emitted_groups.add(gidx)
+
+                # Determine which summary to use
+                if len(summaries) == 1:
+                    # Manual mode: single summary for all groups
+                    # Only emit on first group
+                    if gidx == 0:
+                        summary_text = summaries[0]
+                    else:
+                        # Additional groups in manual mode: skip (single summary covers all)
+                        # Actually, with manual mode we have one summary total.
+                        # But we need to handle the case where there are multiple groups
+                        # due to pinned commits interleaving.
+                        # In manual mode with pinned interleaving, we still only have 1 summary.
+                        # We'll emit it for the first group and nothing for subsequent groups.
+                        # This means subsequent NORMAL commits in later groups are not represented.
+                        # Better approach: emit the single summary for the first group only.
+                        continue
+                else:
+                    summary_text = summaries[gidx]
+
+                # Create summary commit
+                n_commits = len(groups[gidx])
+                summary_content = DialogueContent(
+                    role="assistant",
+                    text=summary_text,
+                )
+                info = commit_engine.create_commit(
+                    content=summary_content,
+                    message=f"Compressed {n_commits} commits",
+                )
+                summary_commit_hashes.append(info.commit_hash)
+                all_new_commit_hashes.append(info.commit_hash)
+
+        # For non-first NORMAL commits in a group, we skip (already summarized)
+        seen_normal.add(h)
+
+    # d. Branch ref now points to the last commit (create_commit updated HEAD)
+    new_head = ref_repo.get_head(tract_id)
+
+    # e. Calculate compressed tokens
+    compressed_tokens = sum(
+        token_counter.count_text(s) for s in summaries
+    )
+    # Add pinned commit tokens
+    for pc in pinned_commits:
+        compressed_tokens += pc.token_count
+
+    # f. Save CompressionRecord
+    compression_repo.save_record(
+        compression_id=compression_id,
+        tract_id=tract_id,
+        branch_name=branch_name,
+        created_at=datetime.now(timezone.utc),
+        original_tokens=original_tokens,
+        compressed_tokens=compressed_tokens,
+        target_tokens=target_tokens,
+        instructions=instructions,
+    )
+
+    # Record sources (normal commits that were compressed)
+    for pos, nc in enumerate(normal_commits):
+        compression_repo.add_source(compression_id, nc.commit_hash, pos)
+
+    # Record results (summary commits produced)
+    for pos, sc_hash in enumerate(summary_commit_hashes):
+        compression_repo.add_result(compression_id, sc_hash, pos)
+
+    # g. Return CompressResult
+    ratio = compressed_tokens / original_tokens if original_tokens > 0 else 0.0
+
+    return CompressResult(
+        compression_id=compression_id,
+        original_tokens=original_tokens,
+        compressed_tokens=compressed_tokens,
+        source_commits=[c.commit_hash for c in normal_commits],
+        summary_commits=summary_commit_hashes,
+        preserved_commits=[c.commit_hash for c in pinned_commits],
+        compression_ratio=ratio,
+        new_head=new_head or "",
+    )
+
+
+def _clear_head_for_root(
+    ref_repo: RefRepository,
+    tract_id: str,
+    branch_name: str | None,
+) -> None:
+    """Clear HEAD so that next create_commit has no parent.
+
+    This handles the edge case where compression starts at the root commit.
+    We need to reset the state so the first create_commit in the new chain
+    has parent_hash=None.
+    """
+    # Delete the branch ref so get_head returns None
+    if branch_name is not None:
+        ref_repo.delete_ref(tract_id, f"refs/heads/{branch_name}")
+    # Also need HEAD to resolve to None
+    # The simplest approach: set the branch ref to empty via delete
+    # But we need to keep the symbolic HEAD -> branch mapping.
+    # Actually, we can set the branch to a non-existent hash temporarily,
+    # but that's fragile. Better: just delete the branch ref.
+    # The get_head implementation follows symbolic refs, so if
+    # HEAD -> refs/heads/main and refs/heads/main doesn't exist,
+    # get_head returns None. That's what we want.
+    pass
