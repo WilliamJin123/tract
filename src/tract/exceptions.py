@@ -151,3 +151,11 @@ class CherryPickError(TraceError):
 
 class SemanticSafetyError(TraceError):
     """Raised when a semantic safety check blocks and no resolver is available."""
+
+
+class CompressionError(TraceError):
+    """Raised when compression fails."""
+
+
+class GCError(TraceError):
+    """Raised when garbage collection fails."""
