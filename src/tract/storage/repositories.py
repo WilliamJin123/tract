@@ -315,6 +315,11 @@ class CompressionRepository(ABC):
         ...
 
     @abstractmethod
+    def get_all_ids(self, tract_id: str) -> list[str]:
+        """Get all compression IDs for a tract."""
+        ...
+
+    @abstractmethod
     def delete_source(self, commit_hash: str) -> None:
         """Delete CompressionSourceRow entries for a commit hash."""
         ...
@@ -322,4 +327,9 @@ class CompressionRepository(ABC):
     @abstractmethod
     def delete_result(self, commit_hash: str) -> None:
         """Delete CompressionResultRow entries for a commit hash."""
+        ...
+
+    @abstractmethod
+    def delete_record(self, compression_id: str) -> None:
+        """Delete a CompressionRow and all its source/result associations."""
         ...

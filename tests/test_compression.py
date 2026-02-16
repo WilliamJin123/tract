@@ -58,16 +58,7 @@ class MockLLMClient:
 # Helpers
 # ---------------------------------------------------------------------------
 
-
-def make_tract_with_commits(n_commits=5, texts=None):
-    """Create a Tract with n dialogue commits and return (tract, commit_hashes)."""
-    t = Tract.open()
-    hashes = []
-    texts = texts or [f"Message {i+1}" for i in range(n_commits)]
-    for text in texts:
-        info = t.commit(DialogueContent(role="user", text=text))
-        hashes.append(info.commit_hash)
-    return t, hashes
+from tests.conftest import make_tract_with_commits
 
 
 # ===========================================================================
@@ -91,7 +82,7 @@ class TestAutonomousMode:
         assert isinstance(result, CompressResult)
         assert len(result.summary_commits) >= 1
         assert len(result.source_commits) == 5
-        assert result.compression_ratio < 1.0 or result.compression_ratio >= 0
+        assert 0 <= result.compression_ratio <= 1.0
         assert result.new_head != old_head
         assert result.compression_id
 
@@ -308,20 +299,22 @@ class TestManualMode:
         assert len(result.summary_commits) >= 1
 
     def test_compress_manual_preserves_pinned(self):
-        """Manual mode still preserves PINNED commits."""
+        """Manual mode preserves PINNED commits (at boundary, no interleaving)."""
         t, hashes = make_tract_with_commits(5)
-        t.annotate(hashes[2], Priority.PINNED, reason="keep this")
+        # Pin the LAST commit -- creates only 1 group of NORMAL (first 4),
+        # so manual mode is valid (no interleaving).
+        t.annotate(hashes[4], Priority.PINNED, reason="keep this")
 
         result = t.compress(content="Manual summary")
 
         assert isinstance(result, CompressResult)
         assert len(result.preserved_commits) == 1
-        assert hashes[2] in result.preserved_commits
+        assert hashes[4] in result.preserved_commits
 
         # Pinned content should be in compiled output
         compiled = t.compile()
         messages_text = " ".join(m.content for m in compiled.messages)
-        assert "Message 3" in messages_text
+        assert "Message 5" in messages_text
 
 
 # ===========================================================================
@@ -527,3 +520,88 @@ class TestMultiPinnedInterleaving:
         assert "Message 1" in texts[0]
         assert "Summary of middle 3" in texts[1]
         assert "Message 5" in texts[2]
+
+
+# ===========================================================================
+# 7. LLM error path tests
+# ===========================================================================
+
+
+class TestLLMErrorPaths:
+    """Tests for LLM response error handling in compression."""
+
+    def test_malformed_response_raises(self):
+        """Malformed LLM response (missing expected keys) raises CompressionError."""
+        t, hashes = make_tract_with_commits(5)
+
+        class MalformedLLM:
+            def chat(self, messages, **kwargs):
+                return {"bad": "structure"}
+
+            def close(self):
+                pass
+
+        t.configure_llm(MalformedLLM())
+
+        with pytest.raises(CompressionError, match="Invalid LLM response structure"):
+            t.compress()
+
+    def test_empty_response_raises(self):
+        """LLM returning empty content raises CompressionError."""
+        t, hashes = make_tract_with_commits(5)
+
+        class EmptyLLM:
+            def chat(self, messages, **kwargs):
+                return {"choices": [{"message": {"content": ""}}]}
+
+            def close(self):
+                pass
+
+        t.configure_llm(EmptyLLM())
+
+        with pytest.raises(CompressionError, match="empty summary"):
+            t.compress()
+
+    def test_missing_choices_key_raises(self):
+        """LLM response without 'choices' key raises CompressionError."""
+        t, hashes = make_tract_with_commits(5)
+
+        class NoChoicesLLM:
+            def chat(self, messages, **kwargs):
+                return {"result": "text"}
+
+            def close(self):
+                pass
+
+        t.configure_llm(NoChoicesLLM())
+
+        with pytest.raises(CompressionError):
+            t.compress()
+
+
+# ===========================================================================
+# 8. Manual mode with PINNED interleaving tests
+# ===========================================================================
+
+
+class TestManualModePinnedError:
+    """Tests for manual mode behavior with and without PINNED interleaving."""
+
+    def test_manual_with_pinned_interleaving_raises(self):
+        """Manual mode with PINNED interleaving raises CompressionError."""
+        t, hashes = make_tract_with_commits(5)
+        t.annotate(hashes[2], Priority.PINNED, reason="important")
+
+        with pytest.raises(CompressionError, match="Manual mode.*separate groups"):
+            t.compress(content="my summary")
+
+    def test_manual_without_interleaving_works(self):
+        """Manual mode without PINNED interleaving succeeds."""
+        t, hashes = make_tract_with_commits(5)
+        # No pinned commits -- single group, manual mode should work
+
+        result = t.compress(content="my summary")
+
+        assert isinstance(result, CompressResult)
+        assert len(result.summary_commits) >= 1
+        assert len(result.source_commits) == 5

@@ -6,7 +6,9 @@ garbage collection results, and reorder warnings.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
 
 
 @dataclass(frozen=True)
@@ -20,9 +22,9 @@ class CompressResult:
     compression_id: str
     original_tokens: int
     compressed_tokens: int
-    source_commits: list[str]
-    summary_commits: list[str]
-    preserved_commits: list[str]
+    source_commits: tuple[str, ...]
+    summary_commits: tuple[str, ...]
+    preserved_commits: tuple[str, ...]
     compression_ratio: float
     new_head: str
 
@@ -41,7 +43,20 @@ class PendingCompression:
     preserved_commits: list[str]
     original_tokens: int
     estimated_tokens: int
-    _commit_fn: object | None = field(default=None, repr=False)
+    _commit_fn: Callable[[PendingCompression], CompressResult] | None = field(
+        default=None, repr=False
+    )
+
+    # Internal state for finalization (set by compress_range, read by _finalize_compression)
+    _range_commits: Any = field(default=None, repr=False)
+    _pinned_commits: Any = field(default=None, repr=False)
+    _normal_commits: Any = field(default=None, repr=False)
+    _pinned_hashes: Any = field(default=None, repr=False)
+    _skip_hashes: Any = field(default=None, repr=False)
+    _groups: Any = field(default=None, repr=False)
+    _branch_name: Any = field(default=None, repr=False)
+    _target_tokens: Any = field(default=None, repr=False)
+    _instructions: Any = field(default=None, repr=False)
 
     def edit_summary(self, index: int, new_text: str) -> None:
         """Replace the summary text at the given index.
@@ -71,7 +86,7 @@ class PendingCompression:
                 "Cannot approve: no commit function set. "
                 "This PendingCompression was not created by Tract.compress()."
             )
-        return self._commit_fn(self)  # type: ignore[operator]
+        return self._commit_fn(self)
 
 
 @dataclass(frozen=True)
@@ -97,7 +112,7 @@ class ReorderWarning:
     - "semantic": May affect meaning (e.g., response chain break)
     """
 
-    warning_type: str
+    warning_type: Literal["edit_before_target", "response_chain_break"]
     commit_hash: str
     description: str
-    severity: str
+    severity: Literal["structural", "semantic"]

@@ -43,7 +43,6 @@ if TYPE_CHECKING:
     from tract.storage.schema import CommitRow
 
 
-from tract.operations import row_to_info as _row_to_info
 
 
 def _resolve_commit_range(
@@ -311,7 +310,11 @@ def _summarize_group(
 
     Args:
         messages_text: Text to summarize.
-        llm_client: LLM client with chat() method.
+        llm_client: LLM client with a ``chat(messages)`` method that returns
+            an OpenAI-style response dict::
+
+                {"choices": [{"message": {"content": "..."}}], ...}
+
         token_counter: For token counting.
         target_tokens: Optional target token count.
         instructions: Optional additional instructions.
@@ -321,7 +324,7 @@ def _summarize_group(
         Summary text string.
 
     Raises:
-        CompressionError: If LLM returns empty response.
+        CompressionError: If LLM returns empty or malformed response.
     """
     system = system_prompt if system_prompt is not None else DEFAULT_SUMMARIZE_SYSTEM
     user_prompt = build_summarize_prompt(
@@ -439,6 +442,13 @@ def compress_range(
     # f. Generate summaries
     if content is not None:
         # Manual mode: single summary for all groups
+        if len(groups) > 1:
+            raise CompressionError(
+                f"Manual mode provides a single summary but PINNED commits "
+                f"create {len(groups)} separate groups. Use LLM mode "
+                f"(configure_llm()) for multi-group compression, or remove "
+                f"PINNED annotations from interleaving commits."
+            )
         summaries = [content]
     elif llm_client is not None:
         # LLM mode: one summary per group
@@ -472,15 +482,15 @@ def compress_range(
             estimated_tokens=estimated_tokens,
         )
         # Store context needed for later commit
-        pending._range_commits = range_commits  # type: ignore[attr-defined]
-        pending._pinned_commits = pinned_commits  # type: ignore[attr-defined]
-        pending._normal_commits = normal_commits  # type: ignore[attr-defined]
-        pending._pinned_hashes = pinned_hashes  # type: ignore[attr-defined]
-        pending._skip_hashes = skip_hashes  # type: ignore[attr-defined]
-        pending._groups = groups  # type: ignore[attr-defined]
-        pending._branch_name = branch_name  # type: ignore[attr-defined]
-        pending._target_tokens = target_tokens  # type: ignore[attr-defined]
-        pending._instructions = instructions  # type: ignore[attr-defined]
+        pending._range_commits = range_commits
+        pending._pinned_commits = pinned_commits
+        pending._normal_commits = normal_commits
+        pending._pinned_hashes = pinned_hashes
+        pending._skip_hashes = skip_hashes
+        pending._groups = groups
+        pending._branch_name = branch_name
+        pending._target_tokens = target_tokens
+        pending._instructions = instructions
         return pending
 
     # i. Autonomous mode: commit immediately
@@ -609,23 +619,7 @@ def _commit_compression(
                 emitted_groups.add(gidx)
 
                 # Determine which summary to use
-                if len(summaries) == 1:
-                    # Manual mode: single summary for all groups
-                    # Only emit on first group
-                    if gidx == 0:
-                        summary_text = summaries[0]
-                    else:
-                        # Additional groups in manual mode: skip (single summary covers all)
-                        # Actually, with manual mode we have one summary total.
-                        # But we need to handle the case where there are multiple groups
-                        # due to pinned commits interleaving.
-                        # In manual mode with pinned interleaving, we still only have 1 summary.
-                        # We'll emit it for the first group and nothing for subsequent groups.
-                        # This means subsequent NORMAL commits in later groups are not represented.
-                        # Better approach: emit the single summary for the first group only.
-                        continue
-                else:
-                    summary_text = summaries[gidx]
+                summary_text = summaries[gidx]
 
                 # Create summary commit
                 n_commits = len(groups[gidx])
@@ -681,9 +675,9 @@ def _commit_compression(
         compression_id=compression_id,
         original_tokens=original_tokens,
         compressed_tokens=compressed_tokens,
-        source_commits=[c.commit_hash for c in normal_commits],
-        summary_commits=summary_commit_hashes,
-        preserved_commits=[c.commit_hash for c in pinned_commits],
+        source_commits=tuple(c.commit_hash for c in normal_commits),
+        summary_commits=tuple(summary_commit_hashes),
+        preserved_commits=tuple(c.commit_hash for c in pinned_commits),
         compression_ratio=ratio,
         new_head=new_head or "",
     )
@@ -748,7 +742,7 @@ def check_reorder_safety(
                         f"Commit {row.commit_hash[:8]} references "
                         f"{row.response_to[:8]} which is not in the reordered set"
                     ),
-                    severity="structural",
+                    severity="semantic",
                 )
             )
 
@@ -819,17 +813,21 @@ def _get_all_reachable(
             reachable |= get_all_ancestors(tip, commit_repo, parent_repo)
         return reachable
 
-    # Scan ALL branches
+    # Scan ALL branches, passing stop_at to short-circuit on already-known commits
     for branch_name in ref_repo.list_branches(tract_id):
         tip = ref_repo.get_branch(tract_id, branch_name)
         if tip is not None:
-            reachable |= get_all_ancestors(tip, commit_repo, parent_repo)
+            reachable |= get_all_ancestors(
+                tip, commit_repo, parent_repo, stop_at=reachable
+            )
 
     # Also check detached HEAD (may point to a commit not on any branch)
     if ref_repo.is_detached(tract_id):
         head = ref_repo.get_head(tract_id)
         if head is not None:
-            reachable |= get_all_ancestors(head, commit_repo, parent_repo)
+            reachable |= get_all_ancestors(
+                head, commit_repo, parent_repo, stop_at=reachable
+            )
 
     return reachable
 
@@ -933,6 +931,12 @@ def gc(
         # Try to delete the blob if no other commit references it
         if blob_repo.delete_if_orphaned(content_hash):
             blobs_removed += 1
+
+    # f. Clean up orphaned CompressionRow records (no sources AND no results left)
+    all_compression_ids = compression_repo.get_all_ids(tract_id)
+    for cid in all_compression_ids:
+        if not compression_repo.get_sources(cid) and not compression_repo.get_results(cid):
+            compression_repo.delete_record(cid)
 
     duration = time.monotonic() - start
 

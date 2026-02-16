@@ -650,6 +650,13 @@ class SqliteCompressionRepository(CompressionRepository):
         )
         return set(self._session.execute(stmt).scalars().all())
 
+    def get_all_ids(self, tract_id: str) -> list[str]:
+        stmt = (
+            select(CompressionRow.compression_id)
+            .where(CompressionRow.tract_id == tract_id)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
     def delete_source(self, commit_hash: str) -> None:
         """Delete CompressionSourceRow entries for a commit hash."""
         stmt = select(CompressionSourceRow).where(
@@ -666,4 +673,29 @@ class SqliteCompressionRepository(CompressionRepository):
         )
         for row in self._session.execute(stmt).scalars().all():
             self._session.delete(row)
+        self._session.flush()
+
+    def delete_record(self, compression_id: str) -> None:
+        """Delete a CompressionRow and all its source/result associations."""
+        # Delete source and result associations first
+        for row in self._session.execute(
+            select(CompressionSourceRow).where(
+                CompressionSourceRow.compression_id == compression_id
+            )
+        ).scalars().all():
+            self._session.delete(row)
+        for row in self._session.execute(
+            select(CompressionResultRow).where(
+                CompressionResultRow.compression_id == compression_id
+            )
+        ).scalars().all():
+            self._session.delete(row)
+        # Delete the compression record itself
+        record = self._session.execute(
+            select(CompressionRow).where(
+                CompressionRow.compression_id == compression_id
+            )
+        ).scalar_one_or_none()
+        if record is not None:
+            self._session.delete(record)
         self._session.flush()

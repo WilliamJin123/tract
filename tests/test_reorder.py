@@ -23,16 +23,7 @@ from tract.operations.compression import check_reorder_safety
 # Helpers
 # ---------------------------------------------------------------------------
 
-
-def make_tract_with_commits(n_commits=3, texts=None):
-    """Create a Tract with n dialogue commits and return (tract, commit_hashes)."""
-    t = Tract.open()
-    hashes = []
-    texts = texts or [f"Message {i+1}" for i in range(n_commits)]
-    for text in texts:
-        info = t.commit(DialogueContent(role="user", text=text))
-        hashes.append(info.commit_hash)
-    return t, hashes
+from tests.conftest import make_tract_with_commits
 
 
 # ===========================================================================

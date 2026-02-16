@@ -80,3 +80,18 @@ def populate_tract(t: "Tract", n: int = 3) -> list[str]:
             info = t.commit(DialogueContent(role="user", text=f"Message {i}"))
         hashes.append(info.commit_hash)
     return hashes
+
+
+def make_tract_with_commits(n_commits=5, texts=None):
+    """Create a Tract with n dialogue commits and return (tract, commit_hashes).
+
+    Shared helper used by compression, reorder, and GC tests.
+    """
+    from tract import Tract, DialogueContent
+    t = Tract.open()
+    hashes = []
+    texts = texts or [f"Message {i+1}" for i in range(n_commits)]
+    for text in texts:
+        info = t.commit(DialogueContent(role="user", text=text))
+        hashes.append(info.commit_hash)
+    return t, hashes

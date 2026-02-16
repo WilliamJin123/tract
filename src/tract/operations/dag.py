@@ -19,11 +19,22 @@ def _bfs_walk(
     start: str,
     commit_repo: CommitRepository,
     parent_repo: CommitParentRepository | None,
+    *,
+    stop_at: set[str] | None = None,
 ) -> Iterator[str]:
     """BFS walk from a start hash, yielding each visited commit hash once.
 
     Follows both first-parent (parent_hash) and extra parents from
     the commit_parents table (merge commits).
+
+    Args:
+        start: Starting commit hash.
+        commit_repo: Commit repository for hash lookups.
+        parent_repo: Parent repository for multi-parent traversal.
+        stop_at: Optional set of known-visited hashes. When a commit is
+            in this set, it is yielded but its parents are not enqueued.
+            This avoids redundant walks when building reachability sets
+            across multiple branches.
     """
     visited: set[str] = set()
     queue: deque[str] = deque([start])
@@ -33,6 +44,10 @@ def _bfs_walk(
             continue
         visited.add(current)
         yield current
+        # Short-circuit: if this commit is already known reachable,
+        # skip expanding its parents (they are already in stop_at).
+        if stop_at is not None and current in stop_at:
+            continue
         commit = commit_repo.get(current)
         if commit and commit.parent_hash:
             queue.append(commit.parent_hash)
@@ -76,6 +91,8 @@ def get_all_ancestors(
     commit_hash: str,
     commit_repo: CommitRepository,
     parent_repo: CommitParentRepository | None,
+    *,
+    stop_at: set[str] | None = None,
 ) -> set[str]:
     """Get all ancestor hashes of a commit (including itself).
 
@@ -85,11 +102,13 @@ def get_all_ancestors(
         commit_hash: Starting commit hash.
         commit_repo: Commit repository for hash lookups.
         parent_repo: Parent repository for multi-parent traversal.
+        stop_at: Optional set of known-reachable hashes to short-circuit
+            the walk. Parents of commits in this set are not explored.
 
     Returns:
         Set of all ancestor commit hashes (including commit_hash).
     """
-    return set(_bfs_walk(commit_hash, commit_repo, parent_repo))
+    return set(_bfs_walk(commit_hash, commit_repo, parent_repo, stop_at=stop_at))
 
 
 def get_branch_commits(

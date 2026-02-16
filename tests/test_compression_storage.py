@@ -416,6 +416,84 @@ class TestCompressionRepository:
         """get_sources() returns empty list for nonexistent compression_id."""
         assert repo.get_sources("nonexistent-id") == []
 
+    def test_delete_source(
+        self,
+        repo: SqliteCompressionRepository,
+        setup_commits: list[str],
+    ):
+        """delete_source removes CompressionSourceRow entries."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        repo.save_record(
+            compression_id="comp-ds1",
+            tract_id="test-tract",
+            branch_name="main",
+            created_at=now,
+            original_tokens=100,
+            compressed_tokens=50,
+            target_tokens=None,
+            instructions=None,
+        )
+        repo.add_source("comp-ds1", "commit-a", 0)
+        repo.add_source("comp-ds1", "commit-b", 1)
+
+        repo.delete_source("commit-a")
+
+        sources = repo.get_sources("comp-ds1")
+        assert len(sources) == 1
+        assert sources[0].commit_hash == "commit-b"
+
+    def test_delete_result(
+        self,
+        repo: SqliteCompressionRepository,
+        setup_commits: list[str],
+    ):
+        """delete_result removes CompressionResultRow entries."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        repo.save_record(
+            compression_id="comp-dr1",
+            tract_id="test-tract",
+            branch_name="main",
+            created_at=now,
+            original_tokens=100,
+            compressed_tokens=50,
+            target_tokens=None,
+            instructions=None,
+        )
+        repo.add_result("comp-dr1", "commit-d", 0)
+        repo.add_result("comp-dr1", "commit-e", 1)
+
+        repo.delete_result("commit-d")
+
+        results = repo.get_results("comp-dr1")
+        assert len(results) == 1
+        assert results[0].commit_hash == "commit-e"
+
+    def test_delete_record(
+        self,
+        repo: SqliteCompressionRepository,
+        setup_commits: list[str],
+    ):
+        """delete_record removes the CompressionRow and all associations."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        repo.save_record(
+            compression_id="comp-drc1",
+            tract_id="test-tract",
+            branch_name="main",
+            created_at=now,
+            original_tokens=100,
+            compressed_tokens=50,
+            target_tokens=None,
+            instructions=None,
+        )
+        repo.add_source("comp-drc1", "commit-a", 0)
+        repo.add_result("comp-drc1", "commit-d", 0)
+
+        repo.delete_record("comp-drc1")
+
+        assert repo.get_record("comp-drc1") is None
+        assert repo.get_sources("comp-drc1") == []
+        assert repo.get_results("comp-drc1") == []
+
 
 # ===========================================================================
 # Model Tests
@@ -433,9 +511,9 @@ class TestCompressionModels:
             compression_id="comp-1",
             original_tokens=1000,
             compressed_tokens=200,
-            source_commits=["a", "b"],
-            summary_commits=["c"],
-            preserved_commits=["d"],
+            source_commits=("a", "b"),
+            summary_commits=("c",),
+            preserved_commits=("d",),
             compression_ratio=0.2,
             new_head="c",
         )

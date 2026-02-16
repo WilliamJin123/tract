@@ -1261,28 +1261,34 @@ class Tract:
 
         llm_client = getattr(self, "_llm_client", None)
 
-        result = compress_range(
-            tract_id=self._tract_id,
-            commit_repo=self._commit_repo,
-            blob_repo=self._blob_repo,
-            annotation_repo=self._annotation_repo,
-            ref_repo=self._ref_repo,
-            commit_engine=self._commit_engine,
-            token_counter=self._token_counter,
-            compression_repo=self._compression_repo,
-            parent_repo=self._parent_repo,
-            commits=commits,
-            from_commit=from_commit,
-            to_commit=to_commit,
-            target_tokens=target_tokens,
-            preserve=preserve,
-            auto_commit=auto_commit,
-            llm_client=llm_client,
-            content=content,
-            instructions=instructions,
-            system_prompt=system_prompt,
-            type_registry=self._custom_type_registry,
-        )
+        # Use savepoint for atomic rollback on partial failure
+        nested = self._session.begin_nested()
+        try:
+            result = compress_range(
+                tract_id=self._tract_id,
+                commit_repo=self._commit_repo,
+                blob_repo=self._blob_repo,
+                annotation_repo=self._annotation_repo,
+                ref_repo=self._ref_repo,
+                commit_engine=self._commit_engine,
+                token_counter=self._token_counter,
+                compression_repo=self._compression_repo,
+                parent_repo=self._parent_repo,
+                commits=commits,
+                from_commit=from_commit,
+                to_commit=to_commit,
+                target_tokens=target_tokens,
+                preserve=preserve,
+                auto_commit=auto_commit,
+                llm_client=llm_client,
+                content=content,
+                instructions=instructions,
+                system_prompt=system_prompt,
+                type_registry=self._custom_type_registry,
+            )
+        except Exception:
+            nested.rollback()
+            raise
 
         if isinstance(result, _PendingCompression):
             # Set the commit function for later approval
@@ -1317,27 +1323,33 @@ class Tract:
             from tract.exceptions import CompressionError
             raise CompressionError("Compression repository not available")
 
-        result = _commit_compression(
-            tract_id=self._tract_id,
-            commit_repo=self._commit_repo,
-            blob_repo=self._blob_repo,
-            ref_repo=self._ref_repo,
-            commit_engine=self._commit_engine,
-            token_counter=self._token_counter,
-            compression_repo=self._compression_repo,
-            summaries=pending.summaries,
-            range_commits=pending._range_commits,  # type: ignore[attr-defined]
-            pinned_commits=pending._pinned_commits,  # type: ignore[attr-defined]
-            normal_commits=pending._normal_commits,  # type: ignore[attr-defined]
-            pinned_hashes=pending._pinned_hashes,  # type: ignore[attr-defined]
-            skip_hashes=pending._skip_hashes,  # type: ignore[attr-defined]
-            groups=pending._groups,  # type: ignore[attr-defined]
-            original_tokens=pending.original_tokens,
-            target_tokens=pending._target_tokens,  # type: ignore[attr-defined]
-            instructions=pending._instructions,  # type: ignore[attr-defined]
-            branch_name=pending._branch_name,  # type: ignore[attr-defined]
-            type_registry=self._custom_type_registry,
-        )
+        # Use savepoint for atomic rollback on partial failure
+        nested = self._session.begin_nested()
+        try:
+            result = _commit_compression(
+                tract_id=self._tract_id,
+                commit_repo=self._commit_repo,
+                blob_repo=self._blob_repo,
+                ref_repo=self._ref_repo,
+                commit_engine=self._commit_engine,
+                token_counter=self._token_counter,
+                compression_repo=self._compression_repo,
+                summaries=pending.summaries,
+                range_commits=pending._range_commits,
+                pinned_commits=pending._pinned_commits,
+                normal_commits=pending._normal_commits,
+                pinned_hashes=pending._pinned_hashes,
+                skip_hashes=pending._skip_hashes,
+                groups=pending._groups,
+                original_tokens=pending.original_tokens,
+                target_tokens=pending._target_tokens,
+                instructions=pending._instructions,
+                branch_name=pending._branch_name,
+                type_registry=self._custom_type_registry,
+            )
+        except Exception:
+            nested.rollback()
+            raise
 
         self._session.commit()
         self._cache.clear()
@@ -1383,15 +1395,14 @@ class Tract:
         Raises:
             CompressionError: If compression repository is not available.
         """
+        from tract.exceptions import CompressionError
         from tract.models.compression import GCResult as _GCResult
         from tract.operations.compression import gc as _gc
 
         if self._compression_repo is None:
-            from tract.exceptions import CompressionError
             raise CompressionError("Compression repository not available")
 
         if self._parent_repo is None:
-            from tract.exceptions import CompressionError
             raise CompressionError("Parent repository not available")
 
         result = _gc(
@@ -1406,6 +1417,7 @@ class Tract:
             branch=branch,
         )
 
+        self._cache.clear()
         self._session.commit()
         return result
 
