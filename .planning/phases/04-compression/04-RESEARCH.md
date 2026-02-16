@@ -413,7 +413,9 @@ def gc(
             orphaned.add(c)
 
     # 5. Apply retention policies
-    now = datetime.now(timezone.utc)
+    # IMPORTANT: SQLite stores naive datetimes. Use _normalize_dt() to strip
+    # tzinfo before comparison, matching the pattern in compiler.py.
+    now = _normalize_dt(datetime.now(timezone.utc))
     to_remove = set()
 
     for c in orphaned:
