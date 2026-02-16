@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from tract.exceptions import CompressionError
 from tract.models.annotations import Priority
+from tract.models.commit import CommitOperation
 from tract.models.compression import CompressResult, PendingCompression
 from tract.models.content import DialogueContent
 from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM, build_summarize_prompt
@@ -686,6 +687,72 @@ def _commit_compression(
         compression_ratio=ratio,
         new_head=new_head or "",
     )
+
+
+def check_reorder_safety(
+    order: list[str],
+    commit_repo: CommitRepository,
+    blob_repo: BlobRepository,
+) -> list[ReorderWarning]:
+    """Check for structural safety issues when reordering commits.
+
+    Detects two types of issues:
+    - "edit_before_target": An EDIT commit appears before its target in the
+      reordered sequence (the target should come first for the edit to make sense).
+    - "response_chain_break": A commit references a response_to commit that is
+      not present in the reordered set at all.
+
+    Args:
+        order: Ordered list of commit hashes (the proposed reorder).
+        commit_repo: Commit repository for hash lookups.
+        blob_repo: Blob repository (reserved for future use).
+
+    Returns:
+        List of ReorderWarning objects (may be empty if no issues found).
+    """
+    from tract.models.compression import ReorderWarning
+
+    warnings: list[ReorderWarning] = []
+    order_set = set(order)
+    hash_to_pos = {h: i for i, h in enumerate(order)}
+
+    for h in order:
+        row = commit_repo.get(h)
+        if row is None:
+            continue
+
+        # Check for EDIT before target
+        if row.operation == CommitOperation.EDIT and row.response_to:
+            if row.response_to in hash_to_pos:
+                # Target is in the order list -- check position
+                if hash_to_pos[h] < hash_to_pos[row.response_to]:
+                    warnings.append(
+                        ReorderWarning(
+                            warning_type="edit_before_target",
+                            commit_hash=row.commit_hash,
+                            description=(
+                                f"EDIT commit {row.commit_hash[:8]} appears before "
+                                f"its target {row.response_to[:8]}"
+                            ),
+                            severity="structural",
+                        )
+                    )
+
+        # Check for response_to chain break
+        if row.response_to and row.response_to not in order_set:
+            warnings.append(
+                ReorderWarning(
+                    warning_type="response_chain_break",
+                    commit_hash=row.commit_hash,
+                    description=(
+                        f"Commit {row.commit_hash[:8]} references "
+                        f"{row.response_to[:8]} which is not in the reordered set"
+                    ),
+                    severity="structural",
+                )
+            )
+
+    return warnings
 
 
 def _clear_head_for_root(

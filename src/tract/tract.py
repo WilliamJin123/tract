@@ -365,20 +365,44 @@ class Tract:
         at_time: datetime | None = None,
         at_commit: str | None = None,
         include_edit_annotations: bool = False,
-    ) -> CompiledContext:
+        order: list[str] | None = None,
+        check_safety: bool = True,
+    ) -> CompiledContext | tuple[CompiledContext, list]:
         """Compile the current context into LLM-ready messages.
 
         Args:
             at_time: Only include commits at or before this datetime.
             at_commit: Only include commits up to this hash.
             include_edit_annotations: Append ``[edited]`` markers.
+            order: If provided, reorder compiled messages so that commits
+                appear in this order. Commits not in ``order`` are appended
+                at their original relative positions after the ordered ones.
+                When ``order`` is provided, the compile cache is bypassed
+                and the return type is ``(CompiledContext, list[ReorderWarning])``.
+            check_safety: If True (default) and ``order`` is provided, run
+                structural safety checks that warn about EDIT-before-target
+                and broken response chains.
 
         Returns:
-            :class:`CompiledContext` with messages and token counts.
+            :class:`CompiledContext` when ``order`` is None (default).
+            ``(CompiledContext, list[ReorderWarning])`` when ``order`` is provided.
         """
         current_head = self.head
         if current_head is None:
-            return CompiledContext(messages=[], token_count=0, commit_count=0, token_source="")
+            empty = CompiledContext(messages=[], token_count=0, commit_count=0, token_source="")
+            if order is not None:
+                return empty, []
+            return empty
+
+        # If order provided, bypass cache entirely and do a full compile + reorder
+        if order is not None:
+            result = self._compiler.compile(self._tract_id, current_head)
+            warnings = []
+            if check_safety:
+                from tract.operations.compression import check_reorder_safety
+                warnings = check_reorder_safety(order, self._commit_repo, self._blob_repo)
+            reordered = self._reorder_compiled(result, order)
+            return reordered, warnings
 
         # Time-travel and edit annotations: always full compile, don't touch snapshot
         if at_time is not None or at_commit is not None or include_edit_annotations:
@@ -412,6 +436,65 @@ class Tract:
         if snapshot is not None:
             self._cache.put(current_head, snapshot)
         return result
+
+    def _reorder_compiled(
+        self, result: CompiledContext, order: list[str]
+    ) -> CompiledContext:
+        """Reorder a compiled context according to the given commit hash order.
+
+        Commits in ``order`` appear first (in the specified order).
+        Commits not in ``order`` are appended after, preserving their
+        original relative positions.
+
+        Args:
+            result: The compiled context to reorder.
+            order: List of commit hashes specifying the desired order.
+
+        Returns:
+            A new CompiledContext with reordered messages.
+
+        Raises:
+            CommitNotFoundError: If any hash in ``order`` is not in the
+                compiled result's commit_hashes.
+        """
+        # Build mapping from hash to index in the compiled result
+        hash_to_idx: dict[str, int] = {
+            h: i for i, h in enumerate(result.commit_hashes)
+        }
+
+        # Validate all hashes in order exist in the result
+        for h in order:
+            if h not in hash_to_idx:
+                raise CommitNotFoundError(h)
+
+        # Build final index ordering
+        new_indices = [hash_to_idx[h] for h in order]
+        ordered_set = set(new_indices)
+        remaining = [i for i in range(len(result.messages)) if i not in ordered_set]
+        final_order = new_indices + remaining
+
+        # Reorder all parallel arrays
+        new_messages = [result.messages[i] for i in final_order]
+        new_configs = (
+            [result.generation_configs[i] for i in final_order]
+            if result.generation_configs
+            else []
+        )
+        new_hashes = [result.commit_hashes[i] for i in final_order]
+
+        # Recount tokens for the new message order
+        token_count = self._token_counter.count_messages(
+            [{"role": m.role, "content": m.content} for m in new_messages]
+        )
+
+        return CompiledContext(
+            messages=new_messages,
+            token_count=token_count,
+            commit_count=result.commit_count,
+            token_source=result.token_source,
+            generation_configs=new_configs,
+            commit_hashes=new_hashes,
+        )
 
     def get_commit(self, commit_hash: str) -> CommitInfo | None:
         """Fetch a commit by its hash.

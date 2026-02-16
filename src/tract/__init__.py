@@ -55,7 +55,7 @@ from tract.models.merge import (
 )
 
 # Compression models
-from tract.models.compression import CompressResult, PendingCompression
+from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning
 
 # Operations data models
 from tract.operations.history import StatusInfo
@@ -82,6 +82,7 @@ from tract.exceptions import (
     CherryPickError,
     SemanticSafetyError,
     CompressionError,
+    GCError,
 )
 
 __all__ = [
@@ -151,6 +152,9 @@ __all__ = [
     "SemanticSafetyError",
     # Compression models
     "CompressResult",
+    "GCResult",
     "PendingCompression",
+    "ReorderWarning",
     "CompressionError",
+    "GCError",
 ]
