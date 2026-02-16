@@ -1165,6 +1165,7 @@ class Tract:
             DetachedHeadError: If HEAD is detached.
             CompressionError: On various error conditions.
         """
+        from tract.models.compression import PendingCompression as _PendingCompression
         from tract.operations.compression import compress_range
 
         # Guard: detached HEAD blocks compression
@@ -1200,7 +1201,7 @@ class Tract:
             type_registry=self._custom_type_registry,
         )
 
-        if isinstance(result, PendingCompression):
+        if isinstance(result, _PendingCompression):
             # Set the commit function for later approval
             result._commit_fn = self._finalize_compression
             return result
