@@ -19,6 +19,7 @@ from tract.storage.repositories import (
     CommitRepository,
     CompressionRepository,
     RefRepository,
+    SpawnPointerRepository,
 )
 from tract.storage.schema import (
     AnnotationRow,
@@ -29,6 +30,7 @@ from tract.storage.schema import (
     CompressionRow,
     CompressionSourceRow,
     RefRow,
+    SpawnPointerRow,
 )
 
 
@@ -699,3 +701,87 @@ class SqliteCompressionRepository(CompressionRepository):
         if record is not None:
             self._session.delete(record)
         self._session.flush()
+
+
+class SqliteSpawnPointerRepository(SpawnPointerRepository):
+    """SQLite implementation of spawn pointer storage.
+
+    Tracks parent-child relationships between tracts in the spawn tree.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save(
+        self,
+        parent_tract_id: str,
+        parent_commit_hash: str | None,
+        child_tract_id: str,
+        purpose: str,
+        inheritance_mode: str,
+        display_name: str | None,
+        created_at: datetime,
+    ) -> SpawnPointerRow:
+        row = SpawnPointerRow(
+            parent_tract_id=parent_tract_id,
+            parent_commit_hash=parent_commit_hash,
+            child_tract_id=child_tract_id,
+            purpose=purpose,
+            inheritance_mode=inheritance_mode,
+            display_name=display_name,
+            created_at=created_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return row
+
+    def get(self, id: int) -> SpawnPointerRow | None:
+        stmt = select(SpawnPointerRow).where(SpawnPointerRow.id == id)
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def get_by_child(self, child_tract_id: str) -> SpawnPointerRow | None:
+        stmt = select(SpawnPointerRow).where(
+            SpawnPointerRow.child_tract_id == child_tract_id
+        )
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def get_children(self, parent_tract_id: str) -> list[SpawnPointerRow]:
+        stmt = (
+            select(SpawnPointerRow)
+            .where(SpawnPointerRow.parent_tract_id == parent_tract_id)
+            .order_by(SpawnPointerRow.created_at)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def get_all(self, tract_id: str) -> list[SpawnPointerRow]:
+        stmt = select(SpawnPointerRow).where(
+            (SpawnPointerRow.parent_tract_id == tract_id)
+            | (SpawnPointerRow.child_tract_id == tract_id)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def has_ancestor(self, child_tract_id: str, potential_ancestor: str) -> bool:
+        """Walk up the spawn tree to check ancestry.
+
+        Iteratively follows parent pointers from child_tract_id.
+        Returns True if potential_ancestor is found at any level.
+        Terminates when root is reached (no parent pointer) or cycle detected.
+        """
+        visited: set[str] = set()
+        current = child_tract_id
+
+        while True:
+            if current in visited:
+                # Cycle detected -- stop walking
+                return False
+            visited.add(current)
+
+            pointer = self.get_by_child(current)
+            if pointer is None:
+                # Reached root of spawn tree
+                return False
+
+            if pointer.parent_tract_id == potential_ancestor:
+                return True
+
+            current = pointer.parent_tract_id

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         CompressionResultRow,
         CompressionRow,
         CompressionSourceRow,
+        SpawnPointerRow,
     )
 
 
@@ -332,4 +333,63 @@ class CompressionRepository(ABC):
     @abstractmethod
     def delete_record(self, compression_id: str) -> None:
         """Delete a CompressionRow and all its source/result associations."""
+        ...
+
+
+class SpawnPointerRepository(ABC):
+    """Abstract interface for spawn pointer storage.
+
+    Tracks parent-child relationships between tracts in a spawn tree.
+    A child tract has at most one parent. A parent can have many children.
+    """
+
+    @abstractmethod
+    def save(
+        self,
+        parent_tract_id: str,
+        parent_commit_hash: str | None,
+        child_tract_id: str,
+        purpose: str,
+        inheritance_mode: str,
+        display_name: str | None,
+        created_at: datetime,
+    ) -> SpawnPointerRow:
+        """Save a new spawn pointer. Returns the created row."""
+        ...
+
+    @abstractmethod
+    def get(self, id: int) -> SpawnPointerRow | None:
+        """Get spawn pointer by ID. Returns None if not found."""
+        ...
+
+    @abstractmethod
+    def get_by_child(self, child_tract_id: str) -> SpawnPointerRow | None:
+        """Get the spawn pointer where this tract is the child.
+
+        A tract has at most one parent. Returns None if this tract
+        was not spawned from another.
+        """
+        ...
+
+    @abstractmethod
+    def get_children(self, parent_tract_id: str) -> list[SpawnPointerRow]:
+        """Get all spawn pointers where this tract is the parent.
+
+        Returns pointers ordered by created_at ascending.
+        """
+        ...
+
+    @abstractmethod
+    def get_all(self, tract_id: str) -> list[SpawnPointerRow]:
+        """Get all spawn pointers involving this tract (as parent OR child)."""
+        ...
+
+    @abstractmethod
+    def has_ancestor(self, child_tract_id: str, potential_ancestor: str) -> bool:
+        """Check if potential_ancestor is an ancestor of child_tract_id in the spawn tree.
+
+        Walks up the spawn tree from child_tract_id. Returns True if
+        potential_ancestor is found as a parent at any level.
+        Used for cycle detection during spawn operations.
+        """
         ...

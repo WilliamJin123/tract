@@ -49,9 +49,10 @@ def init_db(engine: Engine) -> None:
     """Initialize the database: create all tables and set schema version.
 
     Creates all tables defined in Base.metadata, then sets schema_version.
-    For new databases, schema_version is set to "3".
-    For existing v1 databases, migrates v1->v2->v3 (commit_parents + compression tables).
-    For existing v2 databases, migrates v2->v3 (compression tables).
+    For new databases, schema_version is set to "4".
+    For existing v1 databases, migrates v1->v2->v3->v4.
+    For existing v2 databases, migrates v2->v3->v4.
+    For existing v3 databases, migrates v3->v4 (spawn_pointers table).
     """
     Base.metadata.create_all(engine)
 
@@ -62,8 +63,8 @@ def init_db(engine: Engine) -> None:
         ).scalar_one_or_none()
 
         if existing is None:
-            # New database: set schema version to 3
-            session.add(TraceMetaRow(key="schema_version", value="3"))
+            # New database: set schema version to 4
+            session.add(TraceMetaRow(key="schema_version", value="4"))
             session.commit()
         elif existing.value == "1":
             # Migrate v1 -> v2: create commit_parents table
@@ -79,4 +80,9 @@ def init_db(engine: Engine) -> None:
             for table_name in ["compressions", "compression_sources", "compression_results"]:
                 Base.metadata.tables[table_name].create(engine, checkfirst=True)
             existing.value = "3"
+            session.commit()
+        if existing is not None and existing.value == "3":
+            # Migrate v3 -> v4: create spawn_pointers table
+            Base.metadata.tables["spawn_pointers"].create(engine, checkfirst=True)
+            existing.value = "4"
             session.commit()

@@ -218,6 +218,37 @@ class CompressionResultRow(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class SpawnPointerRow(Base):
+    """Cross-tract linkage for multi-agent spawn relationships.
+
+    Each row represents a parent-child spawn relationship between two tracts.
+    A child tract has at most one parent (the tract that spawned it).
+    A parent tract can have many children.
+    """
+
+    __tablename__ = "spawn_pointers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    parent_tract_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    parent_commit_hash: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        ForeignKey("commits.commit_hash", ondelete="SET NULL"),
+        nullable=True,
+    )
+    child_tract_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    inheritance_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # "full_clone", "head_snapshot", "selective"
+    display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("ix_spawn_parent_tract", "parent_tract_id"),
+        Index("ix_spawn_child_tract", "child_tract_id"),
+    )
+
+
 class TraceMetaRow(Base):
     """Key-value metadata for the Trace database itself (e.g., schema version)."""
 
