@@ -156,18 +156,18 @@ __all__ = [
     "RebaseError",
     "CherryPickError",
     "SemanticSafetyError",
-    # Session and spawn models
-    "Session",
-    "SessionContent",
-    "SpawnInfo",
-    "CollapseResult",
+    "CompressionError",
+    "GCError",
+    "SpawnError",
+    "SessionError",
     # Compression models
     "CompressResult",
     "GCResult",
     "PendingCompression",
     "ReorderWarning",
-    "CompressionError",
-    "GCError",
-    "SpawnError",
-    "SessionError",
+    # Multi-agent / session
+    "Session",
+    "SessionContent",
+    "SpawnInfo",
+    "CollapseResult",
 ]

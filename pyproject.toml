@@ -3,12 +3,25 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "trace-context"
+name = "tract-ai"
 version = "0.1.0"
 description = "Git-like version control for LLM context windows"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
+authors = [{name = "Trace Contributors"}]
+keywords = ["llm", "context", "version-control", "agents", "multi-agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "sqlalchemy>=2.0.46,<2.2",
     "pydantic>=2.10,<3.0",
@@ -32,6 +45,11 @@ dev = [
     "click>=8.1,<9",
     "rich>=13.0,<15",
 ]
+
+[project.urls]
+Homepage = "https://github.com/WilliamJin123/tract"
+Documentation = "https://github.com/WilliamJin123/tract#readme"
+Repository = "https://github.com/WilliamJin123/tract"
 
 [project.scripts]
 tract = "tract.cli:cli"
