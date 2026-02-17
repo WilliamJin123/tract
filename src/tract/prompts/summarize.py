@@ -48,3 +48,56 @@ def build_summarize_prompt(
         prompt += f"\nAdditional instructions: {instructions}"
 
     return prompt
+
+
+# ---------------------------------------------------------------------------
+# Collapse prompt (for summarizing child tract work back to parent)
+# ---------------------------------------------------------------------------
+
+DEFAULT_COLLAPSE_SYSTEM: str = (
+    "You are summarizing the work of a subagent that was delegated a specific task. "
+    "Your job is to produce a concise report for the parent agent.\n\n"
+    "Guidelines:\n"
+    "- Focus on OUTCOMES: what was accomplished, decided, or produced.\n"
+    "- Include key findings, decisions made, and artifacts created.\n"
+    "- Note any failures, blockers, or unresolved issues.\n"
+    "- Preserve specific technical details: code snippets, configurations, "
+    "exact values, error messages.\n"
+    "- Omit the subagent's internal reasoning process unless it contains "
+    "important caveats or trade-off analysis.\n"
+    "- If a target token count is specified, aim for approximately that length.\n"
+    'Begin with: "Subagent completed: [task summary]"'
+)
+
+
+def build_collapse_prompt(
+    messages_text: str,
+    purpose: str,
+    *,
+    target_tokens: int | None = None,
+    instructions: str | None = None,
+) -> str:
+    """Build the user prompt for collapse summarization.
+
+    Args:
+        messages_text: The child tract's conversation text to summarize.
+        purpose: The purpose/task that was delegated to the child.
+        target_tokens: Optional target token count for the summary.
+        instructions: Optional additional instructions to append.
+
+    Returns:
+        The formatted user prompt string.
+    """
+    prompt = (
+        f"The subagent was delegated the following task:\n"
+        f"  Purpose: {purpose}\n\n"
+        f"Summarize the subagent's work:\n\n{messages_text}"
+    )
+
+    if target_tokens is not None:
+        prompt += f"\nTarget approximately {target_tokens} tokens."
+
+    if instructions is not None:
+        prompt += f"\nAdditional instructions: {instructions}"
+
+    return prompt

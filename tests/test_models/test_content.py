@@ -6,7 +6,7 @@ Covers:
 - Invalid content_type raises ContentValidationError
 - validate_content with custom_registry
 - Round-trip model_dump() -> model_validate() for all content types
-- BUILTIN_TYPE_HINTS has entries for all 7 types
+- BUILTIN_TYPE_HINTS has entries for all 8 types
 """
 
 import pytest
@@ -251,8 +251,8 @@ class TestRoundTrip:
 
 
 class TestBuiltinTypeHints:
-    def test_all_seven_types_present(self):
-        expected = {"instruction", "dialogue", "tool_io", "reasoning", "artifact", "output", "freeform"}
+    def test_all_builtin_types_present(self):
+        expected = {"instruction", "dialogue", "tool_io", "reasoning", "artifact", "output", "freeform", "session"}
         assert set(BUILTIN_TYPE_HINTS.keys()) == expected
 
     def test_instruction_is_pinned(self):
@@ -267,5 +267,5 @@ class TestBuiltinTypeHints:
     def test_builtin_content_types_set(self):
         assert BUILTIN_CONTENT_TYPES == {
             "instruction", "dialogue", "tool_io", "reasoning",
-            "artifact", "output", "freeform",
+            "artifact", "output", "freeform", "session",
         }

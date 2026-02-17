@@ -1,6 +1,6 @@
 """Content type system for Trace.
 
-Defines 7 built-in content types as Pydantic models with a discriminated union
+Defines 8 built-in content types as Pydantic models with a discriminated union
 (ContentPayload). Each content type has behavioral hints (ContentTypeHints) for
 compilation and compression.
 
@@ -16,6 +16,7 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from tract.exceptions import ContentValidationError
+from tract.models.session import SessionContent
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +94,7 @@ ContentPayload = Annotated[
         ArtifactContent,
         OutputContent,
         FreeformContent,
+        SessionContent,
     ],
     Field(discriminator="content_type"),
 ]
@@ -109,6 +111,7 @@ BUILTIN_CONTENT_TYPES: set[str] = {
     "artifact",
     "output",
     "freeform",
+    "session",
 }
 
 
@@ -214,5 +217,10 @@ BUILTIN_TYPE_HINTS: dict[str, ContentTypeHints] = {
         default_priority="normal",
         default_role="assistant",
         compression_priority=50,
+    ),
+    "session": ContentTypeHints(
+        default_priority="pinned",
+        default_role="system",
+        compression_priority=95,  # Protect session boundaries from compression
     ),
 }

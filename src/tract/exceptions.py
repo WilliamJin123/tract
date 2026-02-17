@@ -159,3 +159,11 @@ class CompressionError(TraceError):
 
 class GCError(TraceError):
     """Raised when garbage collection fails."""
+
+
+class SpawnError(TraceError):
+    """Raised when spawn or collapse operations fail."""
+
+
+class SessionError(TraceError):
+    """Raised when session operations fail."""
