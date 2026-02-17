@@ -813,10 +813,12 @@ class TestTwoTierTokenTracking:
             assert cached.token_source == updated.token_source
             assert cached.token_count == updated.token_count
 
-            # New commit resets to tiktoken
+            # New commit preserves API source (API is ground truth).
+            # Token count is API base + tiktoken delta for the new message.
             t.commit(DialogueContent(role="assistant", text="Hi there!"))
             fresh = t.compile()
-            assert fresh.token_source.startswith("tiktoken:")
+            assert fresh.token_source.startswith("api:")
+            assert fresh.token_count > updated.token_count  # Added a message
 
 
 # ===========================================================================
@@ -1182,3 +1184,277 @@ class TestLRUCompileCacheAndPatching:
             assert result.messages[0].content == "Edited Q1"
             assert result.messages[1].content == "Q2"
             assert result.messages[2].content == "A1"
+
+
+# ===========================================================================
+# Cache Fixes (per-message tokens, API persistence, _in_batch, verify_cache)
+# ===========================================================================
+
+
+class TestPerMessageTokenCounts:
+    """Tests for per-message token tracking in CompileSnapshot."""
+
+    def test_snapshot_has_per_message_counts(self):
+        """build_snapshot populates message_token_counts parallel to messages."""
+        with Tract.open() as t:
+            t.commit(InstructionContent(text="System"))
+            t.commit(DialogueContent(role="user", text="Hello"))
+            t.compile()
+            snapshot = t._cache.get(t.head)
+            assert snapshot is not None
+            assert len(snapshot.message_token_counts) == len(snapshot.messages)
+            assert all(c > 0 for c in snapshot.message_token_counts)
+
+    def test_per_message_counts_sum_to_total(self):
+        """sum(message_token_counts) + RESPONSE_PRIMER == token_count."""
+        from tract.engine.cache import RESPONSE_PRIMER_TOKENS
+
+        with Tract.open() as t:
+            t.commit(InstructionContent(text="System prompt"))
+            t.commit(DialogueContent(role="user", text="Hello world"))
+            t.commit(DialogueContent(role="assistant", text="Hi there"))
+            t.compile()
+            snapshot = t._cache.get(t.head)
+            assert snapshot is not None
+            expected = sum(snapshot.message_token_counts) + RESPONSE_PRIMER_TOKENS
+            assert snapshot.token_count == expected
+
+    def test_append_extends_per_message_counts(self):
+        """Incremental APPEND adds one entry to message_token_counts."""
+        with Tract.open() as t:
+            t.commit(InstructionContent(text="System"))
+            t.compile()
+            snapshot_before = t._cache.get(t.head)
+            assert snapshot_before is not None
+            old_count = len(snapshot_before.message_token_counts)
+
+            t.commit(DialogueContent(role="user", text="Hello"))
+            snapshot_after = t._cache.get(t.head)
+            assert snapshot_after is not None
+            assert len(snapshot_after.message_token_counts) == old_count + 1
+
+    def test_edit_updates_per_message_counts(self):
+        """EDIT patching updates the token count at the edited position."""
+        with Tract.open(verify_cache=True) as t:
+            c1 = t.commit(InstructionContent(text="Short"))
+            t.compile()
+            snapshot_before = t._cache.get(t.head)
+            old_msg_tokens = snapshot_before.message_token_counts[0]
+
+            t.commit(
+                InstructionContent(text="This is a much longer replacement text"),
+                operation=CommitOperation.EDIT,
+                response_to=c1.commit_hash,
+            )
+            snapshot_after = t._cache.get(t.head)
+            assert snapshot_after is not None
+            assert snapshot_after.message_token_counts[0] != old_msg_tokens
+            assert snapshot_after.message_token_counts[0] > old_msg_tokens
+
+    def test_skip_annotation_removes_per_message_count(self):
+        """SKIP annotation removes the entry from message_token_counts."""
+        with Tract.open() as t:
+            c1 = t.commit(InstructionContent(text="System"))
+            c2 = t.commit(DialogueContent(role="user", text="Hello"))
+            t.compile()
+            snapshot_before = t._cache.get(t.head)
+            assert len(snapshot_before.message_token_counts) == 2
+
+            t.annotate(c1.commit_hash, Priority.SKIP)
+            snapshot_after = t._cache.get(t.head)
+            assert snapshot_after is not None
+            assert len(snapshot_after.message_token_counts) == 1
+
+
+class TestAPITokenPersistence:
+    """Tests for API-reported token count persistence through incremental ops."""
+
+    def test_api_tokens_persist_through_append(self):
+        """After record_usage(), subsequent APPEND preserves API base."""
+        with Tract.open() as t:
+            t.commit(InstructionContent(text="System"))
+            t.compile()
+
+            # Calibrate with API-reported tokens
+            api_total = 150
+            t.record_usage({"prompt_tokens": api_total, "completion_tokens": 20, "total_tokens": 170})
+            cached = t._cache.get(t.head)
+            assert cached.token_count == api_total
+            assert cached.token_source.startswith("api:")
+
+            # APPEND should add delta to API base, not recount everything
+            t.commit(DialogueContent(role="user", text="Hello"))
+            new_cached = t._cache.get(t.head)
+            assert new_cached is not None
+            # New total > API base (added one message's tokens)
+            assert new_cached.token_count > api_total
+            # Token source preserved from parent (API-sourced)
+            assert new_cached.token_source.startswith("api:")
+
+    def test_api_tokens_persist_through_edit(self):
+        """After record_usage(), EDIT preserves API-calibrated base."""
+        with Tract.open() as t:
+            c1 = t.commit(InstructionContent(text="Short text"))
+            t.compile()
+
+            api_total = 100
+            t.record_usage({"prompt_tokens": api_total, "completion_tokens": 10, "total_tokens": 110})
+
+            # Edit with slightly different text -- delta should be small
+            t.commit(
+                InstructionContent(text="Short text!"),
+                operation=CommitOperation.EDIT,
+                response_to=c1.commit_hash,
+            )
+            new_cached = t._cache.get(t.head)
+            assert new_cached is not None
+            # Token source preserved from parent (API-sourced)
+            assert new_cached.token_source.startswith("api:")
+            # Total should be close to API base (small delta for the edit)
+            assert abs(new_cached.token_count - api_total) < 20
+
+    def test_api_tokens_persist_through_skip(self):
+        """After record_usage(), SKIP annotation preserves API-calibrated base."""
+        with Tract.open() as t:
+            c1 = t.commit(InstructionContent(text="System"))
+            c2 = t.commit(DialogueContent(role="user", text="Hello world"))
+            t.compile()
+
+            api_total = 200
+            t.record_usage({"prompt_tokens": api_total, "completion_tokens": 30, "total_tokens": 230})
+
+            t.annotate(c2.commit_hash, Priority.SKIP)
+            cached = t._cache.get(t.head)
+            assert cached is not None
+            # Total decreased from API base by the skipped message's tokens
+            assert cached.token_count < api_total
+            # Source preserved
+            assert cached.token_source.startswith("api:")
+
+
+class TestInBatchFlag:
+    """Tests for explicit _in_batch guard preventing cache updates during batch."""
+
+    def test_in_batch_flag_set_during_batch(self):
+        """_in_batch is True inside batch context, False outside."""
+        with Tract.open() as t:
+            assert t._in_batch is False
+            with t.batch():
+                assert t._in_batch is True
+            assert t._in_batch is False
+
+    def test_in_batch_flag_reset_on_exception(self):
+        """_in_batch is reset to False even if batch raises."""
+        with Tract.open() as t:
+            try:
+                with t.batch():
+                    assert t._in_batch is True
+                    raise ValueError("boom")
+            except ValueError:
+                pass
+            assert t._in_batch is False
+
+    def test_no_cache_entries_during_batch(self):
+        """No snapshots are cached for intermediate commits during batch."""
+        with Tract.open() as t:
+            t.commit(InstructionContent(text="pre-batch"))
+            t.compile()  # Populate cache
+            pre_batch_size = len(t._cache._cache)
+            assert pre_batch_size == 1
+
+            with t.batch():
+                t.commit(DialogueContent(role="user", text="a"))
+                t.commit(DialogueContent(role="assistant", text="b"))
+                # No new cache entries during batch
+                assert len(t._cache._cache) == 0
+
+            # After batch, cache is still empty (cleared on entry)
+            assert len(t._cache._cache) == 0
+            # But compile() repopulates
+            t.compile()
+            assert len(t._cache._cache) == 1
+
+
+class TestVerifyCacheAllFields:
+    """Tests for comprehensive verify_cache oracle assertions."""
+
+    def test_verify_cache_checks_generation_configs(self):
+        """verify_cache=True asserts generation_configs match."""
+        with Tract.open(verify_cache=True) as t:
+            t.commit(
+                InstructionContent(text="System"),
+                generation_config={"temperature": 0.7},
+            )
+            t.compile()
+            # Second compile triggers oracle -- should not raise
+            result = t.compile()
+            assert result.generation_configs[0] == {"temperature": 0.7}
+
+    def test_verify_cache_checks_commit_hashes(self):
+        """verify_cache=True asserts commit_hashes match."""
+        with Tract.open(verify_cache=True) as t:
+            c1 = t.commit(InstructionContent(text="System"))
+            c2 = t.commit(DialogueContent(role="user", text="Hello"))
+            t.compile()
+            result = t.compile()
+            assert result.commit_hashes == [c1.commit_hash, c2.commit_hash]
+
+    def test_verify_cache_skips_token_count_for_api_source(self):
+        """verify_cache=True does NOT assert token_count when API-sourced."""
+        with Tract.open(verify_cache=True) as t:
+            t.commit(InstructionContent(text="System"))
+            t.compile()
+            # Calibrate with API tokens (different from tiktoken)
+            t.record_usage({"prompt_tokens": 999, "completion_tokens": 10, "total_tokens": 1009})
+            # This compile should not raise even though token_count differs
+            result = t.compile()
+            assert result.token_count == 999
+
+
+class TestCompileAtCaching:
+    """Tests for _compile_at populating the cache."""
+
+    def test_diff_populates_cache(self):
+        """diff() caches compiled results for future hits."""
+        with Tract.open() as t:
+            c1 = t.commit(InstructionContent(text="System"))
+            c2 = t.commit(DialogueContent(role="user", text="Hello"))
+            # diff triggers _compile_at for both commits
+            t.diff(c1.commit_hash, c2.commit_hash)
+            # Both commits should now be cached
+            assert t._cache.get(c1.commit_hash) is not None
+            assert t._cache.get(c2.commit_hash) is not None
+
+
+class TestAnnotateNoOpSkipsClear:
+    """Tests for annotation identity check that skips cache clear."""
+
+    def test_pinned_on_included_commit_preserves_cache(self):
+        """Annotating PINNED on an already-included commit preserves all cache entries."""
+        with Tract.open() as t:
+            c1 = t.commit(InstructionContent(text="System"))
+            h1 = t.head
+            t.compile()
+            t.commit(DialogueContent(role="user", text="Hello"))
+            h2 = t.head
+            t.compile()
+            assert t._cache.get(h1) is not None
+            assert t._cache.get(h2) is not None
+
+            # Annotate PINNED on already-included commit -- should be no-op
+            t.annotate(c1.commit_hash, Priority.PINNED)
+            # Both cache entries should still exist
+            assert t._cache.get(h1) is not None
+            assert t._cache.get(h2) is not None
+
+    def test_normal_on_included_commit_preserves_cache(self):
+        """Annotating NORMAL on an already-NORMAL commit preserves all cache entries."""
+        with Tract.open() as t:
+            c1 = t.commit(InstructionContent(text="System"))
+            t.compile()
+            h = t.head
+            cache_size_before = len(t._cache._cache)
+
+            t.annotate(c1.commit_hash, Priority.NORMAL)
+            assert len(t._cache._cache) == cache_size_before
+            assert t._cache.get(h) is not None

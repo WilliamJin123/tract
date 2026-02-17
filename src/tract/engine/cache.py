@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# OpenAI cookbook: 3 tokens appended after all messages as the response primer.
+RESPONSE_PRIMER_TOKENS = 3
+
 
 class CacheManager:
     """LRU compile-snapshot cache with incremental patching.
@@ -29,6 +32,13 @@ class CacheManager:
     Manages an OrderedDict-based LRU cache of CompileSnapshot objects.
     Supports O(1) incremental extension for APPEND commits, in-memory
     patching for EDIT commits, and annotation-aware invalidation.
+
+    Token counts use per-message tracking: each message's token count
+    (including per-message overhead) is stored in the snapshot.  The
+    conversation total equals ``sum(message_token_counts) + RESPONSE_PRIMER_TOKENS``.
+    After ``record_usage()`` calibrates the total with API-reported counts,
+    subsequent incremental operations preserve that API base and only add
+    tiktoken-computed deltas for new/changed messages.
     """
 
     def __init__(
@@ -100,23 +110,28 @@ class CacheManager:
     ) -> CompileSnapshot | None:
         """Build a CompileSnapshot from a full compile result.
 
+        Computes per-message token counts for O(1) incremental updates.
         Returns None if the compiler is not a DefaultContextCompiler
         (custom compilers bypass incremental cache).
         """
         if not isinstance(self._compiler, DefaultContextCompiler):
             return None
+        messages = tuple(result.messages)
+        per_msg = self._compute_per_message_counts(messages)
+        token_count = sum(per_msg) + RESPONSE_PRIMER_TOKENS if per_msg else 0
         return CompileSnapshot(
             head_hash=head_hash,
-            messages=tuple(result.messages),
+            messages=messages,
             commit_count=result.commit_count,
-            token_count=result.token_count,
+            token_count=token_count,
             token_source=result.token_source,
             generation_configs=tuple(dict(c) for c in result.generation_configs),
             commit_hashes=tuple(result.commit_hashes),
+            message_token_counts=per_msg,
         )
 
     # ------------------------------------------------------------------
-    # Incremental patching
+    # Token counting helpers
     # ------------------------------------------------------------------
 
     def _token_source(self) -> str:
@@ -127,20 +142,36 @@ class CacheManager:
             return f"tiktoken:{self._token_counter._encoding_name}"
         return ""
 
-    def _count_messages_from_tuples(self, messages: list[Message] | tuple[Message, ...]) -> int:
-        """Count tokens for a sequence of Message objects."""
-        messages_dicts = [
-            {"role": m.role, "content": m.content}
-            if m.name is None
-            else {"role": m.role, "content": m.content, "name": m.name}
-            for m in messages
-        ]
-        return self._token_counter.count_messages(messages_dicts)
+    @staticmethod
+    def _message_to_dict(m: Message) -> dict:
+        """Convert a Message to the dict format expected by TokenCounter."""
+        if m.name is None:
+            return {"role": m.role, "content": m.content}
+        return {"role": m.role, "content": m.content, "name": m.name}
+
+    def _count_single_message_tokens(self, message: Message) -> int:
+        """Count tokens for a single message including per-message overhead.
+
+        Returns the per-message token count *without* the response primer.
+        The conversation total is ``sum(per_message) + RESPONSE_PRIMER_TOKENS``.
+        """
+        msg_dict = self._message_to_dict(message)
+        return self._token_counter.count_messages([msg_dict]) - RESPONSE_PRIMER_TOKENS
+
+    def _compute_per_message_counts(
+        self, messages: tuple[Message, ...] | list[Message]
+    ) -> tuple[int, ...]:
+        """Compute per-message token counts for all messages."""
+        return tuple(self._count_single_message_tokens(m) for m in messages)
 
     @property
     def uses_default_compiler(self) -> bool:
         """Whether the compiler supports incremental caching."""
         return isinstance(self._compiler, DefaultContextCompiler)
+
+    # ------------------------------------------------------------------
+    # Incremental patching
+    # ------------------------------------------------------------------
 
     def extend_for_append(
         self, commit_info: CommitInfo, parent_snapshot: CompileSnapshot
@@ -148,8 +179,9 @@ class CacheManager:
         """Incrementally extend a cached snapshot for an APPEND commit.
 
         Builds the message for the new commit, appends it (no aggregation),
-        and recounts tokens.  The parent snapshot stays in the LRU cache
-        under its own HEAD (useful for future checkout back).
+        and computes the token delta in O(1) using per-message counts.
+        The parent snapshot stays in the LRU cache under its own HEAD
+        (useful for future checkout back).
         """
         commit_row = self._commit_repo.get(commit_info.commit_hash)
         if commit_row is None:
@@ -162,7 +194,16 @@ class CacheManager:
         new_messages = parent_snapshot.messages + (new_message,)
         new_commit_hashes = parent_snapshot.commit_hashes + (commit_info.commit_hash,)
 
-        new_token_count = self._count_messages_from_tuples(new_messages)
+        # O(1) token delta: count only the new message
+        new_msg_tokens = self._count_single_message_tokens(new_message)
+        if parent_snapshot.message_token_counts:
+            # Delta-based: preserves API-calibrated base from record_usage()
+            new_token_count = parent_snapshot.token_count + new_msg_tokens
+            new_msg_counts = parent_snapshot.message_token_counts + (new_msg_tokens,)
+        else:
+            # Fallback: no per-message counts (legacy snapshot), full recount
+            new_msg_counts = self._compute_per_message_counts(new_messages)
+            new_token_count = sum(new_msg_counts) + RESPONSE_PRIMER_TOKENS if new_msg_counts else 0
 
         self.put(
             commit_info.commit_hash,
@@ -171,9 +212,10 @@ class CacheManager:
                 messages=new_messages,
                 commit_count=parent_snapshot.commit_count + 1,
                 token_count=new_token_count,
-                token_source=self._token_source(),
+                token_source=parent_snapshot.token_source,
                 generation_configs=parent_snapshot.generation_configs + (new_config,),
                 commit_hashes=new_commit_hashes,
+                message_token_counts=new_msg_counts,
             ),
         )
 
@@ -186,7 +228,8 @@ class CacheManager:
         """Patch a cached snapshot for an EDIT commit in-memory.
 
         Finds the message corresponding to the edited target (via response_to),
-        replaces it with the new message, and recounts tokens.
+        replaces it with the new message, and computes the token delta in O(1)
+        using per-message counts.
 
         Returns None if patching is not possible (missing commit_hashes, target
         not found), signaling caller to fall back to full recompile on next
@@ -218,16 +261,28 @@ class CacheManager:
             new_configs[target_idx] = dict(edit_row.generation_config_json)  # copy-on-input
         # else: keep original config at target_idx (edit-inherits-original)
 
-        new_token_count = self._count_messages_from_tuples(new_messages)
+        # O(1) token delta
+        new_msg_tokens = self._count_single_message_tokens(new_message)
+        if parent_snapshot.message_token_counts and len(parent_snapshot.message_token_counts) > target_idx:
+            old_msg_tokens = parent_snapshot.message_token_counts[target_idx]
+            new_token_count = parent_snapshot.token_count - old_msg_tokens + new_msg_tokens
+            new_msg_counts = list(parent_snapshot.message_token_counts)
+            new_msg_counts[target_idx] = new_msg_tokens
+            new_msg_counts_tuple = tuple(new_msg_counts)
+        else:
+            # Fallback: full recount
+            new_msg_counts_tuple = self._compute_per_message_counts(new_messages)
+            new_token_count = sum(new_msg_counts_tuple) + RESPONSE_PRIMER_TOKENS if new_msg_counts_tuple else 0
 
         return CompileSnapshot(
             head_hash=new_head_hash,
             messages=tuple(new_messages),
             commit_count=parent_snapshot.commit_count,  # Same count (EDIT replaces, doesn't add)
             token_count=new_token_count,
-            token_source=self._token_source(),
+            token_source=parent_snapshot.token_source,
             generation_configs=tuple(new_configs),
             commit_hashes=parent_snapshot.commit_hashes,  # Same positions
+            message_token_counts=new_msg_counts_tuple,
         )
 
     def patch_for_annotate(
@@ -256,24 +311,33 @@ class CacheManager:
             if target_idx is None:
                 return snapshot  # Already not in snapshot
 
-            # Remove message, config, and hash at target position
+            # Remove message, config, hash, and token count at target position
             new_messages = list(snapshot.messages)
             new_configs = list(snapshot.generation_configs)
             new_hashes = list(snapshot.commit_hashes)
+            new_msg_counts = list(snapshot.message_token_counts) if snapshot.message_token_counts else []
             del new_messages[target_idx]
             del new_configs[target_idx]
             del new_hashes[target_idx]
 
-            new_token_count = self._count_messages_from_tuples(new_messages)
+            # O(1) token delta
+            if new_msg_counts and len(new_msg_counts) > target_idx:
+                removed_tokens = new_msg_counts[target_idx]
+                del new_msg_counts[target_idx]
+                new_token_count = snapshot.token_count - removed_tokens
+            else:
+                new_msg_counts = list(self._compute_per_message_counts(new_messages))
+                new_token_count = sum(new_msg_counts) + RESPONSE_PRIMER_TOKENS if new_msg_counts else 0
 
             return CompileSnapshot(
                 head_hash=snapshot.head_hash,
                 messages=tuple(new_messages),
                 commit_count=snapshot.commit_count - 1,
                 token_count=new_token_count,
-                token_source=self._token_source(),
+                token_source=snapshot.token_source,
                 generation_configs=tuple(new_configs),
                 commit_hashes=tuple(new_hashes),
+                message_token_counts=tuple(new_msg_counts),
             )
         else:
             # NORMAL or PINNED

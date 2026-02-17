@@ -499,3 +499,63 @@ class TestExpandForDebugging:
             session.get_child_tract(info.commit_hash)
 
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# Session.release_tract tests
+# ---------------------------------------------------------------------------
+
+
+class TestReleaseTract:
+    """Tests for Session.release_tract() memory management."""
+
+    def test_release_tract_removes_from_dict(self, tmp_path):
+        """release_tract() removes the tract from _tracts."""
+        db_path = str(tmp_path / "test.db")
+        session = Session.open(db_path)
+        tract = session.create_tract()
+        tid = tract.tract_id
+        assert tid in session._tracts
+
+        session.release_tract(tid)
+        assert tid not in session._tracts
+        session.close()
+
+    def test_release_tract_clears_cache(self, tmp_path):
+        """release_tract() clears the tract's compile cache."""
+        db_path = str(tmp_path / "test.db")
+        session = Session.open(db_path)
+        tract = session.create_tract()
+        tract.commit(InstructionContent(text="hello"))
+        tract.compile()
+        assert len(tract._cache._cache) > 0
+
+        session.release_tract(tract.tract_id)
+        assert len(tract._cache._cache) == 0
+        session.close()
+
+    def test_release_unknown_tract_raises(self, tmp_path):
+        """release_tract() raises SessionError for unknown tract_id."""
+        db_path = str(tmp_path / "test.db")
+        session = Session.open(db_path)
+        with pytest.raises(SessionError, match="not held in session"):
+            session.release_tract("nonexistent")
+        session.close()
+
+    def test_released_tract_can_be_reacquired(self, tmp_path):
+        """After release, get_tract() reconstructs from DB."""
+        db_path = str(tmp_path / "test.db")
+        session = Session.open(db_path)
+        tract = session.create_tract()
+        tid = tract.tract_id
+        tract.commit(InstructionContent(text="persisted"))
+
+        session.release_tract(tid)
+        assert tid not in session._tracts
+
+        # Reconstruct from DB
+        recovered = session.get_tract(tid)
+        assert recovered.tract_id == tid
+        result = recovered.compile()
+        assert result.commit_count == 1
+        session.close()

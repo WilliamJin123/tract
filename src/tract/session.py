@@ -22,7 +22,6 @@ from tract.exceptions import SessionError, SpawnError
 from tract.models.config import TractConfig
 from tract.models.session import CollapseResult, SpawnInfo
 from tract.operations.spawn import (
-    _row_to_spawn_info,
     collapse_tract,
     spawn_tract,
 )
@@ -81,6 +80,13 @@ class Session:
         Returns:
             A ready-to-use Session instance.
         """
+        valid_autonomy = {"manual", "collaborative", "autonomous"}
+        if autonomy not in valid_autonomy:
+            raise ValueError(
+                f"Invalid autonomy level: {autonomy!r}. "
+                f"Must be one of {valid_autonomy}"
+            )
+
         engine = create_trace_engine(path)
         init_db(engine)
         session_factory = create_session_factory(engine)
@@ -198,6 +204,11 @@ class Session:
 
         Returns from cache if available, otherwise reconstructs from DB.
 
+        Note:
+            Reconstructed tracts use default ``TractConfig``. If the original
+            tract was created with a custom config, those settings are not
+            persisted and will be lost on reconstruction.
+
         Args:
             tract_id: The tract identifier.
 
@@ -228,6 +239,27 @@ class Session:
         session.close()  # Close the probe session
         tract = self.create_tract(tract_id=tract_id)
         return tract
+
+    def release_tract(self, tract_id: str) -> None:
+        """Release a tract, freeing its session and compile cache.
+
+        Use this to reclaim memory for tracts that are no longer needed
+        (e.g. after collapsing a child).
+
+        Args:
+            tract_id: The tract identifier to release.
+
+        Raises:
+            SessionError: If tract_id is not currently held.
+        """
+        if tract_id not in self._tracts:
+            raise SessionError(f"Tract not held in session: {tract_id}")
+        tract = self._tracts.pop(tract_id)
+        tract._cache.clear()
+        try:
+            tract._session.close()
+        except Exception:
+            pass
 
     def list_tracts(self) -> list[dict]:
         """List all tracts in the session.
@@ -274,8 +306,6 @@ class Session:
             display_name=display_name,
             max_tokens=max_tokens,
         )
-        # Flush the spawn_repo session to persist the pointer
-        self._spawn_session.commit()
         self._tracts[child.tract_id] = child
         return child
 
@@ -339,19 +369,21 @@ class Session:
         Raises:
             SessionError: If commit has no collapse metadata or child not found.
         """
-        # Find the commit across all cached tracts
-        commit_info = None
-        for tract in self._tracts.values():
-            commit_info = tract.get_commit(collapse_commit_hash)
-            if commit_info is not None:
-                break
+        from sqlalchemy import select
+        from tract.storage.schema import CommitRow
 
-        if commit_info is None:
+        # Query the database directly instead of searching cached tracts
+        stmt = select(CommitRow).where(
+            CommitRow.commit_hash == collapse_commit_hash
+        )
+        row = self._spawn_session.execute(stmt).scalar_one_or_none()
+
+        if row is None:
             raise SessionError(
                 f"Commit not found: {collapse_commit_hash}"
             )
 
-        metadata = commit_info.metadata
+        metadata = row.metadata_json
         if metadata is None or "collapse_source_tract_id" not in metadata:
             raise SessionError(
                 f"Commit {collapse_commit_hash} is not a collapse commit "

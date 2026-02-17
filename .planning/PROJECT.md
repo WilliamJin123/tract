@@ -36,14 +36,17 @@ Trace is a Python library that brings git-like version control to LLM context wi
 - [ ] Cross-session handoff: sequential agent-to-agent context transfer via committed session outputs (distinct from concurrent multi-agent spawn pointers)
 - [ ] Garbage collection with retention policies
 - [ ] Published pip-installable package with docs and examples
+- [ ] Policy engine: declarative rules for auto-compress (budget threshold), auto-pin (heuristics), auto-branch (tangent detection), auto-rebase (abandoned branches)
+- [ ] Context management agent: monitors context health, proposes/executes operations, supports full autonomy spectrum (manual/collaborative/autonomous)
+- [ ] Human override: every automatic operation can be intercepted, reviewed, or overridden before or after execution
 
 ### Out of Scope
 
 - Framework-specific adapters (Claude Code, OpenAI SDK, LangGraph) — build after core is stable
-- Web/Desktop GUI viewer ("GitHub of Trace") — Phase 4 in future milestone
-- Autonomous context management / policy engine — Phase 5 in future milestone
+- Web/Desktop GUI viewer ("GitHub of Trace") — deferred (skeleton Phase 4)
 - RAG integration / external file tracking — defer until core context model is proven
 - Mobile or non-Python clients — Python-first
+- Benchmarking framework (A/B managed vs unmanaged context) — defer until autonomous features are proven
 
 ## Context
 
@@ -61,7 +64,7 @@ Trace is a Python library that brings git-like version control to LLM context wi
 - **Token counting**: tiktoken as default tokenizer, with support for extracting token counts from API response payloads
 - **LLM operations**: Built-in convenience client + accept user-provided callables for flexibility
 - **API-first**: Primary consumers are agents/frameworks, not humans. SDK is the product.
-- **Scope**: v1 milestone covers Phase 0 through Phase 3 (multi-agent). Phases 4-5 are future milestones.
+- **Scope**: v1 complete (Phases 1-5). v2 milestone covers autonomous context management (Phases 6-7). Skeleton Phase 4 (Tooling & Observability) deferred.
 
 ## Key Decisions
 

@@ -22,6 +22,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Compression** - Token-budget-aware compression, pinned commit preservation, commit reordering, garbage collection
 - [x] **Phase 5: Multi-Agent & Release** - Spawn/collapse for subagents, session persistence, crash recovery, cross-repo queries, packaging
 
+---
+
+**v2 Milestone: Autonomous Context Management**
+
+- [ ] **Phase 6: Policy Engine** - Rule/trigger system for automatic context operations (auto-compress, auto-pin, auto-branch, auto-rebase) with configurable policies and human override
+- [ ] **Phase 7: Context Management Agent** - Dedicated agent monitoring context health, proposing and executing operations via policies, full autonomy spectrum integration
+
 ## Phase Details
 
 ### Phase 1: Foundations
@@ -179,10 +186,45 @@ Plans:
 - [x] 05-02-PLAN.md -- Session class, spawn/collapse operations (3 inheritance modes, 3 autonomy modes for collapse), cross-repo queries, Tract.parent()/children(), crash recovery, expand for debugging
 - [x] 05-03-PLAN.md -- Packaging (tract-ai distribution), README documentation, end-to-end integration tests, cross-session handoff test
 
+---
+
+### Phase 6: Policy Engine
+**Goal**: Users can define declarative policies that automatically trigger context operations (compress, pin, branch, rebase) based on configurable rules and thresholds, with human override at any point
+**Depends on**: Phase 5 (uses all existing context operations as building blocks)
+**Requirements**: AUTO-01 (policy rules), AUTO-02 (auto-compress), AUTO-03 (auto-pin), AUTO-04 (auto-branch), AUTO-05 (auto-rebase), AUTO-06 (policy config & override)
+**Success Criteria** (what must be TRUE):
+  1. User can define policies (e.g., "auto-compress when token count exceeds 80% of budget") and the system executes them automatically
+  2. Auto-compress fires when token budget threshold is exceeded, producing valid compression commits that preserve pinned content
+  3. Auto-pin applies heuristics (user requirements, file paths, constraints) to automatically protect critical context from compression
+  4. Auto-branch detects tangential exploration and creates branches to isolate it from the main context line
+  5. Auto-rebase cleans up abandoned exploration branches (configurable staleness threshold)
+  6. Every automatic operation can be intercepted, reviewed, or overridden by a human before or after execution
+**Plans**: 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 6 to break down)
+
+### Phase 7: Context Management Agent
+**Goal**: A dedicated context management agent monitors context health (relevance, coherence, token usage) and proposes/executes operations via the policy engine, completing the autonomy spectrum from manual through collaborative to fully autonomous
+**Depends on**: Phase 6 (policy engine provides the rule infrastructure)
+**Requirements**: AUTO-07 (context health monitoring), AUTO-08 (operation proposals), AUTO-09 (autonomous execution), AUTO-10 (human override integration)
+**Success Criteria** (what must be TRUE):
+  1. A context management agent can monitor a running agent's trace and assess context health (relevance decay, coherence, token pressure)
+  2. The agent proposes context operations (compress, reorder, branch, pin) with explanations humans can review
+  3. In autonomous mode, the agent executes operations end-to-end without human intervention
+  4. In collaborative mode, the agent proposes and humans approve/reject/modify before execution
+  5. Human can override or disable the context agent at any point without data loss
+**Plans**: 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 7 to break down)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 1.4 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 1.4 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
+
+**v1 Milestone (Complete):**
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -195,3 +237,10 @@ Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 1.4 -> 2 -> 3 -> 4 ->
 | 3. Branching & Merging | 5/5 | Complete | 2026-02-14 |
 | 4. Compression | 3/3 | Complete | 2026-02-16 |
 | 5. Multi-Agent & Release | 3/3 | Complete | 2026-02-17 |
+
+**v2 Milestone (Autonomous Context Management):**
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 6. Policy Engine | 0/? | Not Started | — |
+| 7. Context Management Agent | 0/? | Not Started | — |

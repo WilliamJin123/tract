@@ -235,7 +235,7 @@ class SpawnPointerRow(Base):
         ForeignKey("commits.commit_hash", ondelete="SET NULL"),
         nullable=True,
     )
-    child_tract_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    child_tract_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     purpose: Mapped[str] = mapped_column(Text, nullable=False)
     inheritance_mode: Mapped[str] = mapped_column(
         String(20), nullable=False

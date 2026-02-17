@@ -118,6 +118,7 @@ class Tract:
             commit_repo=commit_repo,
         )
         self._verify_cache: bool = verify_cache
+        self._in_batch: bool = False
         self._closed = False
 
     @classmethod
@@ -384,23 +385,26 @@ class Tract:
         self._session.commit()
 
         # Update compile cache: incremental extend for APPEND,
-        # in-memory patching for EDIT, otherwise next compile() rebuilds
-        if operation == CommitOperation.APPEND and self._cache.uses_default_compiler:
-            parent_snapshot = self._cache.get(prev_head) if prev_head else None
-            if parent_snapshot is not None:
-                self._cache.extend_for_append(info, parent_snapshot)
-            # If no parent snapshot, next compile() builds from scratch
-        elif operation == CommitOperation.EDIT and self._cache.uses_default_compiler:
-            parent_snapshot = self._cache.get(prev_head) if prev_head else None
-            if parent_snapshot is not None:
-                edit_row = self._commit_repo.get(info.commit_hash)
-                if edit_row is not None:
-                    patched = self._cache.patch_for_edit(
-                        parent_snapshot, info.commit_hash, edit_row
-                    )
-                    if patched is not None:
-                        self._cache.put(info.commit_hash, patched)
-            # Do NOT clear cache -- other entries at different HEADs remain valid
+        # in-memory patching for EDIT, otherwise next compile() rebuilds.
+        # Skip cache updates during batch() -- cache was cleared on entry
+        # and will be rebuilt on next compile() after the batch completes.
+        if not self._in_batch:
+            if operation == CommitOperation.APPEND and self._cache.uses_default_compiler:
+                parent_snapshot = self._cache.get(prev_head) if prev_head else None
+                if parent_snapshot is not None:
+                    self._cache.extend_for_append(info, parent_snapshot)
+                # If no parent snapshot, next compile() builds from scratch
+            elif operation == CommitOperation.EDIT and self._cache.uses_default_compiler:
+                parent_snapshot = self._cache.get(prev_head) if prev_head else None
+                if parent_snapshot is not None:
+                    edit_row = self._commit_repo.get(info.commit_hash)
+                    if edit_row is not None:
+                        patched = self._cache.patch_for_edit(
+                            parent_snapshot, info.commit_hash, edit_row
+                        )
+                        if patched is not None:
+                            self._cache.put(info.commit_hash, patched)
+                # Do NOT clear cache -- other entries at different HEADs remain valid
 
         return info
 
@@ -469,9 +473,26 @@ class Tract:
                     f"Cache message mismatch: cached {len(result.messages)} msgs, "
                     f"fresh {len(fresh.messages)} msgs"
                 )
-                assert result.token_count == fresh.token_count, (
-                    f"Cache token mismatch: cached {result.token_count}, "
-                    f"fresh {fresh.token_count}"
+                # Skip token_count assertion when API-sourced (record_usage
+                # calibrates to API totals which legitimately differ from tiktoken)
+                if not result.token_source.startswith("api:"):
+                    assert result.token_count == fresh.token_count, (
+                        f"Cache token mismatch: cached {result.token_count}, "
+                        f"fresh {fresh.token_count}"
+                    )
+                assert result.commit_count == fresh.commit_count, (
+                    f"Cache commit_count mismatch: cached {result.commit_count}, "
+                    f"fresh {fresh.commit_count}"
+                )
+                assert result.generation_configs == fresh.generation_configs, (
+                    f"Cache generation_configs mismatch: "
+                    f"cached {len(result.generation_configs)}, "
+                    f"fresh {len(fresh.generation_configs)}"
+                )
+                assert result.commit_hashes == fresh.commit_hashes, (
+                    f"Cache commit_hashes mismatch: "
+                    f"cached {len(result.commit_hashes)}, "
+                    f"fresh {len(fresh.commit_hashes)}"
                 )
             return result
 
@@ -571,6 +592,9 @@ class Tract:
 
         # Annotations affect ALL cached snapshots that include the target commit.
         # Strategy: clear everything, then optionally re-add a patched current HEAD.
+        # Exception: if patch returns the same snapshot object (NORMAL/PINNED on
+        # already-included commit), the annotation is a no-op for compiled output
+        # and we can skip the clear entirely.
         if self._cache.uses_default_compiler:
             current_head = self.head
             patched = None
@@ -580,9 +604,12 @@ class Tract:
                     patched = self._cache.patch_for_annotate(
                         snapshot, target_hash, priority
                     )
-            self._cache.clear()  # Clear ALL entries (other HEADs may contain the annotated commit)
-            if patched is not None:
-                self._cache.put(current_head, patched)  # Re-add patched current HEAD
+            if patched is not None and patched is snapshot:
+                pass  # No-op: annotation didn't change compiled output
+            else:
+                self._cache.clear()
+                if patched is not None:
+                    self._cache.put(current_head, patched)
         else:
             self._cache.clear()
 
@@ -686,8 +713,12 @@ class Tract:
         cached = self._cache.get(commit_hash)
         if cached is not None:
             return self._cache.to_compiled(cached)
-        # Cache miss: compile fresh
-        return self._compiler.compile(self._tract_id, commit_hash)
+        # Cache miss: compile fresh and store for future hits
+        result = self._compiler.compile(self._tract_id, commit_hash)
+        snapshot = self._cache.build_snapshot(commit_hash, result)
+        if snapshot is not None:
+            self._cache.put(commit_hash, snapshot)
+        return result
 
     def diff(
         self,
@@ -1575,8 +1606,10 @@ class Tract:
                 t.commit(InstructionContent(text="System prompt"))
                 t.commit(DialogueContent(role="user", text="Hi"))
         """
-        # Invalidate compile cache on batch entry
+        # Invalidate compile cache on batch entry and set _in_batch flag
+        # so commit() skips cache updates for intermediate states.
         self._cache.clear()
+        self._in_batch = True
 
         # Stash the real session.commit and replace with a no-op so that
         # individual commit() calls inside the batch don't flush to the database.
@@ -1597,6 +1630,7 @@ class Tract:
             self._session.rollback()
             raise
         finally:
+            self._in_batch = False
             self._session.commit = _real_commit  # type: ignore[assignment]
 
 

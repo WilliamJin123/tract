@@ -22,6 +22,7 @@ from tract.prompts.summarize import DEFAULT_COLLAPSE_SYSTEM, build_collapse_prom
 if TYPE_CHECKING:
     from tract.engine.commit import CommitEngine
     from tract.protocols import CompiledContext, TokenCounter
+    from tract.tract import Tract
     from tract.storage.sqlite import (
         SqliteAnnotationRepository,
         SqliteBlobRepository,
@@ -41,7 +42,7 @@ def spawn_tract(
     inheritance: str = "head_snapshot",
     display_name: str | None = None,
     max_tokens: int | None = None,
-) -> object:
+) -> Tract:
     """Create a child tract linked to parent via spawn pointer.
 
     Args:
@@ -180,7 +181,6 @@ def spawn_tract(
         child_session.commit()
 
     # Build child Tract instance
-    child_spawn_repo = _SpawnRepo(child_session)
     child = Tract(
         engine=None,  # Engine is owned by Session, not individual Tracts
         session=child_session,
@@ -232,13 +232,16 @@ def _head_snapshot(
     if max_tokens is not None and token_counter is not None:
         current_tokens = token_counter.count_text(text)
         if current_tokens > max_tokens:
-            # Truncate from oldest (beginning) to fit budget
-            while len(lines) > 1:
-                lines.pop(0)
-                text = "\n".join(lines)
-                current_tokens = token_counter.count_text(text)
-                if current_tokens <= max_tokens:
-                    break
+            # Binary search for the minimum number of lines to drop from oldest
+            lo, hi = 1, len(lines) - 1
+            while lo < hi:
+                mid = (lo + hi) // 2
+                candidate = "\n".join(lines[mid:])
+                if token_counter.count_text(candidate) <= max_tokens:
+                    hi = mid
+                else:
+                    lo = mid + 1
+            text = "\n".join(lines[lo:])
 
     # Commit as InstructionContent in child
     info = child_commit_engine.create_commit(
@@ -282,6 +285,9 @@ def _full_clone(
     if not all_commits:
         return None
 
+    # Note: response_to relationships are not preserved during clone.
+    # Cloned commits get new hashes, so old response_to values become invalid.
+    # A hash remapping could be added here if response_to fidelity is needed.
     last_hash = None
     for commit_row in all_commits:
         # Read blob content
@@ -387,8 +393,6 @@ def collapse_tract(
             instructions=instructions,
         )
         # Call LLM
-        import httpx
-
         try:
             response = llm_client.chat(
                 messages=[

@@ -9,12 +9,14 @@ See: .planning/PROJECT.md (updated 2026-02-10)
 
 ## Current Position
 
-Phase: 5 of 5 (Multi-Agent & Release)
-Plan: 3 of 3 in current phase
-Status: COMPLETE
-Last activity: 2026-02-17 - Completed 05-03-PLAN.md (Packaging, Documentation & Integration Tests, 16 tests, 664 total)
+Milestone: v2 — Autonomous Context Management
+Phase: 6 of 7 (Policy Engine)
+Plan: 0 of ? in current phase
+Status: NOT STARTED
+Last activity: 2026-02-17 - v2 milestone created with Phase 6 (Policy Engine) and Phase 7 (Context Management Agent)
 
-Progress: [######################] 100% (22/22 plans)
+v1 Progress: [######################] 100% (22/22 plans)
+v2 Progress: [______________________] 0%
 
 ## Performance Metrics
 
@@ -159,6 +161,7 @@ None.
 - Phase 1.2 inserted after Phase 1.1: Rename Repo to Tract (INSERTED) -- `Repo` implies a shared container, but each agent's context is self-contained. `Tract` better reflects the domain. Also renames `repo_id` -> `tract_id`. Clean vocabulary before building Phases 2-5 on top.
 - Phase 1.3 inserted after Phase 1.2: Hyperparameter Config Storage (INSERTED) -- store LLM generation config (temperature, top_p, top_k, repetition_penalty, etc.) with commits for full call provenance. Enables exploration/exploitation branching pattern where hyperparams are tuned per-branch. Data model extension belongs before Phase 2 so history/diff/log can display configs from day one.
 - Phase 1.4 inserted after Phase 1.3: LRU Compile Cache & Snapshot Patching (INSERTED) -- replace single-snapshot cache with LRU keyed by head_hash, EDIT/annotate snapshot patching instead of full invalidation. Checkout/reset/branch-switch get cache hits; EDITs avoid expensive full recompilation.
+- v2 milestone created (2026-02-17): Phase 6 (Policy Engine) + Phase 7 (Context Management Agent) -- delivers Core Value 2's autonomy spectrum. Skeleton Phase 4 (Tooling & Observability) deferred. Benchmarking deferred.
 
 ### Blockers/Concerns
 

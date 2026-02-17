@@ -44,6 +44,11 @@ class CompileSnapshot:
 
     Each position in ``messages`` corresponds to one effective commit.
     ``commit_hashes[i]`` is the commit that produced ``messages[i]``.
+    ``message_token_counts[i]`` is the token count for ``messages[i]``
+    (including per-message overhead, excluding the response primer).
+
+    ``token_count`` equals ``sum(message_token_counts) + RESPONSE_PRIMER_TOKENS``
+    when tiktoken-sourced, or the API-reported prompt_tokens when API-sourced.
     """
 
     head_hash: str
@@ -53,6 +58,7 @@ class CompileSnapshot:
     token_source: str
     generation_configs: tuple[dict, ...] = ()
     commit_hashes: tuple[str, ...] = ()
+    message_token_counts: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)

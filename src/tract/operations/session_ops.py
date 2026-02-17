@@ -23,6 +23,31 @@ if TYPE_CHECKING:
     from tract.storage.sqlite import SqliteSpawnPointerRepository
 
 
+def _is_tract_ended(session: Session, tract_id: str) -> bool:
+    """Check if a tract has a session_type='end' commit.
+
+    Queries session-type commits for the tract and inspects their blob
+    payloads to find an 'end' marker.
+    """
+    end_stmt = (
+        select(CommitRow)
+        .where(
+            CommitRow.tract_id == tract_id,
+            CommitRow.content_type == "session",
+        )
+    )
+    end_commits = session.execute(end_stmt).scalars().all()
+    for ec in end_commits:
+        blob = session.execute(
+            select(BlobRow).where(BlobRow.content_hash == ec.content_hash)
+        ).scalar_one_or_none()
+        if blob is not None:
+            payload = json.loads(blob.payload_json)
+            if payload.get("session_type") == "end":
+                return True
+    return False
+
+
 def list_tracts(
     session: Session,
     spawn_repo: SqliteSpawnPointerRepository,
@@ -54,26 +79,7 @@ def list_tracts(
         commit_count = row[1]
         latest_commit_at = row[2]
 
-        # Check if tract has a session_type="end" commit
-        # We look for SessionContent commits with session_type=end
-        end_stmt = (
-            select(CommitRow)
-            .where(
-                CommitRow.tract_id == tract_id,
-                CommitRow.content_type == "session",
-            )
-        )
-        end_commits = session.execute(end_stmt).scalars().all()
-        is_active = True
-        for ec in end_commits:
-            blob = session.execute(
-                select(BlobRow).where(BlobRow.content_hash == ec.content_hash)
-            ).scalar_one_or_none()
-            if blob is not None:
-                payload = json.loads(blob.payload_json)
-                if payload.get("session_type") == "end":
-                    is_active = False
-                    break
+        is_active = not _is_tract_ended(session, tract_id)
 
         # Check spawn pointer for parent info and display name
         pointer = spawn_repo.get_by_child(tract_id)
@@ -190,37 +196,40 @@ def compile_at(
     )
 
     session = session_factory()
-    config = TractConfig()
+    try:
+        config = TractConfig()
 
-    commit_repo = SqliteCommitRepository(session)
-    blob_repo = SqliteBlobRepository(session)
-    ref_repo = SqliteRefRepository(session)
-    annotation_repo = SqliteAnnotationRepository(session)
-    parent_repo = SqliteCommitParentRepository(session)
+        commit_repo = SqliteCommitRepository(session)
+        blob_repo = SqliteBlobRepository(session)
+        ref_repo = SqliteRefRepository(session)
+        annotation_repo = SqliteAnnotationRepository(session)
+        parent_repo = SqliteCommitParentRepository(session)
 
-    token_counter = TiktokenCounter(encoding_name=config.tokenizer_encoding)
+        token_counter = TiktokenCounter(encoding_name=config.tokenizer_encoding)
 
-    compiler = DefaultContextCompiler(
-        commit_repo=commit_repo,
-        blob_repo=blob_repo,
-        annotation_repo=annotation_repo,
-        token_counter=token_counter,
-        parent_repo=parent_repo,
-    )
+        compiler = DefaultContextCompiler(
+            commit_repo=commit_repo,
+            blob_repo=blob_repo,
+            annotation_repo=annotation_repo,
+            token_counter=token_counter,
+            parent_repo=parent_repo,
+        )
 
-    # Get HEAD for this tract
-    head_hash = ref_repo.get_head(tract_id)
-    if head_hash is None:
-        from tract.protocols import CompiledContext
+        # Get HEAD for this tract
+        head_hash = ref_repo.get_head(tract_id)
+        if head_hash is None:
+            from tract.protocols import CompiledContext
 
-        return CompiledContext(messages=[], token_count=0, commit_count=0, token_source="")
+            return CompiledContext(messages=[], token_count=0, commit_count=0, token_source="")
 
-    return compiler.compile(
-        tract_id,
-        head_hash,
-        at_time=at_time,
-        at_commit=at_commit,
-    )
+        return compiler.compile(
+            tract_id,
+            head_hash,
+            at_time=at_time,
+            at_commit=at_commit,
+        )
+    finally:
+        session.close()
 
 
 def resume(
@@ -260,27 +269,7 @@ def resume(
         tract_id = row[0]
         latest = row[1]
 
-        # Check if tract has an "end" session commit
-        end_stmt = (
-            select(CommitRow)
-            .where(
-                CommitRow.tract_id == tract_id,
-                CommitRow.content_type == "session",
-            )
-        )
-        end_commits = session.execute(end_stmt).scalars().all()
-        is_ended = False
-        for ec in end_commits:
-            blob = session.execute(
-                select(BlobRow).where(BlobRow.content_hash == ec.content_hash)
-            ).scalar_one_or_none()
-            if blob is not None:
-                payload = json.loads(blob.payload_json)
-                if payload.get("session_type") == "end":
-                    is_ended = True
-                    break
-
-        if is_ended:
+        if _is_tract_ended(session, tract_id):
             continue
 
         is_root = spawn_repo.get_by_child(tract_id) is None
@@ -301,7 +290,12 @@ def resume(
 
 
 def _row_to_commit_info(row: CommitRow) -> CommitInfo:
-    """Convert a CommitRow ORM object to a CommitInfo Pydantic model."""
+    """Convert a CommitRow ORM object to a CommitInfo Pydantic model.
+
+    Note: This duplicates conversion logic in CommitEngine._row_to_info().
+    Kept separate because session_ops operates on raw sessions without
+    a CommitEngine instance.
+    """
     return CommitInfo(
         commit_hash=row.commit_hash,
         tract_id=row.tract_id,
