@@ -41,6 +41,7 @@ from tract.storage.sqlite import (
     SqliteCommitRepository,
     SqliteCompressionRepository,
     SqliteRefRepository,
+    SqliteSpawnPointerRepository,
 )
 
 if TYPE_CHECKING:
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from tract.models.branch import BranchInfo
     from tract.models.compression import CompressResult, GCResult, PendingCompression
     from tract.models.merge import CherryPickResult, MergeResult, RebaseResult
+    from tract.models.session import SpawnInfo
     from tract.operations.diff import DiffResult
     from tract.operations.history import StatusInfo
     from tract.storage.schema import CommitRow
@@ -107,6 +109,7 @@ class Tract:
         self._token_counter = token_counter
         self._parent_repo = parent_repo
         self._compression_repo = compression_repo
+        self._spawn_repo: SqliteSpawnPointerRepository | None = None
         self._custom_type_registry: dict[str, type[BaseModel]] = {}
         self._cache = CacheManager(
             maxsize=config.compile_cache_maxsize,
@@ -188,13 +191,16 @@ class Tract:
             parent_repo=parent_repo,
         )
 
+        # Spawn pointer repository
+        spawn_repo = SqliteSpawnPointerRepository(session)
+
         # Ensure "main" branch ref exists (idempotent)
         head = ref_repo.get_head(tract_id)
         if head is None:
             # No HEAD yet -- that is fine, first commit will set it.
             pass
 
-        return cls(
+        tract = cls(
             engine=engine,
             session=session,
             commit_engine=commit_engine,
@@ -210,6 +216,8 @@ class Tract:
             compression_repo=compression_repo,
             verify_cache=verify_cache,
         )
+        tract._spawn_repo = spawn_repo
+        return tract
 
     @classmethod
     def from_components(
@@ -287,6 +295,43 @@ class Tract:
     def current_branch(self) -> str | None:
         """The current branch name, or *None* if HEAD is detached."""
         return self._ref_repo.get_current_branch(self._tract_id)
+
+    @property
+    def spawn_repo(self) -> SqliteSpawnPointerRepository | None:
+        """Expose spawn repo for internal use by Session."""
+        return self._spawn_repo
+
+    # ------------------------------------------------------------------
+    # Spawn relationship helpers
+    # ------------------------------------------------------------------
+
+    def parent(self) -> SpawnInfo | None:
+        """Get the spawn info for this tract's parent.
+
+        Returns:
+            SpawnInfo if this tract was spawned from a parent, None for
+            root tracts or tracts without a spawn_repo.
+        """
+        if self._spawn_repo is None:
+            return None
+        row = self._spawn_repo.get_by_child(self._tract_id)
+        if row is None:
+            return None
+        from tract.operations.spawn import _row_to_spawn_info
+        return _row_to_spawn_info(row)
+
+    def children(self) -> list[SpawnInfo]:
+        """Get spawn info for all child tracts spawned from this tract.
+
+        Returns:
+            List of SpawnInfo for each child, in chronological order.
+            Empty list if no children or no spawn_repo.
+        """
+        if self._spawn_repo is None:
+            return []
+        rows = self._spawn_repo.get_children(self._tract_id)
+        from tract.operations.spawn import _row_to_spawn_info
+        return [_row_to_spawn_info(row) for row in rows]
 
     # ------------------------------------------------------------------
     # Public methods
