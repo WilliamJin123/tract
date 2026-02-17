@@ -191,9 +191,10 @@ def _full_clone(
 ) -> str:
     """Clone all commits from source tract to target tract.
 
-    Uses SQL INSERT...SELECT for bulk copy within the same DB.
+    Replays commits through CommitEngine.create_commit() with new tract_id.
     Blobs are shared (content-addressable, same hash = same content).
-    Commits get new tract_id but same commit_hash (same content+parents).
+    Commits get new tract_id AND new commit_hash (new timestamps produce
+    new hashes, since commit_hash includes timestamp_iso).
     """
     # Commits reference blobs by content_hash (shared, no copy needed)
     # Copy CommitRows with updated tract_id
@@ -438,7 +439,7 @@ Multi-agent in this project means 2-20 agents, not 100+. With short write transa
 2. **Use `tract-ai`** -- more descriptive, `pip install tract-ai` and `import tract`
 3. **Use `llm-trace`** -- domain-specific, `pip install llm-trace` and `import tract`
 
-**Recommendation:** Keep `trace-context` as the distribution name (already configured). The import name `tract` is not conflicted because Python import names are independent of PyPI distribution names. Users do `pip install trace-context` then `import tract`. Document this clearly.
+**Decision:** Use `tract-ai` as the distribution name (updated from `trace-context`). The import name `tract` is not conflicted because Python import names are independent of PyPI distribution names. Users do `pip install tract-ai` then `import tract`. GitHub org/URLs should also use `tract-ai` for consistency.
 
 **Other packaging items:**
 - `__all__` exports: already comprehensive in `__init__.py` (87 exports)

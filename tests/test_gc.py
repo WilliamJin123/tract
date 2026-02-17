@@ -314,3 +314,35 @@ class TestGCProvenanceCleanup:
         gc_result2 = t.gc(orphan_retention_days=0, archive_retention_days=0)
         assert gc_result2.commits_removed == 0
         assert gc_result2.archives_removed == 0
+
+    def test_gc_cleans_result_commit_fk(self):
+        """GC correctly handles CompressionResultRow FK when summary commits become unreachable."""
+        t, hashes = make_tract_with_commits(5)
+
+        # Compress to create summary commits
+        result = t.compress(content="Summary of everything")
+        summary_hashes = result.summary_commits
+        compression_id = result.compression_id
+
+        # Verify result rows exist in provenance
+        results_before = t._compression_repo.get_results(compression_id)
+        assert len(results_before) >= 1
+
+        # Reset to a previous commit to make summary commits unreachable
+        # (The summary is the new HEAD, so we need to make it orphaned)
+        # Create new commits on top, then reset back
+        new_h1 = t.commit(DialogueContent(role="user", text="New after compress"))
+        new_h2 = t.commit(DialogueContent(role="assistant", text="Response"))
+        # Now compress again to orphan the previous summary
+        result2 = t.compress(content="Second summary replacing everything")
+
+        # First summary commits are now unreachable (orphaned)
+        # GC should clean them up along with their CompressionResultRow entries
+        gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
+
+        # Should have removed the old summary commits and source archives
+        assert gc_result.commits_removed > 0
+
+        # Verify no FK constraint violations -- a second GC should succeed cleanly
+        gc_result2 = t.gc(orphan_retention_days=0, archive_retention_days=0)
+        assert gc_result2.commits_removed >= 0  # May remove more or zero

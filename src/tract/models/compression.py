@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from tract.storage.schema import CommitRow
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,8 @@ class CompressResult:
     summary_commits: tuple[str, ...]
     preserved_commits: tuple[str, ...]
     compression_ratio: float
+    """Ratio of compressed_tokens / original_tokens. Values < 1.0 indicate
+    effective compression; values > 1.0 indicate the summary expanded tokens."""
     new_head: str
 
 
@@ -48,15 +53,16 @@ class PendingCompression:
     )
 
     # Internal state for finalization (set by compress_range, read by _finalize_compression)
-    _range_commits: Any = field(default=None, repr=False)
-    _pinned_commits: Any = field(default=None, repr=False)
-    _normal_commits: Any = field(default=None, repr=False)
-    _pinned_hashes: Any = field(default=None, repr=False)
-    _skip_hashes: Any = field(default=None, repr=False)
-    _groups: Any = field(default=None, repr=False)
-    _branch_name: Any = field(default=None, repr=False)
-    _target_tokens: Any = field(default=None, repr=False)
-    _instructions: Any = field(default=None, repr=False)
+    _range_commits: list[CommitRow] | None = field(default=None, repr=False)
+    _pinned_commits: list[CommitRow] | None = field(default=None, repr=False)
+    _normal_commits: list[CommitRow] | None = field(default=None, repr=False)
+    _pinned_hashes: set[str] | None = field(default=None, repr=False)
+    _skip_hashes: set[str] | None = field(default=None, repr=False)
+    _groups: list[list[CommitRow]] | None = field(default=None, repr=False)
+    _branch_name: str | None = field(default=None, repr=False)
+    _target_tokens: int | None = field(default=None, repr=False)
+    _instructions: str | None = field(default=None, repr=False)
+    _head_hash: str | None = field(default=None, repr=False)
 
     def edit_summary(self, index: int, new_text: str) -> None:
         """Replace the summary text at the given index.

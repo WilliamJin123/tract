@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from tract.engine.commit import CommitEngine
+    from tract.llm.protocols import LLMClient
     from tract.protocols import TokenCounter
     from tract.storage.repositories import (
         AnnotationRepository,
@@ -230,20 +231,26 @@ def _build_messages_text(
 
     Returns:
         Formatted text with role labels.
+
+    Raises:
+        CompressionError: If all blobs in the group are unavailable.
     """
     parts: list[str] = []
+    unavailable_count = 0
 
     for row in group:
         blob = blob_repo.get(row.content_hash)
         if blob is None:
             logger.warning("Blob not found for content_hash=%s", row.content_hash)
             parts.append("[content unavailable]")
+            unavailable_count += 1
             continue
 
         try:
             data = json.loads(blob.payload_json)
         except (json.JSONDecodeError, TypeError):
             parts.append("[content unavailable]")
+            unavailable_count += 1
             continue
 
         # Format based on content type
@@ -258,6 +265,15 @@ def _build_messages_text(
                 text = json.dumps(data, sort_keys=True)
 
         parts.append(f"[{role}]: {text}")
+
+    if unavailable_count > 0:
+        logger.warning(
+            "%d of %d commits had unavailable content", unavailable_count, len(group)
+        )
+    if unavailable_count == len(group):
+        raise CompressionError(
+            f"All {len(group)} commits in group have unavailable content"
+        )
 
     return "\n\n".join(parts)
 
@@ -299,7 +315,7 @@ def _reconstruct_content(
 
 def _summarize_group(
     messages_text: str,
-    llm_client: object,
+    llm_client: LLMClient,
     token_counter: TokenCounter,
     *,
     target_tokens: int | None = None,
@@ -310,11 +326,7 @@ def _summarize_group(
 
     Args:
         messages_text: Text to summarize.
-        llm_client: LLM client with a ``chat(messages)`` method that returns
-            an OpenAI-style response dict::
-
-                {"choices": [{"message": {"content": "..."}}], ...}
-
+        llm_client: LLM client implementing the LLMClient protocol.
         token_counter: For token counting.
         target_tokens: Optional target token count.
         instructions: Optional additional instructions.
@@ -338,7 +350,7 @@ def _summarize_group(
         {"role": "user", "content": user_prompt},
     ]
 
-    response = llm_client.chat(messages)  # type: ignore[union-attr]
+    response = llm_client.chat(messages)
 
     try:
         content = response["choices"][0]["message"]["content"]
@@ -368,7 +380,7 @@ def compress_range(
     target_tokens: int | None = None,
     preserve: list[str] | None = None,
     auto_commit: bool = True,
-    llm_client: object | None = None,
+    llm_client: LLMClient | None = None,
     content: str | None = None,
     instructions: str | None = None,
     system_prompt: str | None = None,
@@ -491,6 +503,7 @@ def compress_range(
         pending._branch_name = branch_name
         pending._target_tokens = target_tokens
         pending._instructions = instructions
+        pending._head_hash = head_hash
         return pending
 
     # i. Autonomous mode: commit immediately
@@ -538,6 +551,7 @@ def _commit_compression(
     instructions: str | None,
     branch_name: str | None,
     type_registry: dict[str, type] | None = None,
+    expected_head: str | None = None,
 ) -> CompressResult:
     """Create summary commits, interleave with PINNED, record provenance.
 
@@ -545,10 +559,24 @@ def _commit_compression(
 
     Args:
         See compress_range() for parameter descriptions.
+        expected_head: If set, verify HEAD matches before proceeding (TOCTOU guard).
 
     Returns:
         CompressResult with all fields populated.
+
+    Raises:
+        CompressionError: If HEAD changed since compression was planned.
     """
+    # TOCTOU guard: verify HEAD hasn't changed since compression was planned
+    if expected_head is not None:
+        current_head = ref_repo.get_head(tract_id)
+        if current_head != expected_head:
+            raise CompressionError(
+                f"HEAD changed since compression was planned "
+                f"(expected {expected_head[:8]}, got {(current_head or 'None')[:8]}). "
+                f"Re-run compress() to plan against the current state."
+            )
+
     # a. Find the parent of the compressed range
     first_in_range = range_commits[0]
     pre_range_parent_hash = first_in_range.parent_hash
@@ -621,7 +649,10 @@ def _commit_compression(
                 # Determine which summary to use
                 summary_text = summaries[gidx]
 
-                # Create summary commit
+                # Create summary commit.
+                # Summaries use role="assistant" by design: the LLM generates
+                # the summary text, so it's semantically assistant-authored
+                # regardless of the roles in the compressed commits.
                 n_commits = len(groups[gidx])
                 summary_content = DialogueContent(
                     role="assistant",
@@ -756,22 +787,12 @@ def _clear_head_for_root(
 ) -> None:
     """Clear HEAD so that next create_commit has no parent.
 
-    This handles the edge case where compression starts at the root commit.
-    We need to reset the state so the first create_commit in the new chain
-    has parent_hash=None.
+    Handles the edge case where compression starts at the root commit.
+    Deletes the branch ref so get_head() returns None (symbolic HEAD
+    follows the branch ref, so a missing branch ref means no HEAD).
     """
-    # Delete the branch ref so get_head returns None
     if branch_name is not None:
         ref_repo.delete_ref(tract_id, f"refs/heads/{branch_name}")
-    # Also need HEAD to resolve to None
-    # The simplest approach: set the branch ref to empty via delete
-    # But we need to keep the symbolic HEAD -> branch mapping.
-    # Actually, we can set the branch to a non-existent hash temporarily,
-    # but that's fragile. Better: just delete the branch ref.
-    # The get_head implementation follows symbolic refs, so if
-    # HEAD -> refs/heads/main and refs/heads/main doesn't exist,
-    # get_head returns None. That's what we want.
-    pass
 
 
 # ===========================================================================
@@ -876,6 +897,11 @@ def gc(
 
     Returns:
         GCResult with removal counts and duration.
+
+    Note:
+        Loads all commits for the tract into memory. This is acceptable for
+        conversation-scale data (hundreds to low thousands of commits) but
+        may need optimization for very large tracts.
     """
     import time
 

@@ -605,3 +605,78 @@ class TestManualModePinnedError:
         assert isinstance(result, CompressResult)
         assert len(result.summary_commits) >= 1
         assert len(result.source_commits) == 5
+
+
+# ===========================================================================
+# 9. Stacked and re-compression tests
+# ===========================================================================
+
+
+class TestStackedCompression:
+    """Tests for compress -> commit -> compress again (iterative compression)."""
+
+    def test_compress_commit_compress_again(self):
+        """Stacked compression: compress, add more commits, compress again."""
+        t, hashes = make_tract_with_commits(5)
+
+        # First compression
+        result1 = t.compress(content="Summary of first 5 messages")
+        assert isinstance(result1, CompressResult)
+        head_after_first = t.head
+
+        # Add more commits after compression
+        h6 = t.commit(DialogueContent(role="user", text="New message 6"))
+        h7 = t.commit(DialogueContent(role="assistant", text="New message 7"))
+        h8 = t.commit(DialogueContent(role="user", text="New message 8"))
+
+        # Second compression -- compresses the summary + new messages
+        result2 = t.compress(content="Summary of everything so far")
+        assert isinstance(result2, CompressResult)
+        assert result2.new_head != head_after_first
+
+        # Final compiled output should have the latest summary
+        compiled = t.compile()
+        messages_text = " ".join(m.content for m in compiled.messages)
+        assert "Summary of everything" in messages_text
+
+    def test_re_compress_summary_commits(self):
+        """Re-compression: compress a range that includes a previous summary commit."""
+        t, hashes = make_tract_with_commits(5)
+
+        # First compression
+        result1 = t.compress(content="Summary of first batch")
+        assert isinstance(result1, CompressResult)
+
+        # The current chain now has the summary commit(s)
+        compiled_mid = t.compile()
+        assert compiled_mid.commit_count >= 1
+
+        # Add a couple more commits
+        t.commit(DialogueContent(role="user", text="After first compress"))
+        t.commit(DialogueContent(role="assistant", text="Response after compress"))
+
+        # Re-compress everything (including the previous summary)
+        result2 = t.compress(content="Re-compressed summary of all")
+        assert isinstance(result2, CompressResult)
+
+        compiled_final = t.compile()
+        messages_text = " ".join(m.content for m in compiled_final.messages)
+        assert "Re-compressed summary" in messages_text
+
+    def test_toctou_guard_blocks_stale_approve(self):
+        """Approving a PendingCompression after HEAD changed raises error."""
+        t, hashes = make_tract_with_commits(5)
+
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        # Plan compression (collaborative mode)
+        pending = t.compress(auto_commit=False)
+        assert isinstance(pending, PendingCompression)
+
+        # Add a new commit, changing HEAD
+        t.commit(DialogueContent(role="user", text="Sneaky new commit"))
+
+        # Approve should fail because HEAD changed
+        with pytest.raises(CompressionError, match="HEAD changed"):
+            pending.approve()

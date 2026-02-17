@@ -170,12 +170,14 @@ Plans:
   4. User can query across repositories within a session (e.g., "what did agent-2 know at this point?")
   5. Trace is pip-installable with documentation and usage examples
 
+**Deferred to post-v1**: Autonomy spectrum for spawn and session boundaries. v1 implements manual spawn (user explicitly calls spawn()) and manual session boundaries (user creates SessionContent commits). Collaborative/autonomous spawn detection ("library suggests delegation") and session boundary generation are deferred — autonomous context management is listed in PROJECT.md Out of Scope for this milestone.
+
 **Plans**: 3 plans
 
 Plans:
 - [ ] 05-01-PLAN.md -- Storage foundation: SpawnPointerRow schema (v4 migration), SpawnPointerRepository, SessionContent model, collapse prompt
-- [ ] 05-02-PLAN.md -- Session class, spawn/collapse operations (3 inheritance modes, 3 autonomy modes), cross-repo queries, Tract.parent()/children(), crash recovery
-- [ ] 05-03-PLAN.md -- Packaging (tract-ai distribution), README documentation, end-to-end integration tests
+- [ ] 05-02-PLAN.md -- Session class, spawn/collapse operations (3 inheritance modes, 3 autonomy modes for collapse), cross-repo queries, Tract.parent()/children(), crash recovery, expand for debugging
+- [ ] 05-03-PLAN.md -- Packaging (tract-ai distribution), README documentation, end-to-end integration tests, cross-session handoff test
 
 ## Progress
 

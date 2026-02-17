@@ -1291,6 +1291,8 @@ class Tract:
             raise
 
         if isinstance(result, _PendingCompression):
+            # No DB writes in collaborative path; rollback the unnecessary savepoint
+            nested.rollback()
             # Set the commit function for later approval
             result._commit_fn = self._finalize_compression
             return result
@@ -1346,6 +1348,7 @@ class Tract:
                 instructions=pending._instructions,
                 branch_name=pending._branch_name,
                 type_registry=self._custom_type_registry,
+                expected_head=pending._head_hash,
             )
         except Exception:
             nested.rollback()
