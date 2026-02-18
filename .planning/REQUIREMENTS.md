@@ -82,10 +82,21 @@ Deferred to future release. Tracked but not in current roadmap.
 - **ADAPT-01**: Framework adapters for LangChain, CrewAI, OpenAI Agents SDK
 - **GUI-01**: Web/desktop visual DAG explorer for multi-agent traces (inspired by OpenTelemetry viewers)
 
-### Automation
+### Automation — Policy Engine (Phase 6)
 
-- **AUTO-01**: Policy engine for automatic context management (auto-branch on tangents, auto-compress at threshold)
-- **AUTO-02**: Context management agent that monitors and manages another agent's Trace
+- [x] **AUTO-01**: User can define declarative policies (rules with triggers, thresholds, and actions) that the system evaluates automatically
+- [x] **AUTO-02**: Auto-compress fires when token budget threshold is exceeded, producing valid compression commits that preserve pinned content
+- [x] **AUTO-03**: Auto-pin applies heuristics (content type matching for InstructionContent/SessionContent) to automatically protect critical context from compression
+- [x] **AUTO-04**: Auto-branch detects tangential exploration (content type switching patterns) and proposes branches to isolate it
+- [x] **AUTO-05**: Auto-rebase detects stale branches (configurable staleness threshold + commit count) and proposes archiving
+- [x] **AUTO-06**: Every automatic operation can be intercepted, reviewed, or overridden by a human (collaborative mode proposals, pause/resume, approve/reject)
+
+### Automation — Context Management Agent (Phase 7)
+
+- **AUTO-07**: Context management agent monitors context health (relevance, coherence, token pressure)
+- **AUTO-08**: Agent proposes context operations with explanations humans can review
+- **AUTO-09**: In autonomous mode, agent executes operations end-to-end without human intervention
+- **AUTO-10**: Human can override or disable the context agent at any point without data loss
 
 ## Out of Scope
 
@@ -143,11 +154,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INTF-04 | Phase 3 | Complete |
 | INTF-05 | Phase 5 | Complete |
 
+| AUTO-01 | Phase 6 | Complete |
+| AUTO-02 | Phase 6 | Complete |
+| AUTO-03 | Phase 6 | Complete |
+| AUTO-04 | Phase 6 | Complete |
+| AUTO-05 | Phase 6 | Complete |
+| AUTO-06 | Phase 6 | Complete |
+| AUTO-07 | Phase 7 | Pending |
+| AUTO-08 | Phase 7 | Pending |
+| AUTO-09 | Phase 7 | Pending |
+| AUTO-10 | Phase 7 | Pending |
+
 **Coverage:**
-- v1 requirements: 37 total
-- Mapped to phases: 37
+- v1 requirements: 37 total, all Complete
+- v2 requirements: 10 total (6 Complete, 4 Pending)
+- Mapped to phases: 47
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-10*
-*Last updated: 2026-02-10 after roadmap creation (phases renumbered 1-5)*
+*Last updated: 2026-02-17 after Phase 6 completion (v2 AUTO requirements added)*

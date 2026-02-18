@@ -26,7 +26,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **v2 Milestone: Autonomous Context Management**
 
-- [ ] **Phase 6: Policy Engine** - Rule/trigger system for automatic context operations (auto-compress, auto-pin, auto-branch, auto-rebase) with configurable policies and human override
+- [x] **Phase 6: Policy Engine** - Rule/trigger system for automatic context operations (auto-compress, auto-pin, auto-branch, auto-rebase) with configurable policies and human override
 - [ ] **Phase 7: Context Management Agent** - Dedicated agent monitoring context health, proposing and executing operations via policies, full autonomy spectrum integration
 
 ## Phase Details
@@ -244,5 +244,5 @@ Phases execute in numeric order: 1 -> 1.1 -> 1.2 -> 1.3 -> 1.4 -> 2 -> 3 -> 4 ->
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Policy Engine | 0/3 | Not Started | — |
+| 6. Policy Engine | 3/3 | Complete | 2026-02-17 |
 | 7. Context Management Agent | 0/? | Not Started | — |
