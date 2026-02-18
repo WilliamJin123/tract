@@ -5,25 +5,25 @@
 See: .planning/PROJECT.md (updated 2026-02-10)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 7 (Agent Toolkit & Orchestrator) IN PROGRESS. 832 tests passing. Plan 02 complete.
+**Current focus:** Phase 7 (Agent Toolkit & Orchestrator) IN PROGRESS. 869 tests passing. Plans 01 and 02 complete (wave 1).
 
 ## Current Position
 
 Milestone: v2 — Autonomous Context Management
 Phase: 7 of 7 (Agent Toolkit & Orchestrator)
-Plan: 2 of 3 in current phase (07-01 and 07-02 ran in parallel wave 1)
+Plan: 2 of 3 in current phase (07-01 and 07-02 complete, wave 1 done)
 Status: In progress
-Last activity: 2026-02-18 - Completed 07-02-PLAN.md (Orchestrator Data Models)
+Last activity: 2026-02-18 - Completed 07-01-PLAN.md (Agent Toolkit) and 07-02-PLAN.md (Orchestrator Data Models)
 
 v1 Progress: [######################] 100% (22/22 plans)
-v2 Progress: [################______] 67% (4/6 plans)
+v2 Progress: [##################____] 83% (5/6 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 26
-- Average duration: 5.9m
-- Total execution time: 2.74 hours
+- Total plans completed: 27
+- Average duration: 6.0m
+- Total execution time: 2.89 hours
 
 **By Phase:**
 
@@ -40,8 +40,8 @@ v2 Progress: [################______] 67% (4/6 plans)
 | 5 | 3/3 | 28m | 9.3m |
 
 **Recent Trend:**
-- Last 5 plans: 06-01 (7m), 06-02 (6m), 06-03 (7m), 07-02 (6m)
-- Trend: steady (~6-7m)
+- Last 5 plans: 06-02 (6m), 06-03 (7m), 07-01 (9m), 07-02 (6m)
+- Trend: steady (~6-9m)
 
 *Updated after each plan completion*
 
@@ -171,6 +171,10 @@ Recent decisions affecting current work:
 - [07-02]: OrchestratorResult.state default via __post_init__ to avoid circular imports
 - [07-02]: TriggerConfig frozen, OrchestratorConfig mutable (triggers set once, config adjustable)
 - [07-02]: cli_prompt lazy-imports Rich (matches [cli] optional extra pattern)
+- [07-01]: Handler lambdas use explicit parameter whitelisting (not **kwargs) to prevent hallucinated arguments
+- [07-01]: ToolCall re-exported from orchestrator.models via try/except ImportError for parallel plan safety
+- [07-01]: Tract.as_tools() uses lazy imports to avoid circular dependencies
+- [07-01]: Tool handlers convert complex return types to human-readable strings (not raw repr)
 
 ### Pending Todos
 
@@ -320,5 +324,5 @@ All Phase 6 success criteria verified:
 ## Session Continuity
 
 Last session: 2026-02-18
-Stopped at: Completed 07-02-PLAN.md (Orchestrator Data Models) - Wave 1 plan 2/2
+Stopped at: Completed 07-01-PLAN.md (Agent Toolkit) - Wave 1 complete (07-01 + 07-02)
 Resume file: None
