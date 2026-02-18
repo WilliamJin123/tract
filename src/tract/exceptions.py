@@ -175,3 +175,7 @@ class PolicyExecutionError(TraceError):
 
 class PolicyConfigError(TraceError):
     """Raised when policy configuration is invalid."""
+
+
+class OrchestratorError(TraceError):
+    """Raised when the orchestrator encounters an unrecoverable error."""
