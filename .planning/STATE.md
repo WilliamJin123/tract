@@ -5,25 +5,25 @@
 See: .planning/PROJECT.md (updated 2026-02-10)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 6 (Policy Engine) in progress. 713 tests passing.
+**Current focus:** Phase 6 (Policy Engine) in progress. 754 tests passing.
 
 ## Current Position
 
 Milestone: v2 — Autonomous Context Management
 Phase: 6 of 7 (Policy Engine)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: In progress
-Last activity: 2026-02-18 - Completed 06-01-PLAN.md (Policy Storage Foundation)
+Last activity: 2026-02-18 - Completed 06-02-PLAN.md (Policy Evaluator and Tract Integration)
 
 v1 Progress: [######################] 100% (22/22 plans)
-v2 Progress: [####__________________] 17% (1/6 plans)
+v2 Progress: [########______________] 33% (2/6 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 23
+- Total plans completed: 24
 - Average duration: 5.9m
-- Total execution time: 2.42 hours
+- Total execution time: 2.52 hours
 
 **By Phase:**
 
@@ -40,8 +40,8 @@ v2 Progress: [####__________________] 17% (1/6 plans)
 | 5 | 3/3 | 28m | 9.3m |
 
 **Recent Trend:**
-- Last 5 plans: 05-01 (8m), 05-02 (13m), 05-03 (7m), 06-01 (7m)
-- Trend: steady (~7-13m)
+- Last 5 plans: 05-02 (13m), 05-03 (7m), 06-01 (7m), 06-02 (6m)
+- Trend: steady (~6-13m)
 
 *Updated after each plan completion*
 
@@ -155,6 +155,12 @@ Recent decisions affecting current work:
 - [06-01]: PolicyProposal follows PendingCompression pattern (mutable, _execute_fn for deferred approval)
 - [06-01]: PolicyAction is frozen (determined once), PolicyProposal is mutable (status changes)
 - [06-01]: Composite indexes on (tract_id, status) and (tract_id, created_at) for primary query patterns
+- [06-02]: Policy ABC uses abstract evaluate(), name, priority, trigger; defaults: priority=100, trigger="compile"
+- [06-02]: PolicyEvaluator is sidecar class (not embedded in Tract); connected via _policy_evaluator attribute
+- [06-02]: Recursion guard via _evaluating flag (same pattern as Tract._in_batch)
+- [06-02]: Compile-triggered policies run BEFORE compilation; commit-triggered run AFTER commit
+- [06-02]: Cooldown per-policy-name with configurable seconds; pending proposals provide natural dedup
+- [06-02]: Policy config persisted to _trace_meta as JSON under key "policy_config"
 
 ### Pending Todos
 
@@ -287,11 +293,12 @@ All Phase 5 success criteria verified:
 | Plan | Name | Tests | Duration |
 |------|------|-------|----------|
 | 06-01 | Policy Storage Foundation | 29 | 7m |
+| 06-02 | Policy Evaluator & Tract Integration | 40 | 6m |
 
-Total test suite: 713 tests passing.
+Total test suite: 754 tests passing.
 
 ## Session Continuity
 
 Last session: 2026-02-18
-Stopped at: Completed 06-01-PLAN.md (Policy Storage Foundation)
-Resume file: .planning/phases/06-policy-engine/06-02-PLAN.md
+Stopped at: Completed 06-02-PLAN.md (Policy Evaluator and Tract Integration)
+Resume file: .planning/phases/06-policy-engine/06-03-PLAN.md
