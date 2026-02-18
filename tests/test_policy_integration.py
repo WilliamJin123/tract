@@ -471,3 +471,76 @@ class TestOnProposalCallback:
             assert callback_calls[0].status == "pending"
         finally:
             t.close()
+
+
+# ---------------------------------------------------------------------------
+# 11. Policy Config Survives Restart (File-Backed)
+# ---------------------------------------------------------------------------
+
+
+class TestPolicyConfigSurvivesRestart:
+    """Policy config persists across Tract.open() calls (file-backed)."""
+
+    def test_policy_config_survives_restart_file_backed(self):
+        """Policies auto-load from _trace_meta on Tract.open()."""
+        db_path = os.path.join(tempfile.mkdtemp(), "test_restart.db")
+        tract_id = "restart-test-tract"
+
+        try:
+            # First session: configure and save policies
+            config = TractConfig(
+                db_path=db_path,
+                token_budget=TokenBudgetConfig(max_tokens=1000),
+            )
+            t1 = Tract.open(db_path, tract_id=tract_id, config=config)
+            pin = PinPolicy(pin_types={"instruction", "session"})
+            compress = CompressPolicy(threshold=0.75)
+            t1.configure_policies(policies=[pin, compress])
+
+            # Save config
+            policy_config = {
+                "policies": [pin.to_config(), compress.to_config()],
+            }
+            t1.save_policy_config(policy_config)
+
+            # Commit some content
+            t1.commit(InstructionContent(text="System prompt"))
+            t1.close()
+
+            # Second session: re-open same file
+            config2 = TractConfig(
+                db_path=db_path,
+                token_budget=TokenBudgetConfig(max_tokens=1000),
+            )
+            t2 = Tract.open(db_path, tract_id=tract_id, config=config2)
+
+            # Verify evaluator was auto-created
+            assert t2.policy_evaluator is not None
+
+            # Verify both policies are registered
+            policies = t2.policy_evaluator._policies
+            assert len(policies) == 2
+            policy_names = {p.name for p in policies}
+            assert "auto-pin" in policy_names
+            assert "auto-compress" in policy_names
+
+            # Verify priority ordering (pin=100, compress=200)
+            assert policies[0].name == "auto-pin"
+            assert policies[1].name == "auto-compress"
+
+            # Verify compress threshold was restored
+            compress_restored = next(
+                p for p in policies if p.name == "auto-compress"
+            )
+            assert compress_restored._threshold == 0.75
+
+            # Verify policies evaluate correctly -- commit SessionContent
+            info = t2.commit(SessionContent(session_type="start", summary="Restart"))
+            # PinPolicy should have pinned it
+            annotations = t2.get_annotations(info.commit_hash)
+            assert any(a.priority == Priority.PINNED for a in annotations)
+
+            t2.close()
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)

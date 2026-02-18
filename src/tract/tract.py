@@ -228,6 +228,31 @@ class Tract:
         )
         tract._spawn_repo = spawn_repo
         tract._policy_repo = policy_repo
+
+        # Auto-load persisted policy config (if any)
+        saved_config = tract.load_policy_config()
+        if saved_config is not None:
+            from tract.policy.builtin import (
+                BranchPolicy as _BranchPolicy,
+                CompressPolicy as _CompressPolicy,
+                PinPolicy as _PinPolicy,
+                RebasePolicy as _RebasePolicy,
+            )
+
+            _policy_type_map: dict[str, type] = {
+                "auto-compress": _CompressPolicy,
+                "auto-pin": _PinPolicy,
+                "auto-branch": _BranchPolicy,
+                "auto-rebase": _RebasePolicy,
+            }
+            policies = []
+            for entry in saved_config.get("policies", []):
+                policy_cls = _policy_type_map.get(entry.get("name"))
+                if policy_cls is not None and entry.get("enabled", True):
+                    policies.append(policy_cls.from_config(entry))
+            if policies:
+                tract.configure_policies(policies=policies)
+
         return tract
 
     @classmethod
