@@ -71,36 +71,41 @@ def cli_prompt(proposal: OrchestratorProposal) -> ProposalResponse:
         print(f"Arguments: {json.dumps(proposal.recommended_action.arguments, indent=2)}")
         prompt_fn = input
 
-    while True:
-        choice = prompt_fn("[a]pprove / [r]eject / [m]odify: ").strip().lower()
+    try:
+        while True:
+            choice = prompt_fn("[a]pprove / [r]eject / [m]odify: ").strip().lower()
 
-        if choice in ("a", "approve"):
-            return ProposalResponse(decision=ProposalDecision.APPROVED)
+            if choice in ("a", "approve"):
+                return ProposalResponse(decision=ProposalDecision.APPROVED)
 
-        if choice in ("r", "reject"):
-            reason = prompt_fn("Reason (optional): ").strip()
-            return ProposalResponse(
-                decision=ProposalDecision.REJECTED, reason=reason
-            )
-
-        if choice in ("m", "modify"):
-            while True:
-                raw = prompt_fn("Modified arguments (JSON): ").strip()
-                try:
-                    parsed_args = json.loads(raw)
-                except json.JSONDecodeError:
-                    print("Invalid JSON. Please try again.")
-                    continue
+            if choice in ("r", "reject"):
+                reason = prompt_fn("Reason (optional): ").strip()
                 return ProposalResponse(
-                    decision=ProposalDecision.MODIFIED,
-                    modified_action=ToolCall(
-                        id=proposal.recommended_action.id,
-                        name=proposal.recommended_action.name,
-                        arguments=parsed_args,
-                    ),
+                    decision=ProposalDecision.REJECTED, reason=reason
                 )
 
-        print("Invalid choice. Enter 'a', 'r', or 'm'.")
+            if choice in ("m", "modify"):
+                while True:
+                    raw = prompt_fn("Modified arguments (JSON): ").strip()
+                    try:
+                        parsed_args = json.loads(raw)
+                    except json.JSONDecodeError:
+                        print("Invalid JSON. Please try again.")
+                        continue
+                    return ProposalResponse(
+                        decision=ProposalDecision.MODIFIED,
+                        modified_action=ToolCall(
+                            id=proposal.recommended_action.id,
+                            name=proposal.recommended_action.name,
+                            arguments=parsed_args,
+                        ),
+                    )
+
+            print("Invalid choice. Enter 'a', 'r', or 'm'.")
+    except (EOFError, KeyboardInterrupt):
+        return ProposalResponse(
+            decision=ProposalDecision.REJECTED, reason="Input closed"
+        )
 
 
 def reject_all(proposal: OrchestratorProposal) -> ProposalResponse:

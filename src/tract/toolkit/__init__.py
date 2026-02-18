@@ -13,12 +13,7 @@ from tract.toolkit.profiles import (
     get_profile,
 )
 
-# ToolCall is canonically defined in tract.orchestrator.models (Plan 02).
-# Re-export here for convenience. Plan 02 may not have run yet.
-try:
-    from tract.orchestrator.models import ToolCall
-except ImportError:
-    ToolCall = None  # type: ignore[assignment,misc]
+from tract.orchestrator.models import ToolCall
 
 # Lazy import to avoid circular dependency (executor imports definitions)
 def __getattr__(name: str):

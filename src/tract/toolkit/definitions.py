@@ -355,9 +355,9 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "min_age_hours": {
+                    "min_age_days": {
                         "type": "integer",
-                        "description": "Minimum age in hours before a commit is eligible for GC (converted to days internally). Default 168 (7 days).",
+                        "description": "Minimum age in days before a commit is eligible for GC. Default 7.",
                     },
                     "keep_pinned": {
                         "type": "boolean",
@@ -369,8 +369,8 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
                     },
                 },
             },
-            handler=lambda min_age_hours=168, keep_pinned=True, keep_branches=True: _handle_gc(
-                tract, min_age_hours, keep_pinned, keep_branches
+            handler=lambda min_age_days=7, keep_pinned=True, keep_branches=True: _handle_gc(
+                tract, min_age_days, keep_pinned, keep_branches
             ),
         ),
         # 14. list_branches
@@ -536,7 +536,7 @@ def _handle_switch(tract: Tract, target: str) -> str:
 
 def _handle_merge(tract: Tract, source: str, message: str | None) -> str:
     # Use auto_commit for simplicity in tool context
-    result = tract.merge(source, auto_commit=True)
+    result = tract.merge(source, auto_commit=True, message=message)
     if result.merge_type == "fast_forward":
         return f"Fast-forward merge of '{source}' into {result.target_branch}"
     return (
@@ -557,13 +557,11 @@ def _handle_checkout(tract: Tract, target: str) -> str:
 
 def _handle_gc(
     tract: Tract,
-    min_age_hours: int,
+    min_age_days: int,
     keep_pinned: bool,
     keep_branches: bool,
 ) -> str:
-    # Convert hours to days for the gc API
-    retention_days = max(1, min_age_hours // 24)
-    result = tract.gc(orphan_retention_days=retention_days)
+    result = tract.gc(orphan_retention_days=max(1, min_age_days))
     return (
         f"GC complete: {result.commits_removed} commits removed, "
         f"{result.blobs_removed} blobs removed"

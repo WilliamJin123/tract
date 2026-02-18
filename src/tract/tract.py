@@ -57,6 +57,9 @@ if TYPE_CHECKING:
     from tract.models.session import SpawnInfo
     from tract.operations.diff import DiffResult
     from tract.operations.history import StatusInfo
+    from tract.orchestrator.config import AutonomyLevel, OrchestratorConfig
+    from tract.orchestrator.loop import Orchestrator
+    from tract.orchestrator.models import OrchestratorResult
     from tract.policy.evaluator import PolicyEvaluator
     from tract.storage.schema import CommitRow
     from tract.storage.sqlite import SqlitePolicyRepository
@@ -126,8 +129,9 @@ class Tract:
         self._policy_evaluator: PolicyEvaluator | None = None
         self._policy_repo: SqlitePolicyRepository | None = None
         self._orchestrating: bool = False
-        self._orchestrator: object | None = None  # Orchestrator instance
+        self._orchestrator: Orchestrator | None = None  # type: ignore[assignment]
         self._trigger_commit_count: int = 0
+        self._token_trigger_fired: bool = False
 
     @classmethod
     def open(
@@ -703,6 +707,28 @@ class Tract:
             for row in rows
         ]
 
+    def annotation_counts(self, limit: int = 500) -> dict[str, int]:
+        """Count pinned and skipped annotations across recent commits.
+
+        Args:
+            limit: Maximum number of commits to scan. Default 500.
+
+        Returns:
+            Dict with ``"pinned"`` and ``"skip"`` integer counts.
+        """
+        entries = self.log(limit=limit)
+        commit_hashes = [e.commit_hash for e in entries]
+        pinned = 0
+        skip = 0
+        if commit_hashes:
+            annotations = self._annotation_repo.batch_get_latest(commit_hashes)
+            for _hash, ann_row in annotations.items():
+                if ann_row.priority == Priority.PINNED:
+                    pinned += 1
+                elif ann_row.priority == Priority.SKIP:
+                    skip += 1
+        return {"pinned": pinned, "skip": skip}
+
     def log(
         self,
         limit: int = 20,
@@ -1100,6 +1126,7 @@ class Tract:
         auto_commit: bool = False,
         model: str | None = None,
         delete_branch: bool = False,
+        message: str | None = None,
     ) -> MergeResult:
         """Merge a source branch into the current branch.
 
@@ -1112,6 +1139,8 @@ class Tract:
             auto_commit: If True, auto-commit even with resolved conflicts.
             model: Override model for the default resolver.
             delete_branch: If True, delete the source branch after merge.
+            message: Optional merge commit message. If not provided, a
+                default message is generated.
 
         Returns:
             :class:`MergeResult` describing the outcome.
@@ -1153,7 +1182,7 @@ class Tract:
             and result.resolutions
             and len(result.resolutions) >= len(result.conflicts)
         ):
-            return self.commit_merge(result)
+            return self.commit_merge(result, message=message)
 
         # Persist any changes (branch pointer moves, merge commits)
         self._session.commit()
@@ -1177,11 +1206,18 @@ class Tract:
 
         return result
 
-    def commit_merge(self, result: MergeResult) -> MergeResult:
+    def commit_merge(
+        self,
+        result: MergeResult,
+        *,
+        message: str | None = None,
+    ) -> MergeResult:
         """Finalize a conflict merge after reviewing/editing resolutions.
 
         Args:
             result: A MergeResult from a previous merge() call with conflicts.
+            message: Optional merge commit message. If not provided, a
+                default message is generated.
 
         Returns:
             Updated MergeResult with committed=True and merge_commit_hash set.
@@ -1228,12 +1264,13 @@ class Tract:
         if result.generation_configs:
             gen_config = next(iter(result.generation_configs.values()), None)
 
+        default_msg = f"Merge branch '{result.source_branch}' into {result.target_branch}"
         merge_info = create_merge_commit(
             commit_engine=self._commit_engine,
             parent_repo=self._parent_repo,
             content=merge_content,
             parent_hashes=parent_hashes,
-            message=f"Merge branch '{result.source_branch}' into {result.target_branch}",
+            message=message or default_msg,
             generation_config=gen_config,
         )
 
@@ -1973,17 +2010,23 @@ class Tract:
             return
 
         try:
+            _trig_autonomy = triggers.autonomy
+
             if trigger == "compile" and triggers.on_compile:
-                self.orchestrate()
+                self.orchestrate(trigger_autonomy=_trig_autonomy)
+                return  # Only fire once per trigger check
 
             if trigger == "commit":
+                fired = False
+
                 if triggers.on_commit_count is not None:
                     self._trigger_commit_count += 1
                     if self._trigger_commit_count >= triggers.on_commit_count:
                         self._trigger_commit_count = 0
-                        self.orchestrate()
+                        self.orchestrate(trigger_autonomy=_trig_autonomy)
+                        fired = True
 
-                if triggers.on_token_threshold is not None:
+                if not fired and triggers.on_token_threshold is not None:
                     status = self.status()
                     if (
                         status.token_budget_max
@@ -1991,7 +2034,14 @@ class Tract:
                     ):
                         pct = status.token_count / status.token_budget_max
                         if pct >= triggers.on_token_threshold:
-                            self.orchestrate()
+                            if not self._token_trigger_fired:
+                                self._token_trigger_fired = True
+                                self.orchestrate(
+                                    trigger_autonomy=_trig_autonomy
+                                )
+                        else:
+                            # Reset cooldown when usage drops below threshold
+                            self._token_trigger_fired = False
         except Exception:
             # Trigger errors must not break commit/compile
             import logging
@@ -2002,7 +2052,7 @@ class Tract:
 
     def configure_orchestrator(
         self,
-        config: object | None = None,
+        config: OrchestratorConfig | None = None,
         llm_callable: Callable | None = None,
     ) -> None:
         """Configure the orchestrator for this tract.
@@ -2037,9 +2087,10 @@ class Tract:
     def orchestrate(
         self,
         *,
-        config: object | None = None,
+        config: OrchestratorConfig | None = None,
         llm_callable: Callable | None = None,
-    ) -> object:
+        trigger_autonomy: AutonomyLevel | None = None,
+    ) -> OrchestratorResult:
         """Run the orchestrator agent loop.
 
         Convenience method that creates or reuses an Orchestrator
@@ -2048,6 +2099,8 @@ class Tract:
         Args:
             config: Optional OrchestratorConfig override.
             llm_callable: Optional LLM callable override.
+            trigger_autonomy: Optional autonomy override from a trigger.
+                When set, effective autonomy is min(ceiling, trigger_autonomy).
 
         Returns:
             OrchestratorResult from the orchestrator run.
@@ -2059,17 +2112,17 @@ class Tract:
             orch = _Orchestrator(
                 self, config=config, llm_callable=llm_callable
             )
-            return orch.run()
+            return orch.run(trigger_autonomy=trigger_autonomy)
 
         # If existing orchestrator, reuse it
         if self._orchestrator is not None:
             orch_inst: _Orchestrator = self._orchestrator  # type: ignore[assignment]
             orch_inst.reset()
-            return orch_inst.run()
+            return orch_inst.run(trigger_autonomy=trigger_autonomy)
 
         # Create one with defaults
         orch = _Orchestrator(self)
-        return orch.run()
+        return orch.run(trigger_autonomy=trigger_autonomy)
 
     def stop_orchestrator(self) -> None:
         """Stop the running orchestrator immediately.

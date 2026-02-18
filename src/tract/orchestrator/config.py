@@ -46,14 +46,28 @@ class TriggerConfig:
     All triggers default to None/False (disabled). Enable triggers
     selectively based on your use case.
 
+    **Important:** Triggers fire synchronously inside ``commit()`` or
+    ``compile()``.  When a trigger activates, the calling method blocks
+    until the orchestrator run completes (including any LLM API calls).
+
     Note: on_schedule_seconds is deferred -- periodic scheduling
     requires a background timer which is incompatible with Tract's
     synchronous design. May be added in a future milestone.
+
+    Attributes:
+        on_commit_count: Fire after every N commits. Resets after firing.
+        on_token_threshold: Fire when token usage exceeds this fraction
+            of the budget (0.0-1.0). Fires once until usage drops below.
+        on_compile: Fire on every compile() call.
+        autonomy: Override autonomy level for trigger-invoked runs.
+            When set, effective autonomy is min(ceiling, autonomy).
+            When None, the orchestrator's autonomy_ceiling is used as-is.
     """
 
     on_commit_count: int | None = None
     on_token_threshold: float | None = None
     on_compile: bool = False
+    autonomy: AutonomyLevel | None = None
 
 
 @dataclass

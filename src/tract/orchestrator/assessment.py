@@ -51,7 +51,6 @@ def build_context_assessment(
     Returns:
         Formatted assessment prompt string.
     """
-    from tract.models.annotations import Priority
     from tract.prompts.orchestrator import build_assessment_prompt
 
     # 1. Get current status (already has token_count, branch_name, etc.)
@@ -67,19 +66,13 @@ def build_context_assessment(
     branches = tract.list_branches()
     branch_count = len(branches)
 
-    # 5. Annotation counts -- check via annotation repo for efficiency
+    # 5. Annotation counts via public API
     pinned_count = 0
     skip_count = 0
     try:
-        all_commits = tract.log(limit=500)
-        commit_hashes = [c.commit_hash for c in all_commits]
-        if commit_hashes and hasattr(tract, "_annotation_repo"):
-            annotations = tract._annotation_repo.batch_get_latest(commit_hashes)
-            for _hash, ann_row in annotations.items():
-                if ann_row.priority == Priority.PINNED:
-                    pinned_count += 1
-                elif ann_row.priority == Priority.SKIP:
-                    skip_count += 1
+        counts = tract.annotation_counts()
+        pinned_count = counts["pinned"]
+        skip_count = counts["skip"]
     except Exception:
         # Non-critical: proceed with zero counts
         logger.debug("Failed to count annotations for assessment", exc_info=True)

@@ -7,6 +7,7 @@ repeat until LLM stops or max_steps reached.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import threading
@@ -75,6 +76,7 @@ class Orchestrator:
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
         self._orchestrating = False
+        self._trigger_autonomy: AutonomyLevel | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -85,7 +87,11 @@ class Orchestrator:
         """Return the current orchestrator state."""
         return self._state
 
-    def run(self) -> OrchestratorResult:
+    def run(
+        self,
+        *,
+        trigger_autonomy: AutonomyLevel | None = None,
+    ) -> OrchestratorResult:
         """Execute the orchestrator agent loop.
 
         1. Build context assessment
@@ -93,12 +99,18 @@ class Orchestrator:
         3. Loop: call LLM -> extract tool calls -> execute -> repeat
         4. Return result with all steps
 
+        Args:
+            trigger_autonomy: Optional autonomy override from the trigger
+                that invoked this run. When set, effective autonomy is
+                ``min(ceiling, trigger_autonomy)`` for every tool call.
+
         Returns:
             OrchestratorResult with all steps and final state.
 
         Raises:
             OrchestratorError: If no LLM is configured.
         """
+        self._trigger_autonomy = trigger_autonomy
         self._state = OrchestratorState.RUNNING
         self._orchestrating = True
         self._tract._set_orchestrating(True)
@@ -357,7 +369,7 @@ class Orchestrator:
         # Extract assistant message (preserves tool_calls array intact)
         try:
             assistant_msg = response["choices"][0]["message"]
-            formatted.append(dict(assistant_msg))
+            formatted.append(copy.deepcopy(assistant_msg))
         except (KeyError, IndexError, TypeError):
             # Fallback: construct minimal assistant message
             formatted.append({
@@ -392,7 +404,7 @@ class Orchestrator:
         Returns:
             StepResult recording what happened.
         """
-        effective = self._effective_autonomy()
+        effective = self._effective_autonomy(self._trigger_autonomy)
 
         # MANUAL: skip all tool calls
         if effective == AutonomyLevel.MANUAL:

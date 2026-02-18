@@ -2,18 +2,18 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-10)
+See: .planning/PROJECT.md (updated 2026-02-18)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 7 (Agent Toolkit & Orchestrator) COMPLETE. 888 tests passing. All v2 milestones delivered.
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Milestone: v2 -- Autonomous Context Management
-Phase: 7 of 7 (Agent Toolkit & Orchestrator)
-Plan: 3 of 3 in current phase (all complete)
-Status: Phase complete. v2 milestone complete.
-Last activity: 2026-02-18 - Completed 07-03-PLAN.md (Orchestrator Loop & Integration)
+Milestone: v2.0 complete. Next milestone TBD.
+Phase: All phases complete (7 of 7)
+Plan: N/A
+Status: Milestone shipped. Ready for `/gsd:new-milestone`.
+Last activity: 2026-02-18 — v2.0 milestone complete
 
 v1 Progress: [######################] 100% (22/22 plans)
 v2 Progress: [######################] 100% (6/6 plans)
@@ -41,316 +41,22 @@ v2 Progress: [######################] 100% (6/6 plans)
 | 6 | 3/3 | 20m | 6.7m |
 | 7 | 3/3 | 23m | 7.7m |
 
-**Recent Trend:**
-- Last 5 plans: 06-03 (7m), 07-01 (9m), 07-02 (6m), 07-03 (8m)
-- Trend: steady (~6-9m)
-
-*Updated after each plan completion*
-
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- [Roadmap]: 5-phase structure derived from dependency analysis (Foundations -> Linear History -> Branching -> Compression -> Multi-Agent)
-- [Roadmap]: LLM client (INTF-03/04) placed in Phase 3 with branching since semantic merge is the first consumer
-- [Roadmap]: INTF-05 (packaging) placed in Phase 5 as final delivery step after all features complete
-- [01-01]: Import package renamed from `trace` to `tract` (stdlib shadow fix on Python 3.14). All imports must use `tract`.
-- [01-01]: CommitOperation and Priority enums shared between domain models and ORM (not redefined)
-- [01-01]: content_type stored as String in DB (not Enum) to support custom types without migration
-- [01-01]: Clean layer separation enforced: no SQLAlchemy imports in models/ or protocols.py
-- [01-02]: Timezone normalization: _normalize_dt() strips tzinfo for datetime comparison (SQLite stores naive datetimes)
-- [01-02]: Edit resolution: latest edit wins when multiple edits target same commit (by created_at)
-- [01-02]: Token count distinction: per-commit = raw content, CompiledContext = formatted with message overhead
-- [01-02]: ~~Same-role aggregation: consecutive same-role messages concatenated with double newline~~ SUPERSEDED by 01.4-01
-- [01-03]: Compile cache keyed by head_hash, cleared on commit/annotate
-- [01-03]: Batch implemented by temporarily replacing session.commit with noop, committing on exit
-- [01-03]: Tract.open() does not create branch ref upfront; first commit sets HEAD via CommitEngine
-- [01.1-01]: Compile cache replaced with CompileSnapshot-based incremental cache (APPEND = O(1) extend, EDIT/annotate/batch = full invalidation)
-- [01.1-01]: build_message_for_commit() extracted as public method on DefaultContextCompiler for reuse by Tract incremental path
-- [01.1-01]: ~~CompileSnapshot stores both raw and aggregated messages for correct tail aggregation~~ SUPERSEDED by 01.4-01
-- [01.1-01]: Time-travel and custom compilers bypass incremental cache entirely
-- [01.1-02]: record_usage() validates head_hash match before attempting compile (fail-fast)
-- [01.1-02]: record_usage() auto-compiles if no snapshot exists (user doesn't need to call compile() first)
-- [01.1-02]: Token source format: "tiktoken:{encoding}" for pre-call, "api:{prompt}+{completion}" for post-call
-- [01.2-01]: Repo -> Tract, repo_id -> tract_id, RepoConfig -> TractConfig across all source and tests
-- [01.3-01]: generation_config set at commit time only (immutable once written)
-- [01.3-01]: record_usage() NOT extended with generation_config (config known before API call)
-- [01.3-01]: Copy-on-output AND copy-on-input patterns prevent cache corruption from mutable dicts
-- [01.3-01]: Edit-inherits-original: EDIT without generation_config preserves original commit's config
-- [01.3-01]: No index on generation_config_json (acceptable at Phase 1 scale)
-- [01.3-01]: generation_config NOT part of commit hash (content_hash identical for same content regardless of config)
-- [01.4-01]: Same-role aggregation removed entirely; consecutive same-role messages preserved as separate messages
-- [01.4-01]: CompileSnapshot simplified: messages + commit_hashes (parallel tuples, no raw/aggregated split)
-- [01.4-01]: CompiledContext.commit_hashes lists effective commit hashes parallel to messages
-- [01.4-01]: OrderedDict-based LRU cache (maxsize=8 default) replaces single CompileSnapshot
-- [01.4-01]: EDIT commits patch cached snapshot in-memory (find by commit_hash, replace message, recount tokens); no cache clear
-- [01.4-01]: Annotate SKIP patches snapshot by removing target; un-skip falls back to full recompile; entire cache cleared on annotation, then patched current HEAD re-added
-- [01.4-01]: verify_cache=True on Tract.open() cross-checks cache hit/patch against full recompile (oracle testing)
-- [01.4-01]: batch() clears entire LRU cache; crash loses cache; DB is always source of truth
-- [02-01]: Symbolic HEAD: first commit creates HEAD -> refs/heads/main symbolic ref (git-style)
-- [02-01]: update_head backward compat: detects attached/detached/new state and updates correctly
-- [02-01]: checkout('-') reads PREV_HEAD before overwriting to avoid self-reference bug
-- [02-01]: reset soft == hard in Trace (no working directory); distinction for API compatibility
-- [02-01]: Prefix matching minimum 4 characters (same as git)
-- [02-01]: operations/ package established for higher-level composites over storage primitives
-- [02-02]: StatusInfo is a frozen dataclass (not Pydantic) for lightweight status reporting
-- [02-02]: compute_diff() uses SequenceMatcher on serialized message strings for alignment
-- [02-02]: op_filter walks through all ancestors but only collects matching ones (limit applies to matches)
-- [02-02]: EDIT auto-resolve in diff: when commit_b is EDIT, commit_a defaults to response_to target
-- [02-02]: Generation config changes computed from last non-empty config in each chain
-- [02-03]: CLI module never imported from tract/__init__.py; only loaded via entry point
-- [02-03]: Auto-discovery queries refs table for single tract_id when --tract-id omitted
-- [02-03]: Token budget not persisted to DB; CLI opens with default config
-- [02-03]: --force guard on hard reset as safety mechanism
-- [02-03]: CLI tests use file-backed databases (not :memory:) since CLI opens own connection
-- [03-01]: CommitParentRow association table for multi-parent commits (position 0 = first parent, 1 = merged)
-- [03-01]: parent_hash column on CommitRow unchanged -- backward compat for first-parent walks
-- [03-01]: Schema version bumped 1 -> 2 with auto-migration for existing databases
-- [03-01]: commit_hash() includes sorted parent_hashes when extra_parents provided
-- [03-01]: Compiler branch-blocks ordering: first-parent chain + second-parent's unique ancestors before merge
-- [03-01]: switch() is branch-only (raises BranchNotFoundError on commit hashes); use checkout() for detached HEAD
-- [03-02]: Programmatic tenacity.Retrying (not decorator) for per-instance max_retries
-- [03-02]: Status codes checked before raise_for_status() for domain-specific errors (LLMAuthError, LLMRateLimitError)
-- [03-02]: Duck-typed resolver with getattr() for cross-plan type access (ConflictInfo defined in 03-03)
-- [03-02]: Resolution.content_text as string alternative to Resolution.content (BaseModel)
-- [03-03]: Merge commit created via CommitEngine.create_merge_commit() with parent_repo parameter
-- [03-03]: Pre-loaded content text in ConflictInfo at detect_conflicts() time
-- [03-03]: EDIT + APPEND conflict only for pre-merge-base targets (post-merge-base edits not conflicting)
-- [03-03]: MergeResult._source_tip_hash/_target_tip_hash for commit_merge parent resolution
-- [03-03]: configure_llm() creates default OpenAIResolver; merge() uses it as fallback
-- [03-04]: Cherry-pick resolved EDIT content becomes APPEND (no valid response_to on target branch)
-- [03-04]: Rebase blocks on branches containing merge commits (cannot flatten multi-parent history)
-- [03-04]: Noop rebase when current branch is already ahead of target (returns empty result)
-- [03-04]: Replay via CommitEngine.create_commit() -- engine reads HEAD internally for parent assignment
-- [04-01]: Schema version bumped 2->3 with auto-migration for compression tables
-- [04-01]: CompressionRepository follows same ABC+SQLite pattern as other repositories
-- [04-01]: PendingCompression is mutable (not frozen) to allow summary editing before approval
-- [04-01]: v1->v2->v3 migration chain runs sequentially for v1 databases
-- [04-02]: Chain rewriting: reset HEAD to pre-range parent, replay PINNED + summaries via create_commit()
-- [04-02]: Single summary in manual mode covers all groups (no per-group manual text)
-- [04-02]: PendingCompression stores hidden context (_range_commits etc.) for deferred commit
-- [04-02]: Root commit range handled by deleting branch ref so get_head returns None
-- [04-03]: Safety checks are advisory (warnings, not errors) and operate on commit DB
-- [04-03]: compile(order=...) returns tuple (CompiledContext, list[ReorderWarning]) for clean warning delivery
-- [04-03]: GC deletes RefRow entries (ORIG_HEAD etc.) pointing to removed commits to avoid FK violations
-- [04-03]: CommitRepository.delete() handles all FK cleanup: annotations, parent refs, child nullification
-- [05-01]: Schema version bumped 3->4 with auto-migration for spawn_pointers table
-- [05-01]: SpawnPointerRepository follows same ABC+SQLite pattern as other repositories
-- [05-01]: has_ancestor() uses iterative walk with visited set for cycle detection
-- [05-01]: SessionContent compression_priority=95 (protected from compression like instructions)
-- [05-01]: CollapseResult.summary_text always populated even when auto_commit=False
-- [05-02]: Pre-capture parent state before spawn commit to prevent inheritance pollution
-- [05-02]: Commit spawn_repo session before parent commit to avoid SQLite write lock contention
-- [05-02]: head_snapshot produces 1 InstructionContent commit; full_clone replays all commits with new hashes
-- [05-02]: collapse auto_commit defaults based on session autonomy level
-- [05-02]: get_child_tract reads collapse_source_tract_id from commit metadata for expand-for-debugging
-- [05-02]: Concurrent thread safety: separate tracts per thread; same-session concurrent writes are SQLAlchemy limitation
-- [05-03]: Distribution name `tract-ai` (import name stays `tract`) to avoid PyPI conflicts
-- [05-03]: README targets ~235 lines with copy-pasteable code examples
-- [05-03]: Integration tests use real SQLite databases (tmp_path), no mocks
-- [05-03]: py.typed PEP 561 marker added for downstream mypy/pyright support
-- [06-01]: Schema version bumped 4->5 with auto-migration for policy tables
-- [06-01]: PolicyRepository follows same ABC+SQLite pattern as other repositories
-- [06-01]: PolicyProposal follows PendingCompression pattern (mutable, _execute_fn for deferred approval)
-- [06-01]: PolicyAction is frozen (determined once), PolicyProposal is mutable (status changes)
-- [06-01]: Composite indexes on (tract_id, status) and (tract_id, created_at) for primary query patterns
-- [06-02]: Policy ABC uses abstract evaluate(), name, priority, trigger; defaults: priority=100, trigger="compile"
-- [06-02]: PolicyEvaluator is sidecar class (not embedded in Tract); connected via _policy_evaluator attribute
-- [06-02]: Recursion guard via _evaluating flag (same pattern as Tract._in_batch)
-- [06-02]: Compile-triggered policies run BEFORE compilation; commit-triggered run AFTER commit
-- [06-02]: Cooldown per-policy-name with configurable seconds; pending proposals provide natural dedup
-- [06-02]: Policy config persisted to _trace_meta as JSON under key "policy_config"
-- [06-03]: CompressPolicy fires at configurable threshold (default 90%) of token budget
-- [06-03]: PinPolicy checks existing annotations before pinning (respects manual overrides)
-- [06-03]: InstructionContent already auto-annotated by commit engine; PinPolicy adds value for SessionContent
-- [06-03]: BranchPolicy ignores dialogue/tool_io transitions by default (normal back-and-forth)
-- [06-03]: RebasePolicy requires both min_commits AND stale_days conditions
-- [06-03]: Tract.open() auto-loads saved policy config using built-in type map
-- [07-02]: ToolCall canonical location is orchestrator.models; toolkit re-exports
-- [07-02]: OrchestratorResult.state default via __post_init__ to avoid circular imports
-- [07-02]: TriggerConfig frozen, OrchestratorConfig mutable (triggers set once, config adjustable)
-- [07-02]: cli_prompt lazy-imports Rich (matches [cli] optional extra pattern)
-- [07-01]: Handler lambdas use explicit parameter whitelisting (not **kwargs) to prevent hallucinated arguments
-- [07-01]: ToolCall re-exported from orchestrator.models via try/except ImportError for parallel plan safety
-- [07-01]: Tract.as_tools() uses lazy imports to avoid circular dependencies
-- [07-01]: Tool handlers convert complex return types to human-readable strings (not raw repr)
-- [07-03]: Annotation counts via batch_get_latest for efficient assessment
-- [07-03]: Compile trigger fires before compilation (on entry to compile())
-- [07-03]: Trigger errors wrapped in try/except to never break commit/compile
+All decisions logged in PROJECT.md Key Decisions table and archived in milestones/v2.0-ROADMAP.md.
 
 ### Pending Todos
 
 None.
 
-### Roadmap Evolution
-
-- Phase 1.1 inserted after Phase 1: Incremental Compile Cache & Token Tracking (INSERTED) -- addresses two design issues: (1) full chain walk on every compile adds latency, incremental cache makes APPEND O(1); (2) tiktoken used as sole token source, but API-reported usage should be source of truth post-call
-- Phase 1.2 inserted after Phase 1.1: Rename Repo to Tract (INSERTED) -- `Repo` implies a shared container, but each agent's context is self-contained. `Tract` better reflects the domain. Also renames `repo_id` -> `tract_id`. Clean vocabulary before building Phases 2-5 on top.
-- Phase 1.3 inserted after Phase 1.2: Hyperparameter Config Storage (INSERTED) -- store LLM generation config (temperature, top_p, top_k, repetition_penalty, etc.) with commits for full call provenance. Enables exploration/exploitation branching pattern where hyperparams are tuned per-branch. Data model extension belongs before Phase 2 so history/diff/log can display configs from day one.
-- Phase 1.4 inserted after Phase 1.3: LRU Compile Cache & Snapshot Patching (INSERTED) -- replace single-snapshot cache with LRU keyed by head_hash, EDIT/annotate snapshot patching instead of full invalidation. Checkout/reset/branch-switch get cache hits; EDITs avoid expensive full recompilation.
-- v2 milestone created (2026-02-17): Phase 6 (Policy Engine) + Phase 7 (Context Management Agent) -- delivers Core Value 2's autonomy spectrum. Skeleton Phase 4 (Tooling & Observability) deferred. Benchmarking deferred.
-
 ### Blockers/Concerns
 
-- ~~Phase 1: Edit commit semantics (override vs in-place)~~ RESOLVED: Full commit replacement (new commit supersedes original via reply_to). No in-place mutation.
-- ~~Phase 1: stdlib `trace` module shadowing~~ RESOLVED: Package renamed to `tract`.
-- WATCH: External linter keeps renaming `tract` back to `trace` in working tree. The git commits have correct `tract` imports. If this affects future plan execution, may need to configure ruff to ignore this rename.
-- Phase 3: Semantic merge quality is unproven for natural language context -- research flag for plan-phase
-- ~~Phase 4: Compression is inherently lossy (3-55% degradation in research) -- need validation strategy~~ ADDRESSED: GC with retention policies provides controlled cleanup
-- ~~Phase 5: SQLite concurrent write behavior under multi-agent load is untested~~ ADDRESSED: Tested with 3 concurrent tests. Per-tract sessions work correctly; same-session concurrent writes are SQLAlchemy limitation (not SQLite).
-
-## Phase 1 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 01-01 | Domain Models + Storage | 87 | 8m |
-| 01-02 | Engine Layer | 66 | 15m |
-| 01-03 | Tract Class + Public API | 47 | 4m |
-| **Total** | | **200** | **27m** |
-
-All 5 Phase 1 success criteria verified end-to-end.
-
-## Phase 1.1 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 01.1-01 | Incremental Compile Cache | 7 | 3m |
-| 01.1-02 | record_usage() API | 13 | 3m |
-| **Total** | | **20** | **6m** |
-
-Total test suite: 220 tests passing.
-
-## Phase 1.2 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 01.2-01 | Repo -> Tract rename | 220 (all pass) | 3m |
-| **Total** | | **0 new** | **3m** |
-
-Total test suite: 220 tests passing.
-
-## Phase 1.3 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 01.3-01 | Hyperparameter Config Storage | 30 | 3m |
-| **Total** | | **30** | **3m** |
-
-Total test suite: 250 tests passing.
-
-## Phase 1.4 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 01.4-01 | LRU Compile Cache & Snapshot Patching | 17 | 4m |
-| **Total** | | **17** | **4m** |
-
-Total test suite: 267 tests passing.
-
-## Phase 2 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 02-01 | Navigation Infrastructure | 35 | 5m |
-| 02-02 | Read Operations (log/status/diff) | 27 | 4m |
-| 02-03 | CLI Layer | 30 | 5m |
-| **Total** | | **92** | **14m** |
-
-Total test suite: 359 tests passing.
-
-## Phase 3 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 03-01 | Branch Infrastructure | 59 | 7m |
-| 03-02 | LLM Client Infrastructure | 56 | 6m |
-| 03-03 | Merge Strategies | 34 | 8m |
-| 03-04 | Rebase & Cherry-Pick | 26 | 6m |
-| 03-05 | CLI Commands | 12 | 3m |
-| **Total** | | **187** | **30m** |
-
-Total test suite: 489 tests passing.
-
-## Phase 4 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 04-01 | Compression Storage Foundation | 21 | 6m |
-| 04-02 | Compression Engine | 25 | 8m |
-| 04-03 | GC & Reorder | 28 | 9m |
-| **Total** | | **74** | **23m** |
-
-Total test suite: 563 tests passing.
-
-All 4 Phase 4 success criteria verified:
-- COMP-01: Compression storage (tables, repository, schema v3)
-- COMP-02: Compression engine (compress_range, 3 autonomy modes, provenance)
-- COMP-03: Compile-time reordering (order param, safety checks, cache bypass)
-- COMP-04: Garbage collection (retention policies, multi-branch reachability)
-
-## Phase 5 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 05-01 | Spawn Storage Foundation | 24 | 8m |
-| 05-02 | Session & Spawn Operations | 46 | 13m |
-| 05-03 | Packaging, Documentation & Integration Tests | 16 | 7m |
-| **Total** | | **86** | **28m** |
-
-Total test suite: 664 tests passing.
-
-All Phase 5 success criteria verified:
-- MULTI-01: Spawn storage (spawn_pointers table, schema v4, pointer CRUD)
-- MULTI-02: Session class (open/create/spawn/collapse/timeline/search/resume)
-- MULTI-03: Packaging (tract-ai distribution, README, integration tests)
-
-## Phase 6 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 06-01 | Policy Storage Foundation | 29 | 7m |
-| 06-02 | Policy Evaluator & Tract Integration | 40 | 6m |
-| 06-03 | Built-in Policies & Integration Tests | 44 | 7m |
-| **Total** | | **113** | **20m** |
-
-Total test suite: 798 tests passing.
-
-All Phase 6 success criteria verified:
-- AUTO-01: CompressPolicy (threshold-based auto-compress, collaborative mode)
-- AUTO-02: PinPolicy (content-type auto-pin, retroactive scan, manual override respect)
-- AUTO-03: BranchPolicy (tangent detection via content type switching)
-- AUTO-04: RebasePolicy (stale branch archiving)
-- AUTO-05: Policy evaluation lifecycle (configure, evaluate, execute/propose, approve/reject)
-- AUTO-06: Persistent config (save/load, auto-load on restart)
-
-## Phase 7 Final Stats
-
-| Plan | Name | Tests | Duration |
-|------|------|-------|----------|
-| 07-01 | Agent Toolkit | 37 | 9m |
-| 07-02 | Orchestrator Data Models | 34 | 6m |
-| 07-03 | Orchestrator Loop & Integration | 19 | 8m |
-| **Total** | | **90** | **23m** |
-
-Total test suite: 888 tests passing.
-
-All Phase 7 success criteria verified:
-- AGENT-01: Tool definitions (15 tools, 3 profiles, OpenAI/Anthropic formats)
-- AGENT-02: ToolExecutor (dispatch, error handling, available_tools)
-- AGENT-03: Tract.as_tools() facade (profile filtering, description overrides, format conversion)
-- AGENT-04: Orchestrator config (AutonomyLevel, OrchestratorState, TriggerConfig, OrchestratorConfig)
-- AGENT-05: Orchestrator models (ToolCall, OrchestratorProposal, ProposalResponse, StepResult, OrchestratorResult)
-- AGENT-06: Built-in callbacks (auto_approve, log_and_approve, cli_prompt, reject_all)
-- AGENT-07: Orchestrator loop (assess -> LLM -> tool calls -> repeat, autonomy spectrum)
-- AGENT-08: Stop/pause control without data loss
-- AGENT-09: Recursion guard (_orchestrating prevents policy-orchestrator loops)
-- AGENT-10: Trigger-based auto-invocation (on_commit_count, on_token_threshold, on_compile)
+None active. All previous blockers resolved.
 
 ## Session Continuity
 
 Last session: 2026-02-18
-Stopped at: Completed 07-03-PLAN.md (Orchestrator Loop & Integration) - Phase 7 complete, v2 milestone complete
+Stopped at: v2.0 milestone archived
 Resume file: None

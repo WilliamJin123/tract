@@ -28,7 +28,9 @@ from tract.orchestrator import (
     OrchestratorResult,
     OrchestratorState,
     ProposalDecision,
+    ProposalResponse,
     StepResult,
+    ToolCall,
     TriggerConfig,
     auto_approve,
     reject_all,
@@ -257,6 +259,51 @@ class TestOrchestratorCollaborativeReject:
         assert result.steps[0].success is False
         assert result.steps[0].proposal is not None
         assert result.steps[0].proposal.decision == ProposalDecision.REJECTED
+
+
+# ---------------------------------------------------------------------------
+# Test 4b: Collaborative modify
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratorCollaborativeModify:
+    def test_orchestrator_collaborative_modify(self, tract_with_commits):
+        """Ceiling=COLLABORATIVE, on_proposal modifies the tool call. Modified action executed."""
+
+        def modify_to_log(proposal):
+            return ProposalResponse(
+                decision=ProposalDecision.MODIFIED,
+                modified_action=ToolCall(
+                    id=proposal.recommended_action.id,
+                    name="log",
+                    arguments={"limit": 2},
+                ),
+            )
+
+        mock_llm = make_mock_llm([
+            tool_call_response("status", {}, call_id="call_mod"),
+            no_tool_call_response(),
+        ])
+        config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.COLLABORATIVE,
+            on_proposal=modify_to_log,
+        )
+        orch = Orchestrator(
+            tract_with_commits,
+            config=config,
+            llm_callable=mock_llm,
+        )
+        result = orch.run()
+
+        assert len(result.steps) == 1
+        assert result.steps[0].success is True
+        # The executed tool call should be the modified one (log, not status)
+        assert result.steps[0].tool_call.name == "log"
+        assert result.steps[0].proposal is not None
+        assert result.steps[0].proposal.decision == ProposalDecision.MODIFIED
+        assert result.steps[0].proposal.modified_action is not None
+        assert result.steps[0].proposal.modified_action.name == "log"
+        assert "2 commits" in result.steps[0].result_output
 
 
 # ---------------------------------------------------------------------------
@@ -720,3 +767,148 @@ class TestTriggerOnCompile:
             assert mock_llm.call_count[0] >= 1
         finally:
             t.close()
+
+
+# ---------------------------------------------------------------------------
+# Test 20: Trigger autonomy constrains orchestrator
+# ---------------------------------------------------------------------------
+
+
+class TestTriggerAutonomy:
+    def test_trigger_autonomy_constrains_to_collaborative(self, tmp_path):
+        """Ceiling=AUTONOMOUS but trigger autonomy=COLLABORATIVE.
+
+        Effective autonomy should be min(AUTONOMOUS, COLLABORATIVE) = COLLABORATIVE.
+        With auto_approve callback, the tool call should be proposed then approved.
+        """
+        t = Tract.open(str(tmp_path / "trig_autonomy.db"))
+        try:
+            t.commit(InstructionContent(text="sys"), message="c1")
+
+            proposals_seen = []
+
+            def track_proposals(proposal):
+                proposals_seen.append(proposal)
+                return auto_approve(proposal)
+
+            mock_llm = make_mock_llm([
+                tool_call_response("status", {}, call_id="call_ta"),
+                no_tool_call_response(),
+            ])
+            config = OrchestratorConfig(
+                autonomy_ceiling=AutonomyLevel.AUTONOMOUS,
+                triggers=TriggerConfig(
+                    on_commit_count=1,
+                    autonomy=AutonomyLevel.COLLABORATIVE,
+                ),
+                on_proposal=track_proposals,
+            )
+            t.configure_orchestrator(config=config, llm_callable=mock_llm)
+
+            # This commit should trigger orchestrator with COLLABORATIVE autonomy
+            t.commit(
+                DialogueContent(role="user", text="hello"), message="c2"
+            )
+
+            # Despite AUTONOMOUS ceiling, trigger autonomy forces COLLABORATIVE,
+            # so proposals should have been created
+            assert len(proposals_seen) >= 1
+            assert proposals_seen[0].decision == ProposalDecision.APPROVED
+        finally:
+            t.close()
+
+    def test_trigger_autonomy_none_uses_ceiling(self, tract_with_commits):
+        """Trigger autonomy=None (default). Ceiling used as-is."""
+        mock_llm = make_mock_llm([
+            tool_call_response("status", {}, call_id="call_ceil"),
+            no_tool_call_response(),
+        ])
+        config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.AUTONOMOUS,
+        )
+        orch = Orchestrator(
+            tract_with_commits,
+            config=config,
+            llm_callable=mock_llm,
+        )
+        # run() with no trigger_autonomy -- uses ceiling (AUTONOMOUS)
+        result = orch.run()
+
+        # AUTONOMOUS = direct execution, no proposals
+        assert len(result.steps) == 1
+        assert result.steps[0].success is True
+        assert result.steps[0].proposal is None
+
+    def test_trigger_autonomy_manual_overrides_autonomous(self, tract_with_commits):
+        """Trigger autonomy=MANUAL overrides ceiling=AUTONOMOUS. All skipped."""
+        mock_llm = make_mock_llm([
+            tool_call_response("status", {}, call_id="call_man"),
+            no_tool_call_response(),
+        ])
+        config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.AUTONOMOUS,
+        )
+        orch = Orchestrator(
+            tract_with_commits,
+            config=config,
+            llm_callable=mock_llm,
+        )
+        result = orch.run(trigger_autonomy=AutonomyLevel.MANUAL)
+
+        assert len(result.steps) == 1
+        assert result.steps[0].success is False
+        assert "manual mode" in result.steps[0].result_error.lower()
+
+    def test_trigger_autonomy_higher_than_ceiling_uses_ceiling(
+        self, tract_with_commits
+    ):
+        """Trigger autonomy=AUTONOMOUS but ceiling=COLLABORATIVE.
+
+        min(COLLABORATIVE, AUTONOMOUS) = COLLABORATIVE.
+        """
+        proposals_seen = []
+
+        def track(proposal):
+            proposals_seen.append(proposal)
+            return auto_approve(proposal)
+
+        mock_llm = make_mock_llm([
+            tool_call_response("status", {}, call_id="call_higher"),
+            no_tool_call_response(),
+        ])
+        config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.COLLABORATIVE,
+            on_proposal=track,
+        )
+        orch = Orchestrator(
+            tract_with_commits,
+            config=config,
+            llm_callable=mock_llm,
+        )
+        result = orch.run(trigger_autonomy=AutonomyLevel.AUTONOMOUS)
+
+        # COLLABORATIVE ceiling wins (it's lower)
+        assert len(proposals_seen) >= 1
+        assert result.steps[0].proposal is not None
+
+
+# ---------------------------------------------------------------------------
+# Test 21: Top-level exports
+# ---------------------------------------------------------------------------
+
+
+class TestTopLevelExports:
+    def test_proposal_decision_importable(self):
+        """ProposalDecision is importable from tract."""
+        from tract import ProposalDecision as PD
+
+        assert PD.APPROVED == "approved"
+        assert PD.REJECTED == "rejected"
+        assert PD.MODIFIED == "modified"
+
+    def test_tool_call_importable(self):
+        """ToolCall is importable from tract."""
+        from tract import ToolCall as TC
+
+        tc = TC(id="test", name="status", arguments={})
+        assert tc.name == "status"
