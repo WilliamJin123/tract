@@ -125,6 +125,9 @@ class Tract:
         self._closed = False
         self._policy_evaluator: PolicyEvaluator | None = None
         self._policy_repo: SqlitePolicyRepository | None = None
+        self._orchestrating: bool = False
+        self._orchestrator: object | None = None  # Orchestrator instance
+        self._trigger_commit_count: int = 0
 
     @classmethod
     def open(
@@ -452,8 +455,13 @@ class Tract:
         if (
             self._policy_evaluator is not None
             and not self._in_batch
+            and not self._orchestrating
         ):
             self._policy_evaluator.evaluate(trigger="commit")
+
+        # Check orchestrator triggers (after policy evaluation)
+        if not self._orchestrating and not self._in_batch:
+            self._check_orchestrator_triggers("commit")
 
         return info
 
@@ -489,8 +497,13 @@ class Tract:
         if (
             self._policy_evaluator is not None
             and not self._in_batch
+            and not self._orchestrating
         ):
             self._policy_evaluator.evaluate(trigger="compile")
+
+        # Check orchestrator triggers (after policy evaluation)
+        if not self._orchestrating and not self._in_batch:
+            self._check_orchestrator_triggers("compile")
 
         current_head = self.head
         if current_head is None:
@@ -1921,6 +1934,164 @@ class Tract:
             raise ValueError(
                 f"Unknown format '{format}'. Supported: 'openai', 'anthropic'."
             )
+
+    # ------------------------------------------------------------------
+    # Orchestrator facade
+    # ------------------------------------------------------------------
+
+    def _set_orchestrating(self, flag: bool) -> None:
+        """Set the orchestrating recursion guard flag.
+
+        Called by the Orchestrator to prevent policy evaluation from
+        re-triggering orchestrator runs.
+
+        Args:
+            flag: True when orchestrating, False when done.
+        """
+        self._orchestrating = flag
+
+    def _check_orchestrator_triggers(self, trigger: str) -> None:
+        """Check if orchestrator triggers should fire.
+
+        Called from compile() and commit() after policy evaluation,
+        guarded by ``not self._orchestrating and not self._in_batch``.
+
+        Args:
+            trigger: The trigger type ("compile" or "commit").
+        """
+        if self._orchestrator is None:
+            return
+        # Lazy import to avoid circular dependency
+        from tract.orchestrator.loop import Orchestrator as _Orchestrator
+
+        if not isinstance(self._orchestrator, _Orchestrator):
+            return
+
+        orch: _Orchestrator = self._orchestrator  # type: ignore[assignment]
+        triggers = orch._config.triggers
+        if triggers is None:
+            return
+
+        try:
+            if trigger == "compile" and triggers.on_compile:
+                self.orchestrate()
+
+            if trigger == "commit":
+                if triggers.on_commit_count is not None:
+                    self._trigger_commit_count += 1
+                    if self._trigger_commit_count >= triggers.on_commit_count:
+                        self._trigger_commit_count = 0
+                        self.orchestrate()
+
+                if triggers.on_token_threshold is not None:
+                    status = self.status()
+                    if (
+                        status.token_budget_max
+                        and status.token_budget_max > 0
+                    ):
+                        pct = status.token_count / status.token_budget_max
+                        if pct >= triggers.on_token_threshold:
+                            self.orchestrate()
+        except Exception:
+            # Trigger errors must not break commit/compile
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "Orchestrator trigger error", exc_info=True
+            )
+
+    def configure_orchestrator(
+        self,
+        config: object | None = None,
+        llm_callable: Callable | None = None,
+    ) -> None:
+        """Configure the orchestrator for this tract.
+
+        Creates an Orchestrator instance and stores it for later use
+        by :meth:`orchestrate` and trigger checks.
+
+        Args:
+            config: An OrchestratorConfig instance, or None for defaults.
+            llm_callable: Optional callable for LLM calls. If not
+                provided and no tract LLM client is configured, a
+                warning is logged.
+        """
+        from tract.orchestrator import Orchestrator as _Orchestrator
+        from tract.orchestrator import OrchestratorConfig as _OrchestratorConfig
+
+        if config is None:
+            config = _OrchestratorConfig()
+
+        self._orchestrator = _Orchestrator(
+            self, config=config, llm_callable=llm_callable
+        )
+
+        if llm_callable is None and not hasattr(self, "_llm_client"):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Orchestrator configured without LLM. "
+                "Call configure_llm() or provide llm_callable."
+            )
+
+    def orchestrate(
+        self,
+        *,
+        config: object | None = None,
+        llm_callable: Callable | None = None,
+    ) -> object:
+        """Run the orchestrator agent loop.
+
+        Convenience method that creates or reuses an Orchestrator
+        and runs it.
+
+        Args:
+            config: Optional OrchestratorConfig override.
+            llm_callable: Optional LLM callable override.
+
+        Returns:
+            OrchestratorResult from the orchestrator run.
+        """
+        from tract.orchestrator import Orchestrator as _Orchestrator
+
+        # If overrides provided, create a new orchestrator
+        if config is not None or llm_callable is not None:
+            orch = _Orchestrator(
+                self, config=config, llm_callable=llm_callable
+            )
+            return orch.run()
+
+        # If existing orchestrator, reuse it
+        if self._orchestrator is not None:
+            orch_inst: _Orchestrator = self._orchestrator  # type: ignore[assignment]
+            orch_inst.reset()
+            return orch_inst.run()
+
+        # Create one with defaults
+        orch = _Orchestrator(self)
+        return orch.run()
+
+    def stop_orchestrator(self) -> None:
+        """Stop the running orchestrator immediately.
+
+        No-op if no orchestrator is configured.
+        """
+        if self._orchestrator is not None:
+            from tract.orchestrator.loop import Orchestrator as _Orchestrator
+
+            if isinstance(self._orchestrator, _Orchestrator):
+                self._orchestrator.stop()  # type: ignore[union-attr]
+
+    def pause_orchestrator(self) -> None:
+        """Pause the running orchestrator gracefully.
+
+        No-op if no orchestrator is configured.
+        """
+        if self._orchestrator is not None:
+            from tract.orchestrator.loop import Orchestrator as _Orchestrator
+
+            if isinstance(self._orchestrator, _Orchestrator):
+                self._orchestrator.pause()  # type: ignore[union-attr]
 
     def close(self) -> None:
         """Close the session and dispose the engine."""

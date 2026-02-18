@@ -74,6 +74,23 @@ from tract.operations.diff import DiffResult, MessageDiff, DiffStat
 from tract.toolkit.models import ToolDefinition, ToolProfile, ToolConfig, ToolResult
 from tract.toolkit.executor import ToolExecutor
 
+# Orchestrator
+from tract.orchestrator import (
+    Orchestrator,
+    OrchestratorConfig,
+    AutonomyLevel,
+    OrchestratorState,
+    TriggerConfig,
+    OrchestratorProposal,
+    ProposalResponse,
+    StepResult,
+    OrchestratorResult,
+    auto_approve,
+    log_and_approve,
+    cli_prompt,
+    reject_all,
+)
+
 # Exceptions
 from tract.exceptions import (
     TraceError,
@@ -100,6 +117,7 @@ from tract.exceptions import (
     SessionError,
     PolicyExecutionError,
     PolicyConfigError,
+    OrchestratorError,
 )
 
 __all__ = [
@@ -173,6 +191,7 @@ __all__ = [
     "SessionError",
     "PolicyExecutionError",
     "PolicyConfigError",
+    "OrchestratorError",
     # Policy engine
     "Policy",
     "PolicyEvaluator",
@@ -201,4 +220,18 @@ __all__ = [
     "ToolConfig",
     "ToolResult",
     "ToolExecutor",
+    # Orchestrator
+    "Orchestrator",
+    "OrchestratorConfig",
+    "AutonomyLevel",
+    "OrchestratorState",
+    "TriggerConfig",
+    "OrchestratorProposal",
+    "ProposalResponse",
+    "StepResult",
+    "OrchestratorResult",
+    "auto_approve",
+    "log_and_approve",
+    "cli_prompt",
+    "reject_all",
 ]
