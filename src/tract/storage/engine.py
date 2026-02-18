@@ -49,10 +49,11 @@ def init_db(engine: Engine) -> None:
     """Initialize the database: create all tables and set schema version.
 
     Creates all tables defined in Base.metadata, then sets schema_version.
-    For new databases, schema_version is set to "4".
-    For existing v1 databases, migrates v1->v2->v3->v4.
-    For existing v2 databases, migrates v2->v3->v4.
-    For existing v3 databases, migrates v3->v4 (spawn_pointers table).
+    For new databases, schema_version is set to "5".
+    For existing v1 databases, migrates v1->v2->v3->v4->v5.
+    For existing v2 databases, migrates v2->v3->v4->v5.
+    For existing v3 databases, migrates v3->v4->v5.
+    For existing v4 databases, migrates v4->v5 (policy tables).
     """
     Base.metadata.create_all(engine)
 
@@ -63,8 +64,8 @@ def init_db(engine: Engine) -> None:
         ).scalar_one_or_none()
 
         if existing is None:
-            # New database: set schema version to 4
-            session.add(TraceMetaRow(key="schema_version", value="4"))
+            # New database: set schema version to 5
+            session.add(TraceMetaRow(key="schema_version", value="5"))
             session.commit()
         elif existing.value == "1":
             # Migrate v1 -> v2: create commit_parents table
@@ -85,4 +86,10 @@ def init_db(engine: Engine) -> None:
             # Migrate v3 -> v4: create spawn_pointers table
             Base.metadata.tables["spawn_pointers"].create(engine, checkfirst=True)
             existing.value = "4"
+            session.commit()
+        if existing is not None and existing.value == "4":
+            # Migrate v4 -> v5: create policy tables
+            for table_name in ["policy_proposals", "policy_log"]:
+                Base.metadata.tables[table_name].create(engine, checkfirst=True)
+            existing.value = "5"
             session.commit()

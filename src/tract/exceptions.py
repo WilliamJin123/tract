@@ -167,3 +167,11 @@ class SpawnError(TraceError):
 
 class SessionError(TraceError):
     """Raised when session operations fail."""
+
+
+class PolicyExecutionError(TraceError):
+    """Raised when a policy action fails to execute."""
+
+
+class PolicyConfigError(TraceError):
+    """Raised when policy configuration is invalid."""

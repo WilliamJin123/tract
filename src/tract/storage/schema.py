@@ -249,6 +249,63 @@ class SpawnPointerRow(Base):
     )
 
 
+class PolicyProposalRow(Base):
+    """A policy proposal awaiting approval or rejection.
+
+    Proposals are created when a policy runs in collaborative mode.
+    They can be approved (executed), rejected, or expire.
+    """
+
+    __tablename__ = "policy_proposals"
+
+    proposal_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tract_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    policy_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    action_params_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # "pending", "approved", "rejected", "expired", "executed"
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_policy_proposals_tract_status", "tract_id", "status"),
+    )
+
+
+class PolicyLogRow(Base):
+    """Audit log entry for a policy evaluation.
+
+    Records every policy evaluation: what triggered it, what action
+    was proposed or executed, and what the outcome was.
+    """
+
+    __tablename__ = "policy_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tract_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    policy_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    trigger: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # "compile" or "commit"
+    action_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    outcome: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # "executed", "proposed", "skipped", "error"
+    commit_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )  # the commit produced by this action, if any
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("ix_policy_log_tract_time", "tract_id", "created_at"),
+    )
+
+
 class TraceMetaRow(Base):
     """Key-value metadata for the Trace database itself (e.g., schema version)."""
 
