@@ -496,7 +496,7 @@ def _handle_diff(tract: Tract, commit_a: str | None, commit_b: str | None) -> st
         f"Diff: {result.stat.messages_added} added, "
         f"{result.stat.messages_removed} removed, "
         f"{result.stat.messages_modified} modified | "
-        f"Token delta: {result.stat.token_delta:+d}"
+        f"Token delta: {result.stat.total_token_delta:+d}"
     )
 
 
@@ -514,10 +514,10 @@ def _handle_compress(
         instructions=instructions,
         auto_commit=True,
     )
-    # CompressResult has original_tokens and compressed_tokens
+    # CompressResult has original_tokens, compressed_tokens, source_commits, summary_commits
     return (
         f"Compressed: {result.original_tokens} -> {result.compressed_tokens} tokens "
-        f"({result.summaries_created} summaries, {result.commits_removed} commits removed)"
+        f"({len(result.summary_commits)} summaries, {len(result.source_commits)} source commits)"
     )
 
 

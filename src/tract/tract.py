@@ -1856,6 +1856,72 @@ class Tract:
         """
         self._custom_type_registry[name] = model
 
+    # ------------------------------------------------------------------
+    # Agent toolkit
+    # ------------------------------------------------------------------
+
+    def as_tools(
+        self,
+        *,
+        profile: str | object = "self",
+        overrides: dict[str, str] | None = None,
+        format: str = "openai",
+    ) -> list[dict]:
+        """Get tool definitions for this tract in LLM-consumable format.
+
+        Combines tool definitions, profile filtering, optional description
+        overrides, and format conversion in one call.
+
+        Args:
+            profile: A profile name (``"self"``, ``"supervisor"``, ``"full"``)
+                or a :class:`~tract.toolkit.models.ToolProfile` instance.
+            overrides: Optional dict mapping tool names to replacement
+                descriptions.  Applied on top of the profile's descriptions.
+            format: Output format -- ``"openai"`` (default) or ``"anthropic"``.
+
+        Returns:
+            List of tool definition dicts in the requested format.
+        """
+        from tract.toolkit.definitions import get_all_tools
+        from tract.toolkit.models import ToolProfile as _ToolProfile
+        from tract.toolkit.profiles import get_profile
+
+        all_tools = get_all_tools(self)
+
+        # Resolve profile
+        if isinstance(profile, str):
+            resolved_profile = get_profile(profile)
+        elif isinstance(profile, _ToolProfile):
+            resolved_profile = profile
+        else:
+            raise TypeError(
+                f"profile must be a string or ToolProfile, got {type(profile).__name__}"
+            )
+
+        # Apply profile filtering
+        filtered = resolved_profile.filter_tools(all_tools)
+
+        # Apply overrides
+        if overrides:
+            from dataclasses import replace as _replace
+
+            new_filtered = []
+            for tool in filtered:
+                if tool.name in overrides:
+                    tool = _replace(tool, description=overrides[tool.name])
+                new_filtered.append(tool)
+            filtered = new_filtered
+
+        # Convert to requested format
+        if format == "openai":
+            return [tool.to_openai() for tool in filtered]
+        elif format == "anthropic":
+            return [tool.to_anthropic() for tool in filtered]
+        else:
+            raise ValueError(
+                f"Unknown format '{format}'. Supported: 'openai', 'anthropic'."
+            )
+
     def close(self) -> None:
         """Close the session and dispose the engine."""
         if self._closed:

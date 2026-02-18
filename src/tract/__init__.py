@@ -70,6 +70,10 @@ from tract.models.session import SessionContent, SpawnInfo, CollapseResult
 from tract.operations.history import StatusInfo
 from tract.operations.diff import DiffResult, MessageDiff, DiffStat
 
+# Agent toolkit
+from tract.toolkit.models import ToolDefinition, ToolProfile, ToolConfig, ToolResult
+from tract.toolkit.executor import ToolExecutor
+
 # Exceptions
 from tract.exceptions import (
     TraceError,
@@ -191,4 +195,10 @@ __all__ = [
     "SessionContent",
     "SpawnInfo",
     "CollapseResult",
+    # Agent toolkit
+    "ToolDefinition",
+    "ToolProfile",
+    "ToolConfig",
+    "ToolResult",
+    "ToolExecutor",
 ]

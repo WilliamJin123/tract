@@ -5,25 +5,25 @@
 See: .planning/PROJECT.md (updated 2026-02-10)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Phase 6 (Policy Engine) COMPLETE. 798 tests passing. Ready for Phase 7.
+**Current focus:** Phase 7 (Agent Toolkit & Orchestrator) IN PROGRESS. 832 tests passing. Plan 02 complete.
 
 ## Current Position
 
 Milestone: v2 — Autonomous Context Management
-Phase: 6 of 7 (Policy Engine)
-Plan: 3 of 3 in current phase
-Status: Phase complete
-Last activity: 2026-02-18 - Completed 06-03-PLAN.md (Built-in Policies and Integration Tests)
+Phase: 7 of 7 (Agent Toolkit & Orchestrator)
+Plan: 2 of 3 in current phase (07-01 and 07-02 ran in parallel wave 1)
+Status: In progress
+Last activity: 2026-02-18 - Completed 07-02-PLAN.md (Orchestrator Data Models)
 
 v1 Progress: [######################] 100% (22/22 plans)
-v2 Progress: [############__________] 50% (3/6 plans)
+v2 Progress: [################______] 67% (4/6 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 25
+- Total plans completed: 26
 - Average duration: 5.9m
-- Total execution time: 2.64 hours
+- Total execution time: 2.74 hours
 
 **By Phase:**
 
@@ -40,7 +40,7 @@ v2 Progress: [############__________] 50% (3/6 plans)
 | 5 | 3/3 | 28m | 9.3m |
 
 **Recent Trend:**
-- Last 5 plans: 05-03 (7m), 06-01 (7m), 06-02 (6m), 06-03 (7m)
+- Last 5 plans: 06-01 (7m), 06-02 (6m), 06-03 (7m), 07-02 (6m)
 - Trend: steady (~6-7m)
 
 *Updated after each plan completion*
@@ -167,6 +167,10 @@ Recent decisions affecting current work:
 - [06-03]: BranchPolicy ignores dialogue/tool_io transitions by default (normal back-and-forth)
 - [06-03]: RebasePolicy requires both min_commits AND stale_days conditions
 - [06-03]: Tract.open() auto-loads saved policy config using built-in type map
+- [07-02]: ToolCall canonical location is orchestrator.models; toolkit re-exports
+- [07-02]: OrchestratorResult.state default via __post_init__ to avoid circular imports
+- [07-02]: TriggerConfig frozen, OrchestratorConfig mutable (triggers set once, config adjustable)
+- [07-02]: cli_prompt lazy-imports Rich (matches [cli] optional extra pattern)
 
 ### Pending Todos
 
@@ -316,5 +320,5 @@ All Phase 6 success criteria verified:
 ## Session Continuity
 
 Last session: 2026-02-18
-Stopped at: Completed 06-03-PLAN.md (Built-in Policies and Integration Tests) - Phase 6 complete
+Stopped at: Completed 07-02-PLAN.md (Orchestrator Data Models) - Wave 1 plan 2/2
 Resume file: None
