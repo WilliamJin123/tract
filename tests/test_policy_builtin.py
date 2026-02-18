@@ -1,11 +1,11 @@
-"""Unit tests for built-in policies: CompressPolicy, PinPolicy, BranchPolicy, RebasePolicy.
+"""Unit tests for built-in policies: CompressPolicy, PinPolicy, BranchPolicy, ArchivePolicy.
 
 Covers:
 - CompressPolicy: no budget, below/above threshold, custom threshold, properties, config roundtrip
 - PinPolicy: pins instruction/session, skips dialogue, respects manual override, skips already-pinned,
   custom types, retroactive scan, properties, config roundtrip
 - BranchPolicy: no tangent, detects tangent, too few commits, detached HEAD, custom threshold, properties
-- RebasePolicy: main branch skipped, active branch skipped, stale branch detected, archive prefix,
+- ArchivePolicy: main branch skipped, active branch skipped, stale branch detected, archive prefix,
   already-archived skipped, properties
 """
 
@@ -29,7 +29,7 @@ from tract.models.session import SessionContent
 from tract.policy.builtin.branch import BranchPolicy
 from tract.policy.builtin.compress import CompressPolicy
 from tract.policy.builtin.pin import PinPolicy
-from tract.policy.builtin.rebase import RebasePolicy
+from tract.policy.builtin.archive import ArchivePolicy
 
 
 # ---------------------------------------------------------------------------
@@ -370,24 +370,24 @@ class TestBranchPolicy:
 
 
 # ---------------------------------------------------------------------------
-# RebasePolicy Tests
+# ArchivePolicy Tests
 # ---------------------------------------------------------------------------
 
 
-class TestRebasePolicy:
-    """Unit tests for RebasePolicy."""
+class TestArchivePolicy:
+    """Unit tests for ArchivePolicy."""
 
-    def test_rebase_policy_main_branch_skipped(self):
+    def test_archive_policy_main_branch_skipped(self):
         """Main branch is never archived."""
         t = Tract.open(":memory:")
         try:
             t.commit(InstructionContent(text="hello"))
-            p = RebasePolicy()
+            p = ArchivePolicy()
             assert p.evaluate(t) is None
         finally:
             t.close()
 
-    def test_rebase_policy_active_branch_skipped(self):
+    def test_archive_policy_active_branch_skipped(self):
         """Active branch (recent commits) is not archived."""
         t = Tract.open(":memory:")
         try:
@@ -395,12 +395,12 @@ class TestRebasePolicy:
             t.branch("feature-x")
             t.commit(DialogueContent(role="user", text="recent"))
 
-            p = RebasePolicy(stale_days=7)
+            p = ArchivePolicy(stale_days=7)
             assert p.evaluate(t) is None
         finally:
             t.close()
 
-    def test_rebase_policy_stale_branch_detected(self):
+    def test_archive_policy_stale_branch_detected(self):
         """Stale branch with few commits triggers archive proposal."""
         t = Tract.open(":memory:")
         try:
@@ -410,9 +410,9 @@ class TestRebasePolicy:
 
             # Mock datetime.now() to make commits appear old
             old_date = datetime.now() + timedelta(days=10)
-            with patch("tract.policy.builtin.rebase.datetime") as mock_dt:
+            with patch("tract.policy.builtin.archive.datetime") as mock_dt:
                 mock_dt.now.return_value = old_date
-                p = RebasePolicy(stale_days=7, min_commits=3)
+                p = ArchivePolicy(stale_days=7, min_commits=3)
                 action = p.evaluate(t)
 
             assert action is not None
@@ -422,7 +422,7 @@ class TestRebasePolicy:
         finally:
             t.close()
 
-    def test_rebase_policy_archive_prefix(self):
+    def test_archive_policy_archive_prefix(self):
         """Custom archive prefix is used."""
         t = Tract.open(":memory:")
         try:
@@ -431,9 +431,9 @@ class TestRebasePolicy:
             t.commit(DialogueContent(role="user", text="old"))
 
             old_date = datetime.now() + timedelta(days=30)
-            with patch("tract.policy.builtin.rebase.datetime") as mock_dt:
+            with patch("tract.policy.builtin.archive.datetime") as mock_dt:
                 mock_dt.now.return_value = old_date
-                p = RebasePolicy(stale_days=7, min_commits=3, archive_prefix="archived/")
+                p = ArchivePolicy(stale_days=7, min_commits=3, archive_prefix="archived/")
                 action = p.evaluate(t)
 
             assert action is not None
@@ -441,7 +441,7 @@ class TestRebasePolicy:
         finally:
             t.close()
 
-    def test_rebase_policy_already_archived_skipped(self):
+    def test_archive_policy_already_archived_skipped(self):
         """Already-archived branches are skipped."""
         t = Tract.open(":memory:")
         try:
@@ -449,23 +449,23 @@ class TestRebasePolicy:
             t.branch("archive/old-branch")
             t.commit(DialogueContent(role="user", text="archived"))
 
-            p = RebasePolicy()
+            p = ArchivePolicy()
             assert p.evaluate(t) is None
         finally:
             t.close()
 
-    def test_rebase_policy_properties(self):
+    def test_archive_policy_properties(self):
         """Correct name, priority, trigger."""
-        p = RebasePolicy()
-        assert p.name == "auto-rebase"
+        p = ArchivePolicy()
+        assert p.name == "auto-archive"
         assert p.priority == 500
         assert p.trigger == "compile"
 
-    def test_rebase_policy_config_roundtrip(self):
+    def test_archive_policy_config_roundtrip(self):
         """to_config/from_config roundtrip."""
-        p = RebasePolicy(stale_days=14, min_commits=5, archive_prefix="old/")
+        p = ArchivePolicy(stale_days=14, min_commits=5, archive_prefix="old/")
         cfg = p.to_config()
-        p2 = RebasePolicy.from_config(cfg)
+        p2 = ArchivePolicy.from_config(cfg)
         assert p2._stale_days == 14
         assert p2._min_commits == 5
         assert p2._archive_prefix == "old/"
@@ -481,14 +481,14 @@ class TestPriorityOrdering:
     """Verify built-in policies have correct priority ordering."""
 
     def test_priority_ordering(self):
-        """PinPolicy(100) < CompressPolicy(200) < BranchPolicy(300) < RebasePolicy(500)."""
+        """PinPolicy(100) < CompressPolicy(200) < BranchPolicy(300) < ArchivePolicy(500)."""
         assert PinPolicy().priority < CompressPolicy().priority
         assert CompressPolicy().priority < BranchPolicy().priority
-        assert BranchPolicy().priority < RebasePolicy().priority
+        assert BranchPolicy().priority < ArchivePolicy().priority
 
     def test_exact_priorities(self):
         """Exact priority values match specification."""
         assert PinPolicy().priority == 100
         assert CompressPolicy().priority == 200
         assert BranchPolicy().priority == 300
-        assert RebasePolicy().priority == 500
+        assert ArchivePolicy().priority == 500

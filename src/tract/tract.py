@@ -233,17 +233,19 @@ class Tract:
         saved_config = tract.load_policy_config()
         if saved_config is not None:
             from tract.policy.builtin import (
+                ArchivePolicy as _ArchivePolicy,
                 BranchPolicy as _BranchPolicy,
                 CompressPolicy as _CompressPolicy,
                 PinPolicy as _PinPolicy,
-                RebasePolicy as _RebasePolicy,
             )
 
             _policy_type_map: dict[str, type] = {
                 "auto-compress": _CompressPolicy,
                 "auto-pin": _PinPolicy,
                 "auto-branch": _BranchPolicy,
-                "auto-rebase": _RebasePolicy,
+                "auto-archive": _ArchivePolicy,
+                # Backward compat for saved configs with old name
+                "auto-rebase": _ArchivePolicy,
             }
             policies = []
             for entry in saved_config.get("policies", []):

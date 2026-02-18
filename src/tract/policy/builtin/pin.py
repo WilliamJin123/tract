@@ -14,7 +14,6 @@ pin any matching commits that were missed.
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 from tract.models.policy import PolicyAction
@@ -119,7 +118,7 @@ class PinPolicy(Policy):
         # If we got here, all specified keys matched
         return bool(pattern)  # empty pattern never matches
 
-    def retroactive_scan(self, tract: Tract) -> list[str]:
+    def retroactive_scan(self, tract: Tract, *, limit: int = 10000) -> list[str]:
         """Walk all commits and pin matching ones that lack annotations.
 
         Should be called once when the policy is first enabled to
@@ -127,6 +126,7 @@ class PinPolicy(Policy):
 
         Args:
             tract: The Tract instance to scan.
+            limit: Maximum number of commits to scan (default 10000).
 
         Returns:
             List of commit hashes that were pinned.
@@ -134,7 +134,7 @@ class PinPolicy(Policy):
         from tract.models.annotations import Priority
 
         pinned_hashes: list[str] = []
-        commits = tract.log(limit=1000)
+        commits = tract.log(limit=limit)
 
         for commit in commits:
             # Skip if already annotated

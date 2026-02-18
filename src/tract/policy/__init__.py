@@ -6,7 +6,7 @@ registering and evaluating policies against a Tract instance.
 
 from tract.policy.protocols import Policy
 from tract.policy.evaluator import PolicyEvaluator
-from tract.policy.builtin import BranchPolicy, CompressPolicy, PinPolicy, RebasePolicy
+from tract.policy.builtin import ArchivePolicy, BranchPolicy, CompressPolicy, PinPolicy, RebasePolicy
 
 __all__ = [
     "Policy",
@@ -14,5 +14,6 @@ __all__ = [
     "CompressPolicy",
     "PinPolicy",
     "BranchPolicy",
+    "ArchivePolicy",
     "RebasePolicy",
 ]

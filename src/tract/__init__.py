@@ -59,7 +59,7 @@ from tract.models.compression import CompressResult, GCResult, PendingCompressio
 
 # Policy engine
 from tract.policy import Policy, PolicyEvaluator
-from tract.policy.builtin import CompressPolicy, PinPolicy, BranchPolicy, RebasePolicy
+from tract.policy.builtin import ArchivePolicy, CompressPolicy, PinPolicy, BranchPolicy, RebasePolicy
 from tract.models.policy import PolicyAction, PolicyProposal, EvaluationResult, PolicyLogEntry
 
 # Session and spawn models
@@ -175,6 +175,7 @@ __all__ = [
     "CompressPolicy",
     "PinPolicy",
     "BranchPolicy",
+    "ArchivePolicy",
     "RebasePolicy",
     "PolicyAction",
     "PolicyProposal",

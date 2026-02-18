@@ -47,6 +47,9 @@ class PolicyProposal:
     _execute_fn: Callable[[PolicyProposal], object] | None = field(
         default=None, repr=False
     )
+    _reject_fn: Callable[[PolicyProposal, str], None] | None = field(
+        default=None, repr=False
+    )
 
     def approve(self) -> object:
         """Approve and execute the proposed action.
@@ -70,10 +73,16 @@ class PolicyProposal:
     def reject(self, reason: str = "") -> None:
         """Reject the proposed action.
 
+        If the proposal was created by the policy engine, rejection is
+        persisted to the database.  Otherwise only the in-memory status
+        is updated.
+
         Args:
             reason: Optional explanation for why the proposal was rejected.
         """
         self.status = "rejected"
+        if self._reject_fn is not None:
+            self._reject_fn(self, reason)
 
 
 @dataclass(frozen=True)

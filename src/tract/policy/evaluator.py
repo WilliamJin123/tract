@@ -9,7 +9,6 @@ the evaluator will not re-enter evaluate() (same pattern as Tract._in_batch).
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime
@@ -278,7 +277,9 @@ class PolicyEvaluator:
                 "skip": Priority.SKIP,
             }
             priority = priority_map.get(priority_str.lower(), Priority.NORMAL)
-            target_hash = params.pop("target_hash")
+            target_hash = params.pop("target_hash", None)
+            if target_hash is None:
+                raise ValueError("annotate action missing 'target_hash' in params")
             reason = params.pop("reason", None)
             self._tract.annotate(target_hash, priority, reason=reason)
             return None
@@ -326,6 +327,17 @@ class PolicyEvaluator:
             return result
 
         proposal._execute_fn = _execute_fn
+
+        # Set the reject function
+        def _reject_fn(p: PolicyProposal, reason: str = "") -> None:
+            p.status = "rejected"
+            if self._policy_repo is not None:
+                self._policy_repo.update_proposal_status(
+                    p.proposal_id, "rejected", datetime.now()
+                )
+                self._tract._session.commit()
+
+        proposal._reject_fn = _reject_fn
 
         # Persist to DB if repo available
         if self._policy_repo is not None:
@@ -410,6 +422,10 @@ class PolicyEvaluator:
                 raise PolicyExecutionError(
                     f"Proposal not found: {proposal_id}"
                 )
+            if row.status != "pending":
+                raise PolicyExecutionError(
+                    f"Proposal {proposal_id} is not pending (status={row.status})"
+                )
 
             self._policy_repo.update_proposal_status(
                 proposal_id, "rejected", datetime.now()
@@ -443,8 +459,10 @@ class PolicyEvaluator:
                 created_at=row.created_at,
                 status=row.status,
             )
-            # Reconstruct _execute_fn so proposals remain approvable after restart
+            # Reconstruct _execute_fn and _reject_fn so proposals remain
+            # approvable/rejectable after restart
             proposal._execute_fn = self._reconstruct_proposal_fn(row)
+            proposal._reject_fn = self._reconstruct_reject_fn(row)
             proposals.append(proposal)
         return proposals
 
@@ -472,6 +490,21 @@ class PolicyEvaluator:
             return result
 
         return _execute_fn
+
+    def _reconstruct_reject_fn(
+        self, row: PolicyProposalRow
+    ) -> Callable[[PolicyProposal, str], None]:
+        """Build a reject closure from a stored proposal row."""
+
+        def _reject_fn(p: PolicyProposal, reason: str = "") -> None:
+            p.status = "rejected"
+            if self._policy_repo is not None:
+                self._policy_repo.update_proposal_status(
+                    p.proposal_id, "rejected", datetime.now()
+                )
+                self._tract._session.commit()
+
+        return _reject_fn
 
     # ------------------------------------------------------------------
     # Audit logging
