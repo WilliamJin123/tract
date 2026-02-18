@@ -569,7 +569,7 @@ class TestSessionSchemaMigration:
                 meta = cs.execute(
                     sel(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
                 ).scalar_one()
-                assert meta.value == "4"
+                assert meta.value == "5"
             check_engine.dispose()
 
 

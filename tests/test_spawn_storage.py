@@ -89,14 +89,16 @@ class TestSpawnPointerSchema:
         assert "spawn_pointers" in table_names
 
     def test_migration_v3_to_v4(self):
-        """Start with schema_version=3, call init_db, verify table + version=4."""
+        """Start with schema_version=3, call init_db, verify table + version=5."""
         engine = create_trace_engine(":memory:")
 
         from tract.storage.schema import Base
 
-        # Create all tables, then drop spawn_pointers to simulate v3
+        # Create all tables, then drop spawn_pointers + policy tables to simulate v3
         Base.metadata.create_all(engine)
         with engine.connect() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS policy_log"))
+            conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
             conn.execute(text("DROP TABLE IF EXISTS spawn_pointers"))
             conn.commit()
 
@@ -119,19 +121,21 @@ class TestSpawnPointerSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "4"
+            assert row.value == "5"
 
         engine.dispose()
 
     def test_migration_v2_to_v4(self):
-        """Start with schema_version=2, verify both compression AND spawn tables, version=4."""
+        """Start with schema_version=2, verify both compression AND spawn tables, version=5."""
         engine = create_trace_engine(":memory:")
 
         from tract.storage.schema import Base
 
-        # Create all tables, then drop compression + spawn to simulate v2
+        # Create all tables, then drop compression + spawn + policy to simulate v2
         Base.metadata.create_all(engine)
         with engine.connect() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS policy_log"))
+            conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
             conn.execute(text("DROP TABLE IF EXISTS spawn_pointers"))
             conn.execute(text("DROP TABLE IF EXISTS compression_results"))
             conn.execute(text("DROP TABLE IF EXISTS compression_sources"))
@@ -160,12 +164,12 @@ class TestSpawnPointerSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "4"
+            assert row.value == "5"
 
         engine.dispose()
 
     def test_new_db_starts_at_v4(self):
-        """Fresh database gets schema_version=4."""
+        """Fresh database gets schema_version=5."""
         engine = create_trace_engine(":memory:")
         init_db(engine)
 
@@ -174,7 +178,7 @@ class TestSpawnPointerSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "4"
+            assert row.value == "5"
 
         engine.dispose()
 

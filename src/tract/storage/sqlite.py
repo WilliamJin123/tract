@@ -18,6 +18,7 @@ from tract.storage.repositories import (
     CommitParentRepository,
     CommitRepository,
     CompressionRepository,
+    PolicyRepository,
     RefRepository,
     SpawnPointerRepository,
 )
@@ -29,6 +30,8 @@ from tract.storage.schema import (
     CompressionResultRow,
     CompressionRow,
     CompressionSourceRow,
+    PolicyLogRow,
+    PolicyProposalRow,
     RefRow,
     SpawnPointerRow,
 )
@@ -785,3 +788,87 @@ class SqliteSpawnPointerRepository(SpawnPointerRepository):
                 return True
 
             current = pointer.parent_tract_id
+
+
+class SqlitePolicyRepository(PolicyRepository):
+    """SQLite implementation of policy proposal and log storage.
+
+    Provides CRUD for policy proposals and audit log entries.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save_proposal(self, proposal: PolicyProposalRow) -> None:
+        self._session.add(proposal)
+        self._session.flush()
+
+    def get_proposal(self, proposal_id: str) -> PolicyProposalRow | None:
+        stmt = select(PolicyProposalRow).where(
+            PolicyProposalRow.proposal_id == proposal_id
+        )
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def get_pending_proposals(self, tract_id: str) -> list[PolicyProposalRow]:
+        stmt = (
+            select(PolicyProposalRow)
+            .where(
+                PolicyProposalRow.tract_id == tract_id,
+                PolicyProposalRow.status == "pending",
+            )
+            .order_by(PolicyProposalRow.created_at)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def update_proposal_status(
+        self, proposal_id: str, status: str, resolved_at: datetime
+    ) -> None:
+        stmt = select(PolicyProposalRow).where(
+            PolicyProposalRow.proposal_id == proposal_id
+        )
+        proposal = self._session.execute(stmt).scalar_one_or_none()
+        if proposal is not None:
+            proposal.status = status
+            proposal.resolved_at = resolved_at
+            self._session.flush()
+
+    def save_log_entry(self, entry: PolicyLogRow) -> None:
+        self._session.add(entry)
+        self._session.flush()
+
+    def get_log(
+        self,
+        tract_id: str,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        policy_name: str | None = None,
+        limit: int = 100,
+    ) -> list[PolicyLogRow]:
+        conditions = [PolicyLogRow.tract_id == tract_id]
+        if since is not None:
+            conditions.append(PolicyLogRow.created_at >= since)
+        if until is not None:
+            conditions.append(PolicyLogRow.created_at <= until)
+        if policy_name is not None:
+            conditions.append(PolicyLogRow.policy_name == policy_name)
+
+        stmt = (
+            select(PolicyLogRow)
+            .where(and_(*conditions))
+            .order_by(PolicyLogRow.created_at.desc())
+            .limit(limit)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def delete_log_entries(self, tract_id: str, before: datetime) -> int:
+        stmt = select(PolicyLogRow).where(
+            PolicyLogRow.tract_id == tract_id,
+            PolicyLogRow.created_at < before,
+        )
+        rows = self._session.execute(stmt).scalars().all()
+        count = len(rows)
+        for row in rows:
+            self._session.delete(row)
+        self._session.flush()
+        return count

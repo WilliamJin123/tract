@@ -22,6 +22,8 @@ if TYPE_CHECKING:
         CompressionResultRow,
         CompressionRow,
         CompressionSourceRow,
+        PolicyLogRow,
+        PolicyProposalRow,
         SpawnPointerRow,
     )
 
@@ -391,5 +393,67 @@ class SpawnPointerRepository(ABC):
         Walks up the spawn tree from child_tract_id. Returns True if
         potential_ancestor is found as a parent at any level.
         Used for cycle detection during spawn operations.
+        """
+        ...
+
+
+class PolicyRepository(ABC):
+    """Abstract interface for policy proposal and log storage.
+
+    Provides CRUD for policy proposals (collaborative approval workflow)
+    and audit log entries (tracking all policy evaluations).
+    """
+
+    @abstractmethod
+    def save_proposal(self, proposal: PolicyProposalRow) -> None:
+        """Save a new policy proposal."""
+        ...
+
+    @abstractmethod
+    def get_proposal(self, proposal_id: str) -> PolicyProposalRow | None:
+        """Get a proposal by its ID. Returns None if not found."""
+        ...
+
+    @abstractmethod
+    def get_pending_proposals(self, tract_id: str) -> list[PolicyProposalRow]:
+        """Get all pending proposals for a tract.
+
+        Returns proposals with status="pending", ordered by created_at ascending.
+        """
+        ...
+
+    @abstractmethod
+    def update_proposal_status(
+        self, proposal_id: str, status: str, resolved_at: datetime
+    ) -> None:
+        """Update a proposal's status and resolution timestamp."""
+        ...
+
+    @abstractmethod
+    def save_log_entry(self, entry: PolicyLogRow) -> None:
+        """Save a policy evaluation log entry."""
+        ...
+
+    @abstractmethod
+    def get_log(
+        self,
+        tract_id: str,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        policy_name: str | None = None,
+        limit: int = 100,
+    ) -> list[PolicyLogRow]:
+        """Get policy log entries for a tract.
+
+        Returns entries ordered by created_at DESC, with optional filters.
+        """
+        ...
+
+    @abstractmethod
+    def delete_log_entries(self, tract_id: str, before: datetime) -> int:
+        """Delete log entries older than the given timestamp.
+
+        Returns the number of entries deleted. Used for audit log GC.
         """
         ...

@@ -92,9 +92,9 @@ class TestCompressionSchema:
         assert "compression_results" in table_names
 
     def test_migration_v2_to_v3_and_v4(self):
-        """Start with schema_version=2, call init_db, verify tables + version=4.
+        """Start with schema_version=2, call init_db, verify tables + version=5.
 
-        Migration chain: v2 -> v3 (compression tables) -> v4 (spawn_pointers).
+        Migration chain: v2 -> v3 (compression tables) -> v4 (spawn_pointers) -> v5 (policy).
         """
         # Create a v2 database manually (without compression tables)
         engine = create_trace_engine(":memory:")
@@ -102,9 +102,11 @@ class TestCompressionSchema:
         # Create only the base tables that existed in v2
         from tract.storage.schema import Base
 
-        # Create all tables first, then drop compression + spawn ones to simulate v2
+        # Create all tables first, then drop compression + spawn + policy to simulate v2
         Base.metadata.create_all(engine)
         with engine.connect() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS policy_log"))
+            conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
             conn.execute(text("DROP TABLE IF EXISTS compression_results"))
             conn.execute(text("DROP TABLE IF EXISTS compression_sources"))
             conn.execute(text("DROP TABLE IF EXISTS compressions"))
@@ -133,12 +135,12 @@ class TestCompressionSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "4"
+            assert row.value == "5"
 
         engine.dispose()
 
     def test_new_db_starts_at_v4(self):
-        """Fresh database gets schema_version=4."""
+        """Fresh database gets schema_version=5."""
         engine = create_trace_engine(":memory:")
         init_db(engine)
 
@@ -147,7 +149,7 @@ class TestCompressionSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "4"
+            assert row.value == "5"
 
         engine.dispose()
 
