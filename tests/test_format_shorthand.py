@@ -185,3 +185,119 @@ class TestFormatIntegration:
             assert dicts[2]["content"] == "Hi there!"
         finally:
             t.close()
+
+
+# -----------------------------------------------------------------------
+# Shorthand commit method tests
+# -----------------------------------------------------------------------
+
+
+class TestShorthandMethods:
+    """Tests for Tract.system(), user(), assistant() shorthand methods."""
+
+    def test_system_creates_instruction(self):
+        """t.system() creates commit with InstructionContent, role=system."""
+        from tract import Tract
+
+        t = Tract.open()
+        try:
+            info = t.system("Be helpful.")
+            compiled = t.compile()
+            dicts = compiled.to_dicts()
+            assert len(dicts) == 1
+            assert dicts[0]["role"] == "system"
+            assert dicts[0]["content"] == "Be helpful."
+        finally:
+            t.close()
+
+    def test_user_creates_dialogue(self):
+        """t.user() creates commit with DialogueContent(role=user)."""
+        from tract import Tract
+
+        t = Tract.open()
+        try:
+            info = t.user("Hello")
+            compiled = t.compile()
+            dicts = compiled.to_dicts()
+            assert len(dicts) == 1
+            assert dicts[0]["role"] == "user"
+            assert dicts[0]["content"] == "Hello"
+        finally:
+            t.close()
+
+    def test_assistant_creates_dialogue(self):
+        """t.assistant() creates commit with DialogueContent(role=assistant)."""
+        from tract import Tract
+
+        t = Tract.open()
+        try:
+            info = t.assistant("Hi there!")
+            compiled = t.compile()
+            dicts = compiled.to_dicts()
+            assert len(dicts) == 1
+            assert dicts[0]["role"] == "assistant"
+            assert dicts[0]["content"] == "Hi there!"
+        finally:
+            t.close()
+
+    def test_user_with_name(self):
+        """t.user() preserves name field through compile."""
+        from tract import Tract
+
+        t = Tract.open()
+        try:
+            t.user("Hello", name="Alice")
+            compiled = t.compile()
+            dicts = compiled.to_dicts()
+            assert dicts[0]["name"] == "Alice"
+        finally:
+            t.close()
+
+    def test_assistant_with_generation_config(self):
+        """t.assistant() stores generation_config."""
+        from tract import Tract
+
+        t = Tract.open()
+        try:
+            info = t.assistant("resp", generation_config={"model": "gpt-4"})
+            # Verify via get_commit
+            commit = t.get_commit(info.commit_hash)
+            assert commit is not None
+            assert commit.generation_config == {"model": "gpt-4"}
+        finally:
+            t.close()
+
+    def test_shorthand_returns_commit_info(self):
+        """Shorthand methods return CommitInfo."""
+        from tract import Tract
+        from tract.models.commit import CommitInfo
+
+        t = Tract.open()
+        try:
+            info_s = t.system("prompt")
+            info_u = t.user("hello")
+            info_a = t.assistant("hi")
+            assert isinstance(info_s, CommitInfo)
+            assert isinstance(info_u, CommitInfo)
+            assert isinstance(info_a, CommitInfo)
+        finally:
+            t.close()
+
+    def test_full_shorthand_integration(self):
+        """system -> user -> assistant -> compile -> to_dicts without imports."""
+        from tract import Tract
+
+        # No content model imports needed!
+        t = Tract.open()
+        try:
+            t.system("You are a helpful assistant.")
+            t.user("Hi!")
+            t.assistant("Hello! How can I help?")
+
+            dicts = t.compile().to_dicts()
+            assert len(dicts) == 3
+            assert dicts[0] == {"role": "system", "content": "You are a helpful assistant."}
+            assert dicts[1] == {"role": "user", "content": "Hi!"}
+            assert dicts[2] == {"role": "assistant", "content": "Hello! How can I help?"}
+        finally:
+            t.close()

@@ -469,6 +469,94 @@ class Tract:
 
         return info
 
+    def system(
+        self,
+        text: str,
+        *,
+        message: str | None = None,
+        metadata: dict | None = None,
+    ) -> CommitInfo:
+        """Commit a system instruction.
+
+        Shorthand for ``commit(InstructionContent(text=text))``.
+
+        Args:
+            text: The instruction text.
+            message: Optional commit message.
+            metadata: Optional commit metadata.
+
+        Returns:
+            :class:`CommitInfo` for the new commit.
+        """
+        from tract.models.content import InstructionContent
+
+        return self.commit(
+            InstructionContent(text=text),
+            message=message,
+            metadata=metadata,
+        )
+
+    def user(
+        self,
+        text: str,
+        *,
+        message: str | None = None,
+        name: str | None = None,
+        metadata: dict | None = None,
+    ) -> CommitInfo:
+        """Commit a user message.
+
+        Shorthand for ``commit(DialogueContent(role='user', text=text))``.
+
+        Args:
+            text: The message text.
+            message: Optional commit message.
+            name: Optional speaker name.
+            metadata: Optional commit metadata.
+
+        Returns:
+            :class:`CommitInfo` for the new commit.
+        """
+        from tract.models.content import DialogueContent
+
+        return self.commit(
+            DialogueContent(role="user", text=text, name=name),
+            message=message,
+            metadata=metadata,
+        )
+
+    def assistant(
+        self,
+        text: str,
+        *,
+        message: str | None = None,
+        name: str | None = None,
+        metadata: dict | None = None,
+        generation_config: dict | None = None,
+    ) -> CommitInfo:
+        """Commit an assistant response.
+
+        Shorthand for ``commit(DialogueContent(role='assistant', text=text))``.
+
+        Args:
+            text: The response text.
+            message: Optional commit message.
+            name: Optional speaker name.
+            metadata: Optional commit metadata.
+            generation_config: Optional LLM generation config.
+
+        Returns:
+            :class:`CommitInfo` for the new commit.
+        """
+        from tract.models.content import DialogueContent
+
+        return self.commit(
+            DialogueContent(role="assistant", text=text, name=name),
+            message=message,
+            metadata=metadata,
+            generation_config=generation_config,
+        )
+
     def compile(
         self,
         *,
