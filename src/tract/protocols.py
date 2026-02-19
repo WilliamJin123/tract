@@ -37,6 +37,60 @@ class CompiledContext:
     generation_configs: list[dict] = field(default_factory=list)
     commit_hashes: list[str] = field(default_factory=list)
 
+    def to_dicts(self) -> list[dict[str, str]]:
+        """Convert messages to a list of dicts with role/content keys.
+
+        Returns a list suitable for most LLM APIs. Each dict has
+        ``"role"`` and ``"content"`` keys, plus ``"name"`` when present.
+
+        Returns:
+            List of message dicts.
+        """
+        result: list[dict[str, str]] = []
+        for m in self.messages:
+            d: dict[str, str] = {"role": m.role, "content": m.content}
+            if m.name is not None:
+                d["name"] = m.name
+            result.append(d)
+        return result
+
+    def to_openai(self) -> list[dict[str, str]]:
+        """Convert messages to OpenAI chat completion format.
+
+        OpenAI uses inline system messages, so this is identical
+        to :meth:`to_dicts`.
+
+        Returns:
+            List of message dicts in OpenAI format.
+        """
+        return self.to_dicts()
+
+    def to_anthropic(self) -> dict[str, object]:
+        """Convert messages to Anthropic API format.
+
+        Anthropic does not support ``role: "system"`` in the messages
+        array.  System messages are extracted to a separate ``"system"``
+        key and concatenated with ``"\\n\\n"``.
+
+        Returns:
+            Dict with ``"system"`` (str or None) and ``"messages"``
+            (list of non-system message dicts).
+        """
+        system_parts: list[str] = []
+        messages: list[dict[str, str]] = []
+        for m in self.messages:
+            if m.role == "system":
+                system_parts.append(m.content)
+            else:
+                d: dict[str, str] = {"role": m.role, "content": m.content}
+                if m.name is not None:
+                    d["name"] = m.name
+                messages.append(d)
+        return {
+            "system": "\n\n".join(system_parts) if system_parts else None,
+            "messages": messages,
+        }
+
 
 @dataclass(frozen=True)
 class CompileSnapshot:
