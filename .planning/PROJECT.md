@@ -37,7 +37,14 @@ Trace is a Python library that brings git-like version control to LLM context wi
 
 ### Active
 
-(None — all requirements shipped. Define new requirements with `/gsd:new-milestone`.)
+**v3.0 — DX & API Overhaul**
+
+- Convenience commit methods (t.system/user/assistant) to eliminate content type ceremony
+- Integrated chat loop (t.chat/t.generate) that connects compile→LLM→commit→record_usage
+- CompiledContext.to_dicts() and format-specific output methods
+- Auto generation_config capture and usage recording when using built-in client
+- LLM configuration on Tract.open() to eliminate separate configure_llm() step
+- Ongoing: cookbook-driven discovery of additional API issues and design fixes
 
 ### Out of Scope
 
@@ -74,7 +81,9 @@ The project addresses a real pain point in agentic engineering: longer context w
 - **Token counting**: tiktoken as default tokenizer, with support for extracting token counts from API response payloads
 - **LLM operations**: Built-in convenience client + accept user-provided callables for flexibility
 - **API-first**: Primary consumers are agents/frameworks, not humans. SDK is the product.
-- **Scope**: v1 complete (Phases 1-5), v2 complete (Phases 6-7). All core requirements shipped.
+- **Scope**: v1 complete (Phases 1-5), v2 complete (Phases 6-7). v3.0 focuses on DX/API overhaul.
+- **Backward compat**: v3 may introduce breaking changes where the old API was genuinely bad. Convenience methods are always additive.
+- **Cookbook-driven**: Every API change must make a cookbook example simpler. No changes for their own sake.
 
 ## Key Decisions
 
@@ -94,4 +103,4 @@ The project addresses a real pain point in agentic engineering: longer context w
 | `tract-ai` distribution name, `tract` import name | Avoid PyPI name conflicts, avoid stdlib `trace` shadow | Good — no conflicts |
 
 ---
-*Last updated: 2026-02-18 after v2.0 milestone*
+*Last updated: 2026-02-19 after v3.0 milestone start*

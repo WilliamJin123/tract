@@ -2,21 +2,22 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-18)
+See: .planning/PROJECT.md (updated 2026-02-19)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** Planning next milestone
+**Current focus:** v3.0 DX & API Overhaul
 
 ## Current Position
 
-Milestone: v2.0 complete. Next milestone TBD.
-Phase: All phases complete (7 of 7)
-Plan: N/A
-Status: Milestone shipped. Ready for `/gsd:new-milestone`.
-Last activity: 2026-02-18 — v2.0 milestone complete
+Milestone: v3.0 — DX & API Overhaul
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-02-19 — Milestone v3.0 started
 
 v1 Progress: [######################] 100% (22/22 plans)
 v2 Progress: [######################] 100% (6/6 plans)
+v3 Progress: [                      ] 0% (0/? plans)
 
 ## Performance Metrics
 
@@ -45,18 +46,18 @@ v2 Progress: [######################] 100% (6/6 plans)
 
 ### Decisions
 
-All decisions logged in PROJECT.md Key Decisions table and archived in milestones/v2.0-ROADMAP.md.
+All v1/v2 decisions logged in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
-None.
+- Cookbook-driven: run each cookbook example after API changes, discover new issues
 
 ### Blockers/Concerns
 
-None active. All previous blockers resolved.
+None active.
 
 ## Session Continuity
 
-Last session: 2026-02-18
-Stopped at: v2.0 milestone archived
+Last session: 2026-02-19
+Stopped at: Defining v3.0 requirements
 Resume file: None
