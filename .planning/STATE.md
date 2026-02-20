@@ -5,26 +5,26 @@
 See: .planning/PROJECT.md (updated 2026-02-19)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** v3.0 DX & API Overhaul -- Phase 12: LLMConfig Cleanup & Tightening -- IN PROGRESS
+**Current focus:** v3.0 DX & API Overhaul -- Phase 12: LLMConfig Cleanup & Tightening -- COMPLETE
 
 ## Current Position
 
 Milestone: v3.0 -- DX & API Overhaul
 Phase: 12 of 12 (LLMConfig Cleanup & Tightening)
-Plan: 1 of 2 (config layer foundation complete)
-Status: In progress -- Plan 01 complete, Plan 02 remaining
-Last activity: 2026-02-20 -- Completed 12-01-PLAN.md
+Plan: 2 of 2 (config wiring & downstream fixes complete)
+Status: Phase complete -- all plans delivered
+Last activity: 2026-02-20 -- Completed 12-02-PLAN.md
 
 v1 Progress: [######################] 100% (22/22 plans)
 v2 Progress: [######################] 100% (6/6 plans)
-v3 Progress: [######################] 97% (34/35 plans)
+v3 Progress: [######################] 100% (35/35 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 34
-- Average duration: 6.0m
-- Total execution time: 3.60 hours
+- Total plans completed: 35
+- Average duration: 6.1m
+- Total execution time: 3.73 hours
 
 **By Phase:**
 
@@ -45,7 +45,7 @@ v3 Progress: [######################] 97% (34/35 plans)
 | 9 | 1/1 | 5m | 5m |
 | 10 | 1/1 | 8m | 8m |
 | 11 | 2/2 | 13m | 6.5m |
-| 12 | 1/2 | 5m | 5m |
+| 12 | 2/2 | 13m | 6.5m |
 
 ## Accumulated Context
 
@@ -82,6 +82,11 @@ All v1/v2 decisions logged in PROJECT.md Key Decisions table.
 | 12-01-D3 | from_obj() dispatch: dataclass fields > model_dump > vars | Covers all common Python config patterns |
 | 12-01-D4 | model= and default_config= mutually exclusive on Tract.open() | Clear error prevents ambiguity |
 | 12-01-D5 | configure_operations() positional-only _configs param | Avoids name collision with operation kwargs |
+| 12-02-D1 | 4-level resolution: sugar > llm_config > operation > default | Extends 3-level chain with full LLMConfig at level 2 |
+| 12-02-D2 | _build_generation_config takes full resolved dict | Captures all fields sent to LLM, not just 3 |
+| 12-02-D3 | compress() error guard checks content= to allow manual bypass | Fail early with descriptive message when config implies LLM |
+| 12-02-D4 | OrchestratorConfig extra fields via extra_llm_kwargs dict | Remaining resolved fields (top_p, seed, etc.) in one dict |
+| 12-02-D5 | stop_sequences tuple->list in resolved dict | LLM clients expect list, LLMConfig stores tuple |
 
 ### Pending Todos
 
@@ -94,6 +99,8 @@ All v1/v2 decisions logged in PROJECT.md Key Decisions table.
 - Phase 12 added: LLMConfig Cleanup & Tightening (typed OperationConfigs, consolidated defaults, smart from_dict, full gen_config capture)
 - Phase 12 planned: 2 plans in 2 waves (01: config layer, 02: wiring)
 - Phase 12 Plan 01 complete: config layer foundation (OperationConfigs, aliases, from_obj, _default_config)
+- Phase 12 Plan 02 complete: 4-level resolution, full gen_config capture, downstream wiring
+- Phase 12 COMPLETE: All LLMConfig cleanup and tightening delivered
 
 ### Blockers/Concerns
 
@@ -102,5 +109,5 @@ None active.
 ## Session Continuity
 
 Last session: 2026-02-20
-Stopped at: Completed 12-01-PLAN.md
+Stopped at: Completed 12-02-PLAN.md -- Phase 12 complete
 Resume file: None
