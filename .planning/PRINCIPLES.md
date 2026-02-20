@@ -2,7 +2,8 @@
 - Interjections at any point
 - context window manipulation
 - prompting and meta-prompting (policies)
-- Granular configurations (different models, prompts hyperparams, for everything IF wanted`)
+- EVERYTHING should be configurable together or separately (LLM [Models, Hyperparameters, Prompts], strategies / triggers for any operation)
+- Deterministic (hard coded strategies) OR fuzzy (LLM-based sentiment analysis / judgement / reasoning)
 2. Anything a human can do, an agent / LLM can also do 
 - HITL prompt interjection ==> AITL monitoring
 - human-triggered context operations (rebase, reset, edits + appends, branching, etc.) ==> agent-triggered is possible
