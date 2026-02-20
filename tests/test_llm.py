@@ -550,9 +550,28 @@ class TestProtocolConformance:
         client.close()
 
     def test_custom_client_conforms_to_protocol(self):
-        """A minimal custom class with chat() and close() conforms to LLMClient."""
+        """A custom class with all protocol methods conforms to LLMClient."""
+
+        class FullClient:
+            def chat(self, messages, *, model=None, temperature=None, max_tokens=None, **kwargs):
+                return {"choices": [{"message": {"content": "hi"}}]}
+
+            def close(self):
+                pass
+
+            def extract_content(self, response):
+                return response["choices"][0]["message"]["content"]
+
+            def extract_usage(self, response):
+                return response.get("usage")
+
+        assert isinstance(FullClient(), LLMClient)
+
+    def test_minimal_client_without_extract_methods(self):
+        """A minimal chat+close client doesn't satisfy isinstance but works via fallback."""
         mock = MockLLMClient()
-        assert isinstance(mock, LLMClient)
+        # Protocol now requires extract_content/extract_usage for full conformance
+        assert not isinstance(mock, LLMClient)
 
     def test_missing_method_fails_protocol(self):
         """A class without chat() does not conform to LLMClient."""

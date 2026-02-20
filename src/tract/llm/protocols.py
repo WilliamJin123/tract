@@ -17,6 +17,10 @@ class LLMClient(Protocol):
 
     Any object with chat() and close() methods matching this signature works.
     The built-in OpenAIClient implements this protocol.
+
+    Custom clients can override ``extract_content()`` and ``extract_usage()``
+    to support non-OpenAI response formats.  The defaults assume OpenAI-style
+    responses (``choices[0].message.content`` and ``.usage``).
     """
 
     def chat(
@@ -28,12 +32,34 @@ class LLMClient(Protocol):
         max_tokens: int | None = None,
         **kwargs: Any,
     ) -> dict:
-        """Send messages, return response dict with 'choices' and 'usage'."""
+        """Send messages, return response dict."""
         ...
 
     def close(self) -> None:
         """Release underlying resources."""
         ...
+
+    def extract_content(self, response: dict) -> str:
+        """Extract assistant message content from an LLM response.
+
+        Override this for non-OpenAI response formats.
+        Default assumes ``response["choices"][0]["message"]["content"]``.
+        """
+        try:
+            return response["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError(
+                f"Cannot extract content from response: {exc}. "
+                f"Override extract_content() for custom formats."
+            ) from exc
+
+    def extract_usage(self, response: dict) -> dict | None:
+        """Extract usage dict from an LLM response.
+
+        Override this for non-OpenAI response formats.
+        Default assumes ``response.get("usage")``.
+        """
+        return response.get("usage")
 
 
 @dataclass

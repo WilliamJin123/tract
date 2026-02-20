@@ -1,4 +1,4 @@
-"""Tests for the conversation layer: ChatResponse, chat(), generate(), Tract.open() LLM config."""
+"""Tests for the conversation layer: ChatResponse, chat(), generate(), Tract.open() LLM config, custom clients."""
 
 from __future__ import annotations
 
@@ -501,4 +501,212 @@ class TestLLMMessageForwarding:
         assert mock.last_messages[2]["content"] == "r1"
         assert mock.last_messages[3]["role"] == "user"
         assert mock.last_messages[3]["content"] == "q2"
+        t.close()
+
+
+# ---------------------------------------------------------------------------
+# Custom LLM client (non-OpenAI format) tests
+# ---------------------------------------------------------------------------
+
+class AnthropicStyleClient:
+    """Mock client returning Anthropic-style responses (non-OpenAI format)."""
+
+    def __init__(self, responses=None):
+        self.responses = responses or ["Anthropic response"]
+        self._call_count = 0
+        self.last_messages = None
+        self.closed = False
+
+    def chat(self, messages, **kwargs):
+        self.last_messages = messages
+        text = self.responses[min(self._call_count, len(self.responses) - 1)]
+        self._call_count += 1
+        return {
+            "content": [{"type": "text", "text": text}],
+            "usage": {"input_tokens": 12, "output_tokens": 8},
+            "model": kwargs.get("model", "claude-sonnet"),
+        }
+
+    def close(self):
+        self.closed = True
+
+    def extract_content(self, response):
+        return response["content"][0]["text"]
+
+    def extract_usage(self, response):
+        usage = response.get("usage")
+        if usage is None:
+            return None
+        return {
+            "prompt_tokens": usage.get("input_tokens", 0),
+            "completion_tokens": usage.get("output_tokens", 0),
+            "total_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+        }
+
+
+class MinimalDuckClient:
+    """Bare-minimum duck-typed client: only chat() and close(), OpenAI format."""
+
+    def __init__(self):
+        self.closed = False
+
+    def chat(self, messages, **kwargs):
+        return {
+            "choices": [{"message": {"content": "duck says quack"}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            "model": "duck-model",
+        }
+
+    def close(self):
+        self.closed = True
+
+
+class TestCustomLLMClient:
+    """Tests for custom (non-OpenAI) LLM clients with chat()/generate()."""
+
+    def test_anthropic_style_client_with_generate(self):
+        """Custom client with extract_content/extract_usage works with generate()."""
+        t = Tract.open()
+        client = AnthropicStyleClient(responses=["Hello from Claude!"])
+        t.configure_llm(client)
+        t.system("You are helpful.")
+        t.user("Hi")
+
+        resp = t.generate()
+
+        assert resp.text == "Hello from Claude!"
+        assert resp.usage is not None
+        assert resp.usage.prompt_tokens == 12
+        assert resp.usage.completion_tokens == 8
+        t.close()
+
+    def test_anthropic_style_client_with_chat(self):
+        """Custom client works through the chat() convenience method."""
+        t = Tract.open()
+        client = AnthropicStyleClient(responses=["Bonjour!"])
+        t.configure_llm(client)
+        t.system("System")
+
+        resp = t.chat("Hello")
+
+        assert resp.text == "Bonjour!"
+        assert isinstance(resp, ChatResponse)
+        log = t.log(limit=10)
+        assert len(log) == 3  # system + user + assistant
+        t.close()
+
+    def test_anthropic_style_multi_turn(self):
+        """Custom client works for multi-turn conversations."""
+        t = Tract.open()
+        client = AnthropicStyleClient(responses=["r1", "r2"])
+        t.configure_llm(client)
+        t.system("System")
+
+        resp1 = t.chat("q1")
+        resp2 = t.chat("q2")
+
+        assert resp1.text == "r1"
+        assert resp2.text == "r2"
+        log = t.log(limit=10)
+        assert len(log) == 5  # system + user1 + asst1 + user2 + asst2
+        t.close()
+
+    def test_duck_typed_client_uses_default_extraction(self):
+        """Duck-typed client without extract methods still works (OpenAI format)."""
+        t = Tract.open()
+        client = MinimalDuckClient()
+        t.configure_llm(client)
+        t.system("System")
+        t.user("Hello")
+
+        resp = t.generate()
+
+        assert resp.text == "duck says quack"
+        assert resp.usage.prompt_tokens == 5
+        t.close()
+
+    def test_open_with_llm_client_param(self):
+        """Tract.open(llm_client=...) configures the client directly."""
+        client = MockLLMClient(responses=["injected!"])
+        t = Tract.open(llm_client=client)
+
+        assert hasattr(t, "_llm_client")
+        assert t._llm_client is client
+        assert t._owns_llm_client is False  # caller owns lifecycle
+        t.system("System")
+        resp = t.chat("Hi")
+        assert resp.text == "injected!"
+        t.close()
+        assert not client.closed  # Tract did NOT close the external client
+
+    def test_open_api_key_and_llm_client_mutually_exclusive(self):
+        """Cannot specify both api_key= and llm_client=."""
+        with pytest.raises(ValueError, match="Cannot specify both api_key= and llm_client="):
+            Tract.open(api_key="sk-test", llm_client=MockLLMClient())
+
+    def test_configure_llm_with_custom_resolver(self):
+        """configure_llm() accepts a custom resolver."""
+        class CustomResolver:
+            def __call__(self, issue):
+                from tract.llm.protocols import Resolution
+                return Resolution(action="abort", reasoning="custom")
+
+        t = Tract.open()
+        client = MockLLMClient()
+        resolver = CustomResolver()
+        t.configure_llm(client, resolver=resolver)
+
+        assert t._default_resolver is resolver
+        assert t._llm_client is client
+        t.close()
+
+    def test_configure_llm_default_resolver_when_none(self):
+        """configure_llm() without resolver= still creates OpenAIResolver."""
+        from tract.llm.resolver import OpenAIResolver
+
+        t = Tract.open()
+        client = MockLLMClient()
+        t.configure_llm(client)
+
+        assert isinstance(t._default_resolver, OpenAIResolver)
+        t.close()
+
+    def test_llm_client_protocol_with_extract_methods(self):
+        """A client subclassing LLMClient gets default extract methods."""
+        from tract.llm.protocols import LLMClient
+
+        # AnthropicStyleClient has extract methods, check it passes isinstance
+        client = AnthropicStyleClient()
+        assert isinstance(client, LLMClient)
+
+    def test_duck_typed_client_works_without_protocol_isinstance(self):
+        """Duck-typed client without extract methods still works functionally.
+
+        It won't pass isinstance(client, LLMClient) because the protocol
+        now requires extract_content/extract_usage, but the getattr fallback
+        in generate() handles this gracefully.
+        """
+        from tract.llm.protocols import LLMClient
+
+        client = MinimalDuckClient()
+        # Does not formally satisfy the full protocol (no extract methods)
+        assert not isinstance(client, LLMClient)
+        # But it still works in practice via the fallback
+        t = Tract.open()
+        t.configure_llm(client)
+        t.system("System")
+        t.user("Hi")
+        resp = t.generate()
+        assert resp.text == "duck says quack"
+        t.close()
+
+    def test_generate_error_message_mentions_llm_client(self):
+        """Error message for missing client mentions llm_client= option."""
+        t = Tract.open()
+        t.system("System")
+        t.user("Hello")
+
+        from tract.llm.errors import LLMConfigError
+        with pytest.raises(LLMConfigError, match="llm_client="):
+            t.generate()
         t.close()

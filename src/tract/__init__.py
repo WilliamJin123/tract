@@ -71,6 +71,9 @@ from tract.models.session import SessionContent, SpawnInfo, CollapseResult
 from tract.operations.history import StatusInfo
 from tract.operations.diff import DiffResult, MessageDiff, DiffStat
 
+# LLM protocol
+from tract.llm.protocols import LLMClient
+
 # Agent toolkit
 from tract.toolkit.models import ToolDefinition, ToolProfile, ToolConfig, ToolResult
 from tract.toolkit.executor import ToolExecutor
@@ -220,6 +223,8 @@ __all__ = [
     "SessionContent",
     "SpawnInfo",
     "CollapseResult",
+    # LLM protocol
+    "LLMClient",
     # Agent toolkit
     "ToolDefinition",
     "ToolProfile",

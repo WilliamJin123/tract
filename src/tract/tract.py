@@ -176,6 +176,7 @@ class Tract:
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
+        llm_client: object | None = None,
         default_config: LLMConfig | None = None,
         operations: OperationConfigs | None = None,
         operation_configs: dict[str, LLMConfig] | None = None,  # deprecated: use operations=
@@ -196,6 +197,10 @@ class Tract:
                 Only used when *api_key* is provided.
             base_url: API base URL override for OpenAI-compatible APIs.
                 Only used when *api_key* is provided.
+            llm_client: A custom LLM client conforming to the
+                :class:`~tract.llm.protocols.LLMClient` protocol.  Mutually
+                exclusive with *api_key*.  The caller owns the client lifecycle
+                (Tract will **not** close it).
             default_config: Default LLM config for all operations.  Mutually
                 exclusive with *model=*.  Use for full control over defaults.
             operations: Per-operation LLM configuration defaults as a typed
@@ -207,7 +212,8 @@ class Tract:
             A ready-to-use ``Tract`` instance.
 
         Raises:
-            ValueError: If both *model=* and *default_config=* are provided.
+            ValueError: If both *model=* and *default_config=* are provided,
+                or if both *api_key* and *llm_client* are provided.
         """
         if tract_id is None:
             tract_id = uuid.uuid4().hex
@@ -320,6 +326,14 @@ class Tract:
                 "Use default_config=LLMConfig(model=...) for full control."
             )
 
+        # Validate: api_key= and llm_client= are mutually exclusive
+        if api_key is not None and llm_client is not None:
+            raise ValueError(
+                "Cannot specify both api_key= and llm_client=. "
+                "Use api_key= for built-in OpenAI client, or "
+                "llm_client= for a custom client."
+            )
+
         # Auto-configure LLM if api_key provided
         if api_key is not None:
             from tract.llm.client import OpenAIClient
@@ -333,6 +347,11 @@ class Tract:
             tract._owns_llm_client = True
             if model is not None:
                 tract._default_config = LLMConfig(model=model)
+
+        # Configure externally-provided LLM client (caller owns lifecycle)
+        elif llm_client is not None:
+            tract.configure_llm(llm_client)
+            tract._owns_llm_client = False
 
         # Apply default_config if provided (without api_key)
         if default_config is not None and tract._default_config is None:
@@ -362,10 +381,14 @@ class Tract:
         tract_id: str,
         config: TractConfig | None = None,
         verify_cache: bool = False,
+        llm_client: object | None = None,
     ) -> Tract:
         """Create a ``Tract`` from pre-built components.
 
         Skips engine/session creation.  Useful for testing and DI.
+
+        Args:
+            llm_client: Optional custom LLM client.  Caller owns lifecycle.
         """
         if config is None:
             config = TractConfig()
@@ -380,7 +403,7 @@ class Tract:
             token_budget=config.token_budget,
         )
 
-        return cls(
+        tract = cls(
             engine=engine,
             session=session,
             commit_engine=commit_engine,
@@ -394,6 +417,10 @@ class Tract:
             token_counter=token_counter,
             verify_cache=verify_cache,
         )
+        if llm_client is not None:
+            tract.configure_llm(llm_client)
+            tract._owns_llm_client = False
+        return tract
 
     # ------------------------------------------------------------------
     # Public properties
@@ -760,6 +787,36 @@ class Tract:
             config["model"] = response["model"]
         return config
 
+    def _extract_content(self, response: dict) -> str:
+        """Extract content from LLM response, dispatching to the client's method.
+
+        Falls back to OpenAI-format extraction for duck-typed clients that
+        don't implement ``extract_content()``.
+        """
+        if hasattr(self._llm_client, "extract_content"):
+            return self._llm_client.extract_content(response)
+        # Default: OpenAI format
+        try:
+            return response["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            from tract.llm.errors import LLMResponseError
+
+            raise LLMResponseError(
+                f"Cannot extract content from response: {exc}. "
+                f"Implement extract_content() on your client for custom formats."
+            ) from exc
+
+    def _extract_usage(self, response: dict) -> dict | None:
+        """Extract usage from LLM response, dispatching to the client's method.
+
+        Falls back to OpenAI-format extraction for duck-typed clients that
+        don't implement ``extract_usage()``.
+        """
+        if hasattr(self._llm_client, "extract_usage"):
+            return self._llm_client.extract_usage(response)
+        # Default: OpenAI format
+        return response.get("usage")
+
     def generate(
         self,
         *,
@@ -794,14 +851,13 @@ class Tract:
             from tract.llm.errors import LLMConfigError
 
             raise LLMConfigError(
-                "No LLM client configured. Pass api_key to Tract.open() "
-                "or call configure_llm(client)."
+                "No LLM client configured. Pass api_key= or llm_client= "
+                "to Tract.open(), or call configure_llm(client)."
             )
 
         if self._in_batch:
             raise TraceError("chat()/generate() cannot be used inside batch()")
 
-        from tract.llm.client import OpenAIClient
         from tract.protocols import ChatResponse
 
         # 1. Compile context
@@ -815,9 +871,10 @@ class Tract:
         )
         response = self._llm_client.chat(messages, **llm_kwargs)
 
-        # 3. Extract content and usage
-        text = OpenAIClient.extract_content(response)
-        usage_dict = OpenAIClient.extract_usage(response)
+        # 3. Extract content and usage (dispatch to client methods, with
+        #    OpenAI-format defaults for duck-typed clients that lack them)
+        text = self._extract_content(response)
+        usage_dict = self._extract_usage(response)
 
         # 4. Build generation_config (use resolved kwargs for accurate tracking)
         gen_config = self._build_generation_config(response, resolved=llm_kwargs)
@@ -1568,18 +1625,29 @@ class Tract:
         )
         self._session.commit()
 
-    def configure_llm(self, client: object) -> None:
+    def configure_llm(
+        self,
+        client: object,
+        *,
+        resolver: object | None = None,
+    ) -> None:
         """Configure the LLM client for semantic operations.
 
-        Stores the client and creates a default OpenAIResolver from it.
-
         Args:
-            client: An LLM client conforming to the LLMClient protocol.
+            client: An LLM client conforming to the
+                :class:`~tract.llm.protocols.LLMClient` protocol.
+            resolver: Optional conflict resolver.  If *None*, an
+                :class:`~tract.llm.resolver.OpenAIResolver` is created
+                from *client* (suitable for OpenAI-compatible APIs).
+                Pass a custom resolver for non-OpenAI clients.
         """
-        from tract.llm.resolver import OpenAIResolver
-
         self._llm_client = client
-        self._default_resolver = OpenAIResolver(client)
+        if resolver is not None:
+            self._default_resolver = resolver
+        else:
+            from tract.llm.resolver import OpenAIResolver
+
+            self._default_resolver = OpenAIResolver(client)
 
     def configure_operations(
         self,
