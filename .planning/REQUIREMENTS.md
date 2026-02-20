@@ -31,9 +31,9 @@
 
 ### Unified Config & Cookbook (CONFIG/QUERY/COOK)
 
-- [ ] **CONFIG-01**: LLMConfig frozen dataclass replaces LLMOperationConfig with typed fields for all standard LLM hyperparameters plus extra dict escape hatch
-- [ ] **QUERY-01**: query_by_config supports multi-field AND queries, IN operator, and whole-config matching via LLMConfig object
-- [ ] **COOK-01**: All 3 Tier 1 cookbook examples updated to use LLMConfig typed access (response.generation_config.model instead of response.generation_config.get("model"))
+- [x] **CONFIG-01**: LLMConfig frozen dataclass replaces LLMOperationConfig with typed fields for all standard LLM hyperparameters plus extra dict escape hatch
+- [x] **QUERY-01**: query_by_config supports multi-field AND queries, IN operator, and whole-config matching via LLMConfig object
+- [x] **COOK-01**: All 3 Tier 1 cookbook examples updated to use LLMConfig typed access (response.generation_config.model instead of response.generation_config.get("model"))
 
 ## Future Requirements
 
@@ -66,12 +66,15 @@
 | LLM-04 | Phase 10 | Complete |
 | FMT-01 | Phase 8 | Complete |
 | FMT-02 | Phase 8 | Complete |
+| CONFIG-01 | Phase 11 | Complete |
+| QUERY-01 | Phase 11 | Complete |
+| COOK-01 | Phase 11 | Complete |
 
 **Coverage:**
-- v3 requirements: 12 total
-- Mapped to phases: 12
+- v3 requirements: 15 total
+- Mapped to phases: 15
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-19*
-*Last updated: 2026-02-20 after Phase 10 completion*
+*Last updated: 2026-02-20 after Phase 11 completion*

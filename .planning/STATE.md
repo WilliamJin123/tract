@@ -84,7 +84,7 @@ All v1/v2 decisions logged in PROJECT.md Key Decisions table.
 ### Roadmap Evolution
 
 - Phase 11 added: Unified LLM Config & Query (replace LLMOperationConfig with LLMConfig, full hyperparameters, rich querying)
-- v3 milestone COMPLETE: All 12 DX requirements delivered across Phases 8-11
+- v3 milestone COMPLETE: All 15 DX requirements delivered across Phases 8-11
 
 ### Blockers/Concerns
 

@@ -4,7 +4,7 @@
 
 - v1.0 Core (Phases 1-5) -- shipped 2026-02-16
 - v2.0 Autonomy (Phases 6-7) -- shipped 2026-02-18
-- v3.0 DX & API Overhaul (Phases 8-11) -- in progress
+- v3.0 DX & API Overhaul (Phases 8-11) -- shipped 2026-02-20
 
 ## Phases
 
@@ -51,7 +51,8 @@
 
 </details>
 
-### v3.0 DX & API Overhaul (In Progress)
+<details>
+<summary>v3.0 DX & API Overhaul (Phases 8-11) -- SHIPPED 2026-02-20</summary>
 
 **Milestone Goal:** Rich functionality through minimal interfaces. Easy for the common case, configurable for every edge case. Cookbook-driven -- every API change must make a cookbook example simpler.
 
@@ -60,7 +61,9 @@
 - [x] **Phase 8: Format & Commit Shorthand** - Eliminate import ceremony and output boilerplate
 - [x] **Phase 9: Conversation Layer** - One-call chat/generate with integrated LLM
 - [x] **Phase 10: Per-Operation LLM Config** - Independent model/params per LLM-powered operation
-- [ ] **Phase 11: Unified LLM Config & Query** - Replace LLMOperationConfig with fully-typed LLMConfig; upgrade query_by_config for multi-field, whole-config, and IN queries; update Tier 1 cookbook examples to use LLMConfig
+- [x] **Phase 11: Unified LLM Config & Query** - Replace LLMOperationConfig with fully-typed LLMConfig; upgrade query_by_config for multi-field, whole-config, and IN queries; update Tier 1 cookbook examples to use LLMConfig
+
+</details>
 
 ## Phase Details
 
@@ -119,11 +122,11 @@ Plans:
   5. query_by_config supports the IN operator for set membership queries
   6. Users can query by an entire LLMConfig object to find commits matching all its non-None fields
   7. All 3 Tier 1 cookbook examples use LLMConfig typed access instead of dict-based generation_config access
-**Plans**: 2 plans
+**Plans**: 2/2 complete
 
 Plans:
-- [ ] 11-01-PLAN.md -- Define LLMConfig, replace LLMOperationConfig, migrate all ~20 files
-- [ ] 11-02-PLAN.md -- Rich query_by_config (multi-field AND, IN, whole-config), cookbook updates, comprehensive tests
+- [x] 11-01-PLAN.md -- Define LLMConfig, replace LLMOperationConfig, migrate all ~20 files
+- [x] 11-02-PLAN.md -- Rich query_by_config (multi-field AND, IN, whole-config), cookbook updates, comprehensive tests
 
 ## Progress
 
@@ -146,4 +149,4 @@ Phases execute in numeric order: 8 -> 9 -> 10 -> 11 (plus any inserted decimal p
 | 8. Format & Shorthand | v3.0 | 1/1 | Complete | 2026-02-19 |
 | 9. Conversation Layer | v3.0 | 1/1 | Complete | 2026-02-19 |
 | 10. Per-Op LLM Config | v3.0 | 1/1 | Complete | 2026-02-20 |
-| 11. Unified LLM Config | v3.0 | 0/2 | In Progress | - |
+| 11. Unified LLM Config | v3.0 | 2/2 | Complete | 2026-02-20 |
