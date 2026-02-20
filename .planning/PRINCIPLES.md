@@ -10,4 +10,7 @@
 - Any human-exposed interface (apis, python functions, etc.) can also be exposed to an LLM (toolkits, customizable prompts, etc.)
 - etc.
 3. Full History
-- 
+- Provenance on everything
+- How things (context window, config) change over time
+- How subagent delegation happened over commits and / or timestamps
+- Tracing everything back to triggers (manual vs automated), 

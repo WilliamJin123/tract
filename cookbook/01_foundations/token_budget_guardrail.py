@@ -11,7 +11,7 @@ import os
 
 from dotenv import load_dotenv
 
-from tract import TokenBudgetConfig, Tract, TractConfig
+from tract import TokenBudgetConfig, Tract, TractConfig, ChatResponse
 
 load_dotenv()
 
