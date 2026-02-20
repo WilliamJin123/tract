@@ -23,7 +23,7 @@ from tract.engine.compiler import DefaultContextCompiler
 from tract.engine.tokens import TiktokenCounter
 from tract.models.annotations import Priority, PriorityAnnotation
 from tract.models.commit import CommitInfo, CommitOperation
-from tract.models.config import LLMConfig, TractConfig
+from tract.models.config import LLMConfig, OperationConfigs, TractConfig
 from tract.models.content import validate_content
 from tract.exceptions import (
     BranchNotFoundError,
@@ -160,8 +160,8 @@ class Tract:
         self._trigger_commit_count: int = 0
         self._token_trigger_fired: bool = False
         self._owns_llm_client: bool = False
-        self._default_model: str | None = None
-        self._operation_configs: dict[str, LLMConfig] = {}
+        self._default_config: LLMConfig | None = None
+        self._operation_configs: OperationConfigs = OperationConfigs()
 
     @classmethod
     def open(
@@ -176,7 +176,9 @@ class Tract:
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        operation_configs: dict[str, LLMConfig] | None = None,
+        default_config: LLMConfig | None = None,
+        operations: OperationConfigs | None = None,
+        operation_configs: dict[str, LLMConfig] | None = None,  # deprecated: use operations=
     ) -> Tract:
         """Open (or create) a Trace repository.
 
@@ -194,13 +196,18 @@ class Tract:
                 Only used when *api_key* is provided.
             base_url: API base URL override for OpenAI-compatible APIs.
                 Only used when *api_key* is provided.
-            operation_configs: Per-operation LLM configuration defaults.
-                Maps operation name to :class:`LLMConfig`.
-                Valid keys: ``"chat"``, ``"merge"``, ``"compress"``,
-                ``"orchestrate"``.
+            default_config: Default LLM config for all operations.  Mutually
+                exclusive with *model=*.  Use for full control over defaults.
+            operations: Per-operation LLM configuration defaults as a typed
+                :class:`OperationConfigs` instance.
+            operation_configs: *Deprecated:* Per-operation LLM configuration
+                defaults as a dict.  Use *operations=* instead.
 
         Returns:
             A ready-to-use ``Tract`` instance.
+
+        Raises:
+            ValueError: If both *model=* and *default_config=* are provided.
         """
         if tract_id is None:
             tract_id = uuid.uuid4().hex
@@ -306,6 +313,13 @@ class Tract:
             if policies:
                 tract.configure_policies(policies=policies)
 
+        # Validate: model= and default_config= are mutually exclusive
+        if model is not None and default_config is not None:
+            raise ValueError(
+                "Cannot specify both model= and default_config=. "
+                "Use default_config=LLMConfig(model=...) for full control."
+            )
+
         # Auto-configure LLM if api_key provided
         if api_key is not None:
             from tract.llm.client import OpenAIClient
@@ -317,10 +331,18 @@ class Tract:
             )
             tract.configure_llm(client)
             tract._owns_llm_client = True
-            tract._default_model = model
+            if model is not None:
+                tract._default_config = LLMConfig(model=model)
 
-        # Apply per-operation configs if provided
-        if operation_configs is not None:
+        # Apply default_config if provided (without api_key)
+        if default_config is not None and tract._default_config is None:
+            tract._default_config = default_config
+
+        # Apply per-operation configs (new typed path)
+        if operations is not None:
+            tract._operation_configs = operations
+        # Apply per-operation configs (legacy dict path)
+        elif operation_configs is not None:
             tract.configure_operations(**operation_configs)
 
         return tract
@@ -654,7 +676,7 @@ class Tract:
         Returns:
             Dict of resolved kwargs for llm_client.chat().
         """
-        op_config = self._operation_configs.get(operation)
+        op_config = getattr(self._operation_configs, operation, None)
 
         resolved: dict = {}
 
@@ -663,8 +685,8 @@ class Tract:
             resolved["model"] = model
         elif op_config is not None and op_config.model is not None:
             resolved["model"] = op_config.model
-        elif self._default_model is not None:
-            resolved["model"] = self._default_model
+        elif self._default_config is not None and self._default_config.model is not None:
+            resolved["model"] = self._default_config.model
 
         # Temperature: call > operation
         if temperature is not None:
@@ -714,8 +736,8 @@ class Tract:
             config["model"] = response["model"]
         elif model is not None:
             config["model"] = model
-        elif self._default_model is not None:
-            config["model"] = self._default_model
+        elif self._default_config is not None and self._default_config.model is not None:
+            config["model"] = self._default_config.model
         # Request params
         if temperature is not None:
             config["temperature"] = temperature
@@ -1543,44 +1565,76 @@ class Tract:
         self._llm_client = client
         self._default_resolver = OpenAIResolver(client)
 
-    def configure_operations(self, **operation_configs: LLMConfig) -> None:
+    def configure_operations(
+        self,
+        _configs: OperationConfigs | None = None,
+        /,
+        **operation_configs: LLMConfig,
+    ) -> None:
         """Set per-operation LLM defaults.
 
-        Each keyword argument maps an operation name to its config.
-        Valid operation names: ``"chat"``, ``"merge"``, ``"compress"``,
-        ``"orchestrate"``.
-
-        Note: ``"auto_message"`` is NOT a valid operation name --
-        ``_auto_message()`` is a pure-string function that truncates text
-        without any LLM call.
-
-        Call-level overrides (e.g., ``model=`` on ``chat()``) still take
-        highest priority.
+        Accepts either an OperationConfigs instance (new style) or keyword
+        arguments (backward compatible).
 
         Args:
+            _configs: OperationConfigs instance with typed fields.
             **operation_configs: Operation name -> LLMConfig mappings.
+                Valid names: ``"chat"``, ``"merge"``, ``"compress"``,
+                ``"orchestrate"``.
+
+        Raises:
+            TypeError: If both positional and keyword arguments provided,
+                or if a keyword value is not an LLMConfig.
 
         Example::
 
-            from tract import LLMConfig
+            from tract import LLMConfig, OperationConfigs
+            # New style:
+            t.configure_operations(OperationConfigs(
+                chat=LLMConfig(model="gpt-4o"),
+                compress=LLMConfig(model="gpt-3.5-turbo"),
+            ))
+            # Backward compatible:
             t.configure_operations(
-                chat=LLMConfig(model="gpt-4o", temperature=0.7),
-                compress=LLMConfig(model="gpt-3.5-turbo", temperature=0.0),
-                merge=LLMConfig(model="gpt-4o", temperature=0.3),
+                chat=LLMConfig(model="gpt-4o"),
+                compress=LLMConfig(model="gpt-3.5-turbo"),
             )
         """
-        for name, config in operation_configs.items():
-            if not isinstance(config, LLMConfig):
+        if _configs is not None and operation_configs:
+            raise TypeError(
+                "Cannot mix positional OperationConfigs with keyword arguments"
+            )
+        if _configs is not None:
+            if not isinstance(_configs, OperationConfigs):
+                raise TypeError(
+                    f"Expected OperationConfigs, got {type(_configs).__name__}"
+                )
+            self._operation_configs = _configs
+            return
+        # Keyword path: validate and construct OperationConfigs
+        _valid_ops = {"chat", "merge", "compress", "orchestrate"}
+        for name, cfg in operation_configs.items():
+            if not isinstance(cfg, LLMConfig):
                 raise TypeError(
                     f"Expected LLMConfig for '{name}', "
-                    f"got {type(config).__name__}"
+                    f"got {type(cfg).__name__}"
                 )
-            self._operation_configs[name] = config
+            if name not in _valid_ops:
+                raise ValueError(
+                    f"Unknown operation '{name}'. "
+                    f"Valid operations: {', '.join(sorted(_valid_ops))}"
+                )
+        # Merge with existing: only replace fields that are provided
+        from dataclasses import replace as _replace
+        updates = {}
+        for name, cfg in operation_configs.items():
+            updates[name] = cfg
+        self._operation_configs = _replace(self._operation_configs, **updates)
 
     @property
-    def operation_configs(self) -> dict[str, LLMConfig]:
-        """Current per-operation LLM configurations (read-only copy)."""
-        return dict(self._operation_configs)
+    def operation_configs(self) -> OperationConfigs:
+        """Current per-operation LLM configurations (read-only, frozen)."""
+        return self._operation_configs
 
     def merge(
         self,
