@@ -5,19 +5,19 @@
 See: .planning/PROJECT.md (updated 2026-02-19)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** v3.0 DX & API Overhaul -- Phase 10: Per-Operation LLM Config
+**Current focus:** v3.0 DX & API Overhaul -- Phase 11: Unified LLM Config & Query
 
 ## Current Position
 
 Milestone: v3.0 -- DX & API Overhaul
-Phase: 10 of 10 (Per-Operation LLM Config)
-Plan: 1 of 1
-Status: Phase 10 complete
-Last activity: 2026-02-20 -- Completed Phase 10 (Per-Operation LLM Config)
+Phase: 11 of 11 (Unified LLM Config & Query)
+Plan: 0 of 0 (not planned yet)
+Status: Not started
+Last activity: 2026-02-20 -- Phase 11 added to roadmap
 
 v1 Progress: [######################] 100% (22/22 plans)
 v2 Progress: [######################] 100% (6/6 plans)
-v3 Progress: [######################] 100% (3/3 plans)
+v3 Progress: [################------] 75% (3/4 phases)
 
 ## Performance Metrics
 
@@ -72,6 +72,10 @@ All v1/v2 decisions logged in PROJECT.md Key Decisions table.
 
 - Cookbook-driven: run each cookbook example after API changes, discover new issues
 
+### Roadmap Evolution
+
+- Phase 11 added: Unified LLM Config & Query (replace LLMOperationConfig with LLMConfig, full hyperparameters, rich querying)
+
 ### Blockers/Concerns
 
 None active.
@@ -79,5 +83,5 @@ None active.
 ## Session Continuity
 
 Last session: 2026-02-20
-Stopped at: Completed 10-01-PLAN.md
+Stopped at: Phase 11 added to roadmap, not yet planned
 Resume file: None

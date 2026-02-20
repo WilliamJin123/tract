@@ -4,7 +4,7 @@
 
 - v1.0 Core (Phases 1-5) -- shipped 2026-02-16
 - v2.0 Autonomy (Phases 6-7) -- shipped 2026-02-18
-- v3.0 DX & API Overhaul (Phases 8-10) -- shipped 2026-02-20
+- v3.0 DX & API Overhaul (Phases 8-11) -- in progress
 
 ## Phases
 
@@ -60,6 +60,7 @@
 - [x] **Phase 8: Format & Commit Shorthand** - Eliminate import ceremony and output boilerplate
 - [x] **Phase 9: Conversation Layer** - One-call chat/generate with integrated LLM
 - [x] **Phase 10: Per-Operation LLM Config** - Independent model/params per LLM-powered operation
+- [ ] **Phase 11: Unified LLM Config & Query** - Replace LLMOperationConfig with fully-typed LLMConfig; upgrade query_by_config for multi-field, whole-config, and IN queries; update Tier 1 cookbook examples to use LLMConfig
 
 ## Phase Details
 
@@ -106,10 +107,27 @@ Plans:
 Plans:
 - [x] 10-01-PLAN.md -- LLMOperationConfig, configure_operations(), wire all operations through resolution chain
 
+### Phase 11: Unified LLM Config & Query
+**Goal**: Replace LLMOperationConfig with a fully-typed LLMConfig frozen dataclass covering all standard LLM hyperparameters (temperature, top_p, top_k, penalties, seed, etc.) with an `extra` dict escape hatch. Upgrade query_by_config to support multi-field AND queries, IN operator, and whole-config matching. Single class used everywhere: operation defaults, call-time overrides, and commit-level storage. Update Tier 1 cookbook examples to use LLMConfig instead of raw dicts.
+**Depends on**: Phase 10
+**Requirements**: CONFIG-01 (unified typed config), QUERY-01 (rich config querying), COOK-01 (Tier 1 cookbook updates)
+**Success Criteria** (what must be TRUE):
+  1. LLMOperationConfig is fully replaced by LLMConfig — no references to the old class remain in source or tests
+  2. LLMConfig has typed fields for model, temperature, top_p, max_tokens, stop_sequences, frequency_penalty, presence_penalty, top_k, seed, plus an extra dict for provider-specific params
+  3. CommitInfo.generation_config returns Optional[LLMConfig] (not dict) — SQLite still stores JSON, conversion happens at boundaries
+  4. query_by_config supports multiple field conditions in a single call (AND semantics)
+  5. query_by_config supports the IN operator for set membership queries
+  6. Users can query by an entire LLMConfig object to find commits matching all its non-None fields
+  7. All 3 Tier 1 cookbook examples use LLMConfig typed access instead of dict-based generation_config access
+**Plans**: 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 11 to break down)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 8 -> 9 -> 10 (plus any inserted decimal phases)
+Phases execute in numeric order: 8 -> 9 -> 10 -> 11 (plus any inserted decimal phases)
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -127,3 +145,4 @@ Phases execute in numeric order: 8 -> 9 -> 10 (plus any inserted decimal phases)
 | 8. Format & Shorthand | v3.0 | 1/1 | Complete | 2026-02-19 |
 | 9. Conversation Layer | v3.0 | 1/1 | Complete | 2026-02-19 |
 | 10. Per-Op LLM Config | v3.0 | 1/1 | Complete | 2026-02-20 |
+| 11. Unified LLM Config | v3.0 | 0/0 | Not Started | - |

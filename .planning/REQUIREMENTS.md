@@ -29,6 +29,12 @@
 - [x] **FMT-01**: CompiledContext.to_dicts() returns list[dict] with role/content keys
 - [x] **FMT-02**: CompiledContext.to_openai() / .to_anthropic() for provider-specific formats
 
+### Unified Config & Cookbook (CONFIG/QUERY/COOK)
+
+- [ ] **CONFIG-01**: LLMConfig frozen dataclass replaces LLMOperationConfig with typed fields for all standard LLM hyperparameters plus extra dict escape hatch
+- [ ] **QUERY-01**: query_by_config supports multi-field AND queries, IN operator, and whole-config matching via LLMConfig object
+- [ ] **COOK-01**: All 3 Tier 1 cookbook examples updated to use LLMConfig typed access (response.generation_config.model instead of response.generation_config.get("model"))
+
 ## Future Requirements
 
 - Cookbook-driven: additional requirements will be added as cookbook examples are rewritten against the new API
