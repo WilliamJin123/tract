@@ -53,7 +53,7 @@ class TestBasicGC:
         assert result.commits_removed == 0
         assert result.blobs_removed == 0
         assert result.tokens_freed == 0
-        assert result.archives_removed == 0
+        assert result.source_commits_removed == 0
 
     def test_gc_removes_orphans(self):
         """gc(orphan_retention_days=0) removes unreachable commits."""
@@ -142,7 +142,7 @@ class TestArchiveGC:
         gc_result = t.gc(orphan_retention_days=0)
 
         # Archives should be preserved (archive_retention=None)
-        assert gc_result.archives_removed == 0
+        assert gc_result.source_commits_removed == 0
 
     def test_gc_removes_old_archives(self):
         """gc(archive_retention_days=0) removes archived commits."""
@@ -155,7 +155,7 @@ class TestArchiveGC:
         gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
 
         # Archives should be removed
-        assert gc_result.archives_removed > 0
+        assert gc_result.source_commits_removed > 0
 
     def test_gc_archive_retention_threshold(self):
         """gc(archive_retention_days=30) preserves recent archives."""
@@ -167,10 +167,10 @@ class TestArchiveGC:
         # GC with 30-day archive retention (commits are seconds old)
         gc_result = t.gc(orphan_retention_days=0, archive_retention_days=30)
 
-        assert gc_result.archives_removed == 0
+        assert gc_result.source_commits_removed == 0
 
-    def test_gc_archives_removed_count(self):
-        """GCResult.archives_removed reflects actual archive removals."""
+    def test_gc_source_commits_removed_count(self):
+        """GCResult.source_commits_removed reflects actual source commit removals."""
         t, hashes = make_tract_with_commits(5)
 
         # Compress
@@ -179,7 +179,7 @@ class TestArchiveGC:
         # GC with immediate archive removal
         gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
 
-        assert gc_result.archives_removed == len(compress_result.source_commits)
+        assert gc_result.source_commits_removed == len(compress_result.source_commits)
 
 
 # ===========================================================================
@@ -260,7 +260,7 @@ class TestGCEdgeCases:
         assert result.commits_removed == 0
         assert result.blobs_removed == 0
         assert result.tokens_freed == 0
-        assert result.archives_removed == 0
+        assert result.source_commits_removed == 0
 
     def test_gc_duration_positive(self):
         """GCResult.duration_seconds >= 0."""
@@ -303,17 +303,17 @@ class TestGCProvenanceCleanup:
         # Now run GC with archive_retention_days=0 to remove archives
         gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
 
-        assert gc_result.archives_removed > 0
+        assert gc_result.source_commits_removed > 0
 
         # Verify provenance was cleaned up: querying sources should return empty
-        from tract.storage.sqlite import SqliteCompressionRepository
+        from tract.storage.sqlite import SqliteOperationEventRepository
         # The compression record itself should have been cleaned up
         # (no sources or results remain)
         # We verify by checking the GC result is consistent
         # and a second GC finds nothing more to remove
         gc_result2 = t.gc(orphan_retention_days=0, archive_retention_days=0)
         assert gc_result2.commits_removed == 0
-        assert gc_result2.archives_removed == 0
+        assert gc_result2.source_commits_removed == 0
 
     def test_gc_cleans_result_commit_fk(self):
         """GC correctly handles CompressionResultRow FK when summary commits become unreachable."""
@@ -325,7 +325,7 @@ class TestGCProvenanceCleanup:
         compression_id = result.compression_id
 
         # Verify result rows exist in provenance
-        results_before = t._compression_repo.get_results(compression_id)
+        results_before = t._event_repo.get_commits(compression_id, "result")
         assert len(results_before) >= 1
 
         # Reset to a previous commit to make summary commits unreachable

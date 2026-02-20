@@ -1,8 +1,8 @@
-"""Comprehensive tests for rebase and cherry-pick operations.
+"""Comprehensive tests for rebase and import-commit operations.
 
-Tests cherry-pick (APPEND, EDIT, missing target, resolver), rebase
+Tests import-commit (APPEND, EDIT, missing target, resolver), rebase
 (simple, content preservation, branch pointer update, safety checks),
-and integration scenarios (cherry-pick then compile, rebase then merge,
+and integration scenarios (import-commit then compile, rebase then merge,
 full branching workflow).
 """
 
@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 
 from tract import (
-    CherryPickError,
-    CherryPickResult,
+    ImportCommitError,
+    ImportResult,
     CommitInfo,
     CommitOperation,
     DialogueContent,
@@ -100,22 +100,22 @@ def make_skip_resolver():
 
 
 # ---------------------------------------------------------------------------
-# Cherry-pick tests
+# Import-commit tests
 # ---------------------------------------------------------------------------
 
 
-class TestCherryPickAppend:
-    """Cherry-pick APPEND commit tests."""
+class TestImportCommitAppend:
+    """Import-commit APPEND commit tests."""
 
-    def test_cherry_pick_append_commit(self):
-        """Cherry-pick an APPEND commit from feature to main."""
+    def test_import_commit_append_commit(self):
+        """Import-commit an APPEND commit from feature to main."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
         branch_name, main_commits, feature_commits = setup_diverged_branches(t)
 
-        # Cherry-pick first feature commit onto main
+        # Import-commit first feature commit onto main
         feat1 = feature_commits[0]
-        result = t.cherry_pick(feat1.commit_hash)
+        result = t.import_commit(feat1.commit_hash)
 
         assert result.new_commit is not None
         assert result.original_commit is not None
@@ -124,8 +124,8 @@ class TestCherryPickAppend:
         assert len(result.issues) == 0
         t.close()
 
-    def test_cherry_pick_preserves_content(self):
-        """Cherry-picked commit has identical blob content."""
+    def test_import_commit_preserves_content(self):
+        """Import-commited commit has identical blob content."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
         branch_name, main_commits, feature_commits = setup_diverged_branches(
@@ -133,15 +133,15 @@ class TestCherryPickAppend:
         )
 
         feat1 = feature_commits[0]
-        result = t.cherry_pick(feat1.commit_hash)
+        result = t.import_commit(feat1.commit_hash)
 
         # Content hash should be the same (same blob)
         assert result.new_commit is not None
         assert result.new_commit.content_hash == feat1.content_hash
         t.close()
 
-    def test_cherry_pick_preserves_metadata(self):
-        """Cherry-pick preserves message, metadata, generation_config."""
+    def test_import_commit_preserves_metadata(self):
+        """Import-commit preserves message, metadata, generation_config."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
         t.branch("feature")
@@ -156,7 +156,7 @@ class TestCherryPickAppend:
         t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
-        result = t.cherry_pick(feat1.commit_hash)
+        result = t.import_commit(feat1.commit_hash)
 
         assert result.new_commit is not None
         assert result.new_commit.message == "important commit"
@@ -165,28 +165,28 @@ class TestCherryPickAppend:
         assert result.new_commit.generation_config == LLMConfig(temperature=0.7)
         t.close()
 
-    def test_cherry_pick_from_commit_hash(self):
-        """Cherry-pick by full commit hash (not just branch tip)."""
+    def test_import_commit_from_commit_hash(self):
+        """Import-commit by full commit hash (not just branch tip)."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
         branch_name, main_commits, feature_commits = setup_diverged_branches(
             t, feature_texts=["feat 1", "feat 2", "feat 3"]
         )
 
-        # Cherry-pick the second commit (not tip)
+        # Import-commit the second commit (not tip)
         feat2 = feature_commits[1]
-        result = t.cherry_pick(feat2.commit_hash)
+        result = t.import_commit(feat2.commit_hash)
 
         assert result.new_commit is not None
         assert result.new_commit.content_hash == feat2.content_hash
         t.close()
 
 
-class TestCherryPickEdit:
-    """Cherry-pick EDIT commit tests."""
+class TestImportCommitEdit:
+    """Import-commit EDIT commit tests."""
 
-    def test_cherry_pick_edit_with_target_on_branch(self):
-        """Cherry-pick EDIT commit where response_to exists on current branch."""
+    def test_import_commit_edit_with_target_on_branch(self):
+        """Import-commit EDIT commit where response_to exists on current branch."""
         t = Tract.open()
         base = t.commit(InstructionContent(text="base instruction"))
 
@@ -201,8 +201,8 @@ class TestCherryPickEdit:
         t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
-        # Cherry-pick the edit -- base commit exists on main
-        result = t.cherry_pick(edit.commit_hash)
+        # Import-commit the edit -- base commit exists on main
+        result = t.import_commit(edit.commit_hash)
 
         assert result.new_commit is not None
         assert len(result.issues) == 0
@@ -210,8 +210,8 @@ class TestCherryPickEdit:
         assert result.new_commit.response_to == base.commit_hash
         t.close()
 
-    def test_cherry_pick_edit_missing_target(self):
-        """Cherry-pick EDIT with missing target raises CherryPickError."""
+    def test_import_commit_edit_missing_target(self):
+        """Import-commit EDIT with missing target raises ImportCommitError."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
@@ -228,13 +228,13 @@ class TestCherryPickEdit:
         t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
-        # Cherry-pick the edit -- its target doesn't exist on main
-        with pytest.raises(CherryPickError, match="issue"):
-            t.cherry_pick(edit.commit_hash)
+        # Import-commit the edit -- its target doesn't exist on main
+        with pytest.raises(ImportCommitError, match="issue"):
+            t.import_commit(edit.commit_hash)
         t.close()
 
-    def test_cherry_pick_edit_missing_target_with_resolver(self):
-        """Cherry-pick EDIT with missing target succeeds via resolver."""
+    def test_import_commit_edit_missing_target_with_resolver(self):
+        """Import-commit EDIT with missing target succeeds via resolver."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
@@ -249,15 +249,15 @@ class TestCherryPickEdit:
         t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
-        result = t.cherry_pick(edit.commit_hash, resolver=make_approve_resolver())
+        result = t.import_commit(edit.commit_hash, resolver=make_approve_resolver())
 
         assert result.new_commit is not None
         assert len(result.issues) == 1
         assert result.issues[0].issue_type == "edit_target_missing"
         t.close()
 
-    def test_cherry_pick_edit_missing_target_skip(self):
-        """Cherry-pick EDIT with missing target -- resolver skips."""
+    def test_import_commit_edit_missing_target_skip(self):
+        """Import-commit EDIT with missing target -- resolver skips."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
@@ -272,7 +272,7 @@ class TestCherryPickEdit:
         t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
-        result = t.cherry_pick(edit.commit_hash, resolver=make_skip_resolver())
+        result = t.import_commit(edit.commit_hash, resolver=make_skip_resolver())
 
         assert result.new_commit is None  # Skipped
         assert len(result.issues) == 1
@@ -489,20 +489,20 @@ class TestRebaseSafetyChecks:
 
 
 class TestIntegration:
-    """Integration tests combining cherry-pick, rebase, merge, and compile."""
+    """Integration tests combining import-commit, rebase, merge, and compile."""
 
-    def test_cherry_pick_then_compile(self):
-        """Cherry-pick commit, verify compile() includes the new content."""
+    def test_import_commit_then_compile(self):
+        """Import-commit commit, verify compile() includes the new content."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
         branch_name, main_commits, feature_commits = setup_diverged_branches(
             t, feature_texts=["cherry target"]
         )
 
-        # Cherry-pick feature commit onto main
-        result = t.cherry_pick(feature_commits[0].commit_hash)
+        # Import-commit feature commit onto main
+        result = t.import_commit(feature_commits[0].commit_hash)
 
-        # Compile main should include the cherry-picked content
+        # Compile main should include the imported content
         compiled = t.compile()
         texts = [m.content for m in compiled.messages]
         assert any("cherry target" in text for text in texts)
@@ -526,7 +526,7 @@ class TestIntegration:
         t.close()
 
     def test_full_branching_workflow(self):
-        """Create branch, diverge, cherry-pick, rebase, merge."""
+        """Create branch, diverge, import-commit, rebase, merge."""
         t = Tract.open()
         t.commit(InstructionContent(text="system prompt"))
 
@@ -538,11 +538,11 @@ class TestIntegration:
         t.switch("main")
         m1 = t.commit(DialogueContent(role="user", text="main work"))
 
-        # Cherry-pick f1 onto main
-        cp = t.cherry_pick(f1.commit_hash)
+        # Import-commit f1 onto main
+        cp = t.import_commit(f1.commit_hash)
         assert cp.new_commit is not None
 
-        # Rebase feature onto main (now main has base + main_work + cherry-picked f1)
+        # Rebase feature onto main (now main has base + main_work + imported f1)
         t.switch("feature")
         rebase_result = t.rebase("main")
         assert len(rebase_result.replayed_commits) >= 1
@@ -596,17 +596,17 @@ class TestIntegration:
         assert len(result.replayed_commits) == 1
         t.close()
 
-    def test_cherry_pick_result_types(self):
-        """Verify CherryPickResult fields are correct types."""
+    def test_import_commit_result_types(self):
+        """Verify ImportResult fields are correct types."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
         branch_name, main_commits, feature_commits = setup_diverged_branches(
             t, feature_texts=["feat"]
         )
 
-        result = t.cherry_pick(feature_commits[0].commit_hash)
+        result = t.import_commit(feature_commits[0].commit_hash)
 
-        assert isinstance(result, CherryPickResult)
+        assert isinstance(result, ImportResult)
         assert isinstance(result.original_commit, CommitInfo)
         assert isinstance(result.new_commit, CommitInfo)
         assert isinstance(result.issues, list)
@@ -641,11 +641,11 @@ class TestIntegration:
             t.rebase("main")
         t.close()
 
-    def test_cherry_pick_nonexistent_commit(self):
-        """Cherry-pick nonexistent commit raises error."""
+    def test_import_commit_nonexistent_commit(self):
+        """Import-commit nonexistent commit raises error."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
-        with pytest.raises(Exception):  # CommitNotFoundError or CherryPickError
-            t.cherry_pick("0000dead" * 8)
+        with pytest.raises(Exception):  # CommitNotFoundError or ImportCommitError
+            t.import_commit("0000dead" * 8)
         t.close()

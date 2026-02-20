@@ -126,7 +126,7 @@ class Tract:
         annotation_repo: SqliteAnnotationRepository,
         token_counter: TokenCounter,
         parent_repo: SqliteCommitParentRepository | None = None,
-        compression_repo: SqliteOperationEventRepository | None = None,
+        event_repo: SqliteOperationEventRepository | None = None,
         verify_cache: bool = False,
     ) -> None:
         self._engine = engine
@@ -141,7 +141,7 @@ class Tract:
         self._annotation_repo = annotation_repo
         self._token_counter = token_counter
         self._parent_repo = parent_repo
-        self._compression_repo = compression_repo
+        self._event_repo = event_repo
         self._spawn_repo: SqliteSpawnPointerRepository | None = None
         self._custom_type_registry: dict[str, type[BaseModel]] = {}
         self._cache = CacheManager(
@@ -268,7 +268,7 @@ class Tract:
         ref_repo = SqliteRefRepository(session)
         annotation_repo = SqliteAnnotationRepository(session)
         parent_repo = SqliteCommitParentRepository(session)
-        compression_repo = SqliteOperationEventRepository(session)
+        event_repo = SqliteOperationEventRepository(session)
 
         # Token counter
         token_counter = tokenizer or TiktokenCounter(
@@ -322,7 +322,7 @@ class Tract:
             annotation_repo=annotation_repo,
             token_counter=token_counter,
             parent_repo=parent_repo,
-            compression_repo=compression_repo,
+            event_repo=event_repo,
             verify_cache=verify_cache,
         )
         tract._spawn_repo = spawn_repo
@@ -417,6 +417,7 @@ class Tract:
         config: TractConfig | None = None,
         verify_cache: bool = False,
         llm_client: object | None = None,
+        event_repo: SqliteOperationEventRepository | None = None,
     ) -> Tract:
         """Create a ``Tract`` from pre-built components.
 
@@ -451,6 +452,7 @@ class Tract:
             annotation_repo=annotation_repo,
             token_counter=token_counter,
             verify_cache=verify_cache,
+            event_repo=event_repo,
         )
         if llm_client is not None:
             tract.configure_llm(llm_client)
@@ -1940,33 +1942,33 @@ class Tract:
 
         return result
 
-    def cherry_pick(
+    def import_commit(
         self,
         commit_hash: str,
         *,
         resolver: object | None = None,
-    ) -> CherryPickResult:
-        """Cherry-pick a commit onto the current branch.
+    ) -> ImportResult:
+        """Import a commit onto the current branch (replaces cherry-pick).
 
         Creates a new commit with the same content but different hash and
         parentage (current HEAD as parent).
 
         Args:
-            commit_hash: Hash (or prefix) of the commit to cherry-pick.
+            commit_hash: Hash (or prefix) of the commit to import.
             resolver: Optional resolver for handling issues (e.g., EDIT
                 target missing on current branch).  Falls back to
                 ``self._default_resolver`` if configured via
                 :meth:`configure_llm`.
 
         Returns:
-            :class:`CherryPickResult` describing the outcome.
+            :class:`ImportResult` describing the outcome.
 
         Raises:
-            CherryPickError: If issues detected and no resolver, or
+            ImportCommitError: If issues detected and no resolver, or
                 resolver aborts.
         """
-        from tract.models.merge import CherryPickResult
-        from tract.operations.rebase import cherry_pick as _cherry_pick
+        from tract.models.merge import ImportResult
+        from tract.operations.rebase import import_commit as _import_commit
 
         # Resolve commit hash (supports prefixes and branch names)
         resolved = self.resolve_commit(commit_hash)
@@ -1976,7 +1978,7 @@ class Tract:
         if effective_resolver is None:
             effective_resolver = getattr(self, "_default_resolver", None)
 
-        result = _cherry_pick(
+        result = _import_commit(
             commit_hash=resolved,
             tract_id=self._tract_id,
             commit_repo=self._commit_repo,
@@ -1985,11 +1987,12 @@ class Tract:
             commit_engine=self._commit_engine,
             parent_repo=self._parent_repo,
             resolver=effective_resolver,
+            event_repo=self._event_repo,
         )
 
         self._session.commit()
 
-        # Clear compile cache (cherry-pick changes HEAD)
+        # Clear compile cache (import changes HEAD)
         self._cache.clear()
 
         return result
@@ -2035,6 +2038,7 @@ class Tract:
             blob_repo=self._blob_repo,
             commit_engine=self._commit_engine,
             resolver=effective_resolver,
+            event_repo=self._event_repo,
         )
 
         self._session.commit()
@@ -2102,7 +2106,7 @@ class Tract:
         if self._ref_repo.is_detached(self._tract_id):
             raise DetachedHeadError()
 
-        if self._compression_repo is None:
+        if self._event_repo is None:
             from tract.exceptions import CompressionError
             raise CompressionError("Compression repository not available")
 
@@ -2141,7 +2145,7 @@ class Tract:
                 ref_repo=self._ref_repo,
                 commit_engine=self._commit_engine,
                 token_counter=self._token_counter,
-                compression_repo=self._compression_repo,
+                event_repo=self._event_repo,
                 parent_repo=self._parent_repo,
                 commits=commits,
                 from_commit=from_commit,
@@ -2192,7 +2196,7 @@ class Tract:
         """
         from tract.operations.compression import _commit_compression
 
-        if self._compression_repo is None:
+        if self._event_repo is None:
             from tract.exceptions import CompressionError
             raise CompressionError("Compression repository not available")
 
@@ -2206,7 +2210,7 @@ class Tract:
                 ref_repo=self._ref_repo,
                 commit_engine=self._commit_engine,
                 token_counter=self._token_counter,
-                compression_repo=self._compression_repo,
+                event_repo=self._event_repo,
                 summaries=pending.summaries,
                 range_commits=pending._range_commits,
                 pinned_commits=pending._pinned_commits,
@@ -2274,7 +2278,7 @@ class Tract:
         from tract.models.compression import GCResult as _GCResult
         from tract.operations.compression import gc as _gc
 
-        if self._compression_repo is None:
+        if self._event_repo is None:
             raise CompressionError("Compression repository not available")
 
         if self._parent_repo is None:
@@ -2286,7 +2290,7 @@ class Tract:
             ref_repo=self._ref_repo,
             parent_repo=self._parent_repo,
             blob_repo=self._blob_repo,
-            compression_repo=self._compression_repo,
+            event_repo=self._event_repo,
             orphan_retention_days=orphan_retention_days,
             archive_retention_days=archive_retention_days,
             branch=branch,

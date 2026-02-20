@@ -151,7 +151,7 @@ class Session:
         ref_repo = SqliteRefRepository(session)
         annotation_repo = SqliteAnnotationRepository(session)
         parent_repo = SqliteCommitParentRepository(session)
-        compression_repo = SqliteOperationEventRepository(session)
+        event_repo = SqliteOperationEventRepository(session)
 
         # Token counter
         token_counter = TiktokenCounter(
@@ -192,7 +192,7 @@ class Session:
             annotation_repo=annotation_repo,
             token_counter=token_counter,
             parent_repo=parent_repo,
-            compression_repo=compression_repo,
+            event_repo=event_repo,
         )
         tract._spawn_repo = self._spawn_repo
 

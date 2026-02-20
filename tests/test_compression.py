@@ -335,7 +335,7 @@ class TestProvenance:
         assert result.compression_id
 
         # Query the compression record
-        record = t._compression_repo.get_record(result.compression_id)
+        record = t._event_repo.get_event(result.compression_id)
         assert record is not None
         assert record.tract_id == t.tract_id
         assert record.original_tokens > 0
@@ -364,7 +364,7 @@ class TestProvenance:
 
         result = t.compress(content="Summary")
 
-        sources = t._compression_repo.get_sources(result.compression_id)
+        sources = t._event_repo.get_commits(result.compression_id, "source")
         source_hashes = {s.commit_hash for s in sources}
 
         for h in hashes:
@@ -376,7 +376,7 @@ class TestProvenance:
 
         result = t.compress(content="Summary")
 
-        results = t._compression_repo.get_results(result.compression_id)
+        results = t._event_repo.get_commits(result.compression_id, "result")
         result_hashes = {r.commit_hash for r in results}
 
         for h in result.summary_commits:

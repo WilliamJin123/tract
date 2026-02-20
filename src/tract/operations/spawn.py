@@ -134,7 +134,7 @@ def spawn_tract(
     child_ref_repo = SqliteRefRepository(child_session)
     child_annotation_repo = SqliteAnnotationRepository(child_session)
     child_parent_repo = SqliteCommitParentRepository(child_session)
-    child_compression_repo = SqliteOperationEventRepository(child_session)
+    child_event_repo = SqliteOperationEventRepository(child_session)
 
     child_token_counter = TiktokenCounter(
         encoding_name=child_config.tokenizer_encoding,
@@ -194,7 +194,7 @@ def spawn_tract(
         annotation_repo=child_annotation_repo,
         token_counter=child_token_counter,
         parent_repo=child_parent_repo,
-        compression_repo=child_compression_repo,
+        event_repo=child_event_repo,
     )
     child._spawn_repo = spawn_repo
 

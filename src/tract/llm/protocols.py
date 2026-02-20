@@ -82,7 +82,7 @@ class ResolverCallable(Protocol):
 
     Can be a function, lambda, or class with __call__.
     The issue parameter is typed as object because the concrete types
-    (ConflictInfo, RebaseWarning, CherryPickIssue) are defined in Plan 03-03.
+    (ConflictInfo, RebaseWarning, ImportIssue) are defined in Plan 03-03.
     """
 
     def __call__(self, issue: object) -> Resolution:

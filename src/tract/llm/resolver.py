@@ -110,7 +110,7 @@ class OpenAIResolver:
         """Format a conflict/issue object into a user prompt string.
 
         Uses duck-typed attribute access so this works with any issue type
-        (ConflictInfo, RebaseWarning, CherryPickIssue) without importing them.
+        (ConflictInfo, RebaseWarning, ImportIssue) without importing them.
         """
         conflict_type = getattr(issue, "conflict_type", "unknown")
         parts: list[str] = [f"Conflict type: {conflict_type}"]
