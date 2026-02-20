@@ -11,20 +11,21 @@ See: .planning/PROJECT.md (updated 2026-02-19)
 
 Milestone: v3.0 -- DX & API Overhaul
 Phase: 13 (Unified Operation Events & Compile Records)
-Plan: 0 of 0 (not yet planned)
-Status: Phase 13 added -- awaiting planning
-Last activity: 2026-02-20 -- Phase 13 added to roadmap
+Plan: 1 of 3
+Status: In progress
+Last activity: 2026-02-20 -- Completed 13-01-PLAN.md
 
 v1 Progress: [######################] 100% (22/22 plans)
 v2 Progress: [######################] 100% (6/6 plans)
 v3 Progress: [######################] 100% (35/35 plans)
+Phase 13: [########..............] 33% (1/3 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 35
+- Total plans completed: 36
 - Average duration: 6.1m
-- Total execution time: 3.73 hours
+- Total execution time: 3.85 hours
 
 **By Phase:**
 
@@ -46,6 +47,7 @@ v3 Progress: [######################] 100% (35/35 plans)
 | 10 | 1/1 | 8m | 8m |
 | 11 | 2/2 | 13m | 6.5m |
 | 12 | 2/2 | 13m | 6.5m |
+| 13 | 1/3 | 7m | 7m |
 
 ## Accumulated Context
 
@@ -87,6 +89,9 @@ All v1/v2 decisions logged in PROJECT.md Key Decisions table.
 | 12-02-D3 | compress() error guard checks content= to allow manual bypass | Fail early with descriptive message when config implies LLM |
 | 12-02-D4 | OrchestratorConfig extra fields via extra_llm_kwargs dict | Remaining resolved fields (top_p, seed, etc.) in one dict |
 | 12-02-D5 | stop_sequences tuple->list in resolved dict | LLM clients expect list, LLMConfig stores tuple |
+| 13-01-D1 | v2->v3 migration rewritten with raw SQL | ORM classes removed; raw SQL ensures migration chain works |
+| 13-01-D2 | Consumer imports updated to unblock import chain | tract.py/session.py/spawn.py use new repo type |
+| 13-01-D3 | OperationCommitRow 3-column composite PK | event_id + commit_hash + role allows same commit in multiple roles |
 
 ### Pending Todos
 
@@ -111,5 +116,5 @@ None active.
 ## Session Continuity
 
 Last session: 2026-02-20
-Stopped at: v3.0 milestone complete -- all phases shipped
+Stopped at: Completed 13-01-PLAN.md
 Resume file: None
