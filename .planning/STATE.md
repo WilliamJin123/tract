@@ -5,26 +5,26 @@
 See: .planning/PROJECT.md (updated 2026-02-19)
 
 **Core value:** Agents produce better outputs when their context is clean, coherent, and relevant. Trace makes context a managed, version-controlled resource.
-**Current focus:** v3.0 DX & API Overhaul -- Phase 11: Unified LLM Config & Query
+**Current focus:** v3.0 DX & API Overhaul -- Phase 11: Unified LLM Config & Query -- COMPLETE
 
 ## Current Position
 
 Milestone: v3.0 -- DX & API Overhaul
 Phase: 11 of 11 (Unified LLM Config & Query)
-Plan: 1 of 2
-Status: In progress
-Last activity: 2026-02-20 -- Completed 11-01-PLAN.md
+Plan: 2 of 2
+Status: Phase complete
+Last activity: 2026-02-20 -- Completed 11-02-PLAN.md
 
 v1 Progress: [######################] 100% (22/22 plans)
 v2 Progress: [######################] 100% (6/6 plans)
-v3 Progress: [##################----] 87.5% (3.5/4 phases)
+v3 Progress: [######################] 100% (4/4 phases)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 32
-- Average duration: 6.2m
-- Total execution time: 3.46 hours
+- Total plans completed: 33
+- Average duration: 6.1m
+- Total execution time: 3.51 hours
 
 **By Phase:**
 
@@ -44,7 +44,7 @@ v3 Progress: [##################----] 87.5% (3.5/4 phases)
 | 8 | 1/1 | 7m | 7m |
 | 9 | 1/1 | 5m | 5m |
 | 10 | 1/1 | 8m | 8m |
-| 11 | 1/2 | 10m | 10m |
+| 11 | 2/2 | 13m | 6.5m |
 
 ## Accumulated Context
 
@@ -73,6 +73,9 @@ All v1/v2 decisions logged in PROJECT.md Key Decisions table.
 | 11-01-D3 | Pydantic field_validator auto-coerces dict->LLMConfig on CommitInfo | Backward compatible with all existing code paths |
 | 11-01-D4 | extra uses MappingProxyType, unknown dict keys route to extra | Immutable escape hatch for provider-specific params |
 | 11-01-D5 | Commits without generation_config produce None in CompiledContext | Not empty LLMConfig(); None signals "not set" clearly |
+| 11-02-D1 | get_by_config delegates to get_by_config_multi | DRY: single implementation handles both single and multi-field queries |
+| 11-02-D2 | query_by_config uses isinstance dispatch (str vs LLMConfig) | Clean multi-dispatch without @overload, backward compatible |
+| 11-02-D3 | Empty LLMConfig returns [] | No fields to match on; returning all commits would be surprising |
 
 ### Pending Todos
 
@@ -81,6 +84,7 @@ All v1/v2 decisions logged in PROJECT.md Key Decisions table.
 ### Roadmap Evolution
 
 - Phase 11 added: Unified LLM Config & Query (replace LLMOperationConfig with LLMConfig, full hyperparameters, rich querying)
+- v3 milestone COMPLETE: All 12 DX requirements delivered across Phases 8-11
 
 ### Blockers/Concerns
 
@@ -89,5 +93,5 @@ None active.
 ## Session Continuity
 
 Last session: 2026-02-20
-Stopped at: Completed 11-01-PLAN.md
+Stopped at: Completed 11-02-PLAN.md (Phase 11 complete, v3 milestone complete)
 Resume file: None
