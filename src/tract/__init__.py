@@ -39,6 +39,7 @@ from tract.protocols import (
     CompiledContext,
     CompileSnapshot,
     TokenUsage,
+    ChatResponse,
 )
 
 # Branch model
@@ -154,6 +155,7 @@ __all__ = [
     "CompiledContext",
     "CompileSnapshot",
     "TokenUsage",
+    "ChatResponse",
     # Branch model
     "BranchInfo",
     # Merge models

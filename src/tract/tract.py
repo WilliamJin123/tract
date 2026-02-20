@@ -159,6 +159,8 @@ class Tract:
         self._orchestrator: Orchestrator | None = None  # type: ignore[assignment]
         self._trigger_commit_count: int = 0
         self._token_trigger_fired: bool = False
+        self._owns_llm_client: bool = False
+        self._default_model: str | None = None
 
     @classmethod
     def open(
@@ -170,6 +172,9 @@ class Tract:
         tokenizer: TokenCounter | None = None,
         compiler: ContextCompiler | None = None,
         verify_cache: bool = False,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
     ) -> Tract:
         """Open (or create) a Trace repository.
 
@@ -181,6 +186,12 @@ class Tract:
             compiler: Pluggable context compiler.  DefaultContextCompiler by default.
             verify_cache: If True, cross-check every cache hit against a
                 full recompile (oracle testing).  Default False.
+            api_key: If provided, auto-configures an OpenAI-compatible LLM
+                client.  Enables :meth:`chat` and :meth:`generate`.
+            model: Default model for LLM calls (default ``"gpt-4o-mini"``).
+                Only used when *api_key* is provided.
+            base_url: API base URL override for OpenAI-compatible APIs.
+                Only used when *api_key* is provided.
 
         Returns:
             A ready-to-use ``Tract`` instance.
@@ -288,6 +299,19 @@ class Tract:
                     policies.append(policy_cls.from_config(entry))
             if policies:
                 tract.configure_policies(policies=policies)
+
+        # Auto-configure LLM if api_key provided
+        if api_key is not None:
+            from tract.llm.client import OpenAIClient
+
+            client = OpenAIClient(
+                api_key=api_key,
+                base_url=base_url,
+                default_model=model or "gpt-4o-mini",
+            )
+            tract.configure_llm(client)
+            tract._owns_llm_client = True
+            tract._default_model = model
 
         return tract
 
@@ -2274,6 +2298,9 @@ class Tract:
         if self._closed:
             return
         self._closed = True
+        # Close internally-created LLM client (not externally-provided ones)
+        if self._owns_llm_client and hasattr(self, "_llm_client"):
+            self._llm_client.close()
         self._session.close()
         if self._engine is not None:
             self._engine.dispose()

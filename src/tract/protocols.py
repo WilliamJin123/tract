@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from tract.models.commit import CommitInfo
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,23 @@ class TokenUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class ChatResponse:
+    """Response from Tract.chat() or Tract.generate().
+
+    Attributes:
+        text: The assistant's response text.
+        usage: Token usage from the API, or None if not reported.
+        commit_info: CommitInfo for the assistant's commit.
+        generation_config: The generation config captured from the request/response.
+    """
+
+    text: str
+    usage: TokenUsage | None
+    commit_info: CommitInfo
+    generation_config: dict
 
 
 @runtime_checkable
