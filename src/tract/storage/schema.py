@@ -157,36 +157,45 @@ class CommitParentRow(Base):
     )
 
 
-class CompressionRow(Base):
-    """A compression record tracking a summarization operation.
+class OperationEventRow(Base):
+    """A unified operation event record.
 
-    Each compression takes N source commits and produces M summary commits.
-    The source and result associations are stored in separate tables.
+    Tracks any operation that transforms commits: compression, reorganization,
+    import, etc. Replaces the old CompressionRow with a more general schema.
     """
 
-    __tablename__ = "compressions"
+    __tablename__ = "operation_events"
 
-    compression_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     tract_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(
+        String(30), nullable=False
+    )  # "compress", "reorganize", "import"
     branch_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    original_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    compressed_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    target_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    original_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    compressed_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    params_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("ix_operation_events_tract_type", "tract_id", "event_type"),
+        Index("ix_operation_events_original_tokens", "original_tokens"),
+        Index("ix_operation_events_compressed_tokens", "compressed_tokens"),
+    )
 
 
-class CompressionSourceRow(Base):
-    """Association between a compression and its source commits.
+class OperationCommitRow(Base):
+    """Association between an operation event and its commits.
 
-    Position preserves the order of source commits in the original chain.
+    Each commit can be a "source" (input to the operation) or a "result"
+    (output of the operation). Position preserves ordering within each role.
     """
 
-    __tablename__ = "compression_sources"
+    __tablename__ = "operation_commits"
 
-    compression_id: Mapped[str] = mapped_column(
+    event_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("compressions.compression_id"),
+        ForeignKey("operation_events.event_id"),
         primary_key=True,
     )
     commit_hash: Mapped[str] = mapped_column(
@@ -194,20 +203,51 @@ class CompressionSourceRow(Base):
         ForeignKey("commits.commit_hash"),
         primary_key=True,
     )
+    role: Mapped[str] = mapped_column(
+        String(10), primary_key=True
+    )  # "source" or "result"
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
+    __table_args__ = (
+        Index("ix_operation_commits_event", "event_id"),
+        Index("ix_operation_commits_hash_role", "commit_hash", "role"),
+    )
 
-class CompressionResultRow(Base):
-    """Association between a compression and its result (summary) commits.
 
-    Position preserves the order of summary commits.
+class CompileRecordRow(Base):
+    """A record of a compile (context materialization) operation.
+
+    Captures the state of a compile: which head it was built from,
+    how many tokens/commits were included, and what parameters were used.
     """
 
-    __tablename__ = "compression_results"
+    __tablename__ = "compile_records"
 
-    compression_id: Mapped[str] = mapped_column(
+    record_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tract_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    commit_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    token_source: Mapped[str] = mapped_column(String(50), nullable=False)
+    params_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("ix_compile_records_tract_time", "tract_id", "created_at"),
+    )
+
+
+class CompileEffectiveRow(Base):
+    """Association between a compile record and the commits that were effective.
+
+    Position preserves the order of commits as they appeared in the compiled context.
+    """
+
+    __tablename__ = "compile_effectives"
+
+    record_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("compressions.compression_id"),
+        ForeignKey("compile_records.record_id"),
         primary_key=True,
     )
     commit_hash: Mapped[str] = mapped_column(

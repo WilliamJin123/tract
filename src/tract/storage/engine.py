@@ -70,16 +70,112 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
+def _migrate_compressions_v5_to_v6(engine: Engine) -> None:
+    """Migrate compression data from old tables to operation_events/operation_commits.
+
+    Reads all rows from compressions, compression_sources, compression_results
+    and inserts corresponding rows into operation_events and operation_commits.
+    Uses raw SQL to avoid dependency on removed ORM classes.
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        # Check if compressions table exists (might not if DB went v2->v3 path)
+        tables = [
+            r[0]
+            for r in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        ]
+        if "compressions" not in tables:
+            return
+
+        # Read all compression records
+        rows = conn.execute(text("SELECT * FROM compressions")).fetchall()
+        for row in rows:
+            compression_id = row[0]
+            tract_id = row[1]
+            branch_name = row[2]
+            created_at = row[3]
+            original_tokens = row[4]
+            compressed_tokens = row[5]
+            target_tokens = row[6] if len(row) > 6 else None
+            instructions = row[7] if len(row) > 7 else None
+
+            # Build params_json
+            import json
+
+            params = {}
+            if target_tokens is not None:
+                params["target_tokens"] = target_tokens
+            if instructions is not None:
+                params["instructions"] = instructions
+            params_json = json.dumps(params) if params else None
+
+            conn.execute(
+                text(
+                    "INSERT INTO operation_events "
+                    "(event_id, tract_id, event_type, branch_name, created_at, "
+                    "original_tokens, compressed_tokens, params_json) "
+                    "VALUES (:eid, :tid, 'compress', :bn, :ca, :ot, :ct, :pj)"
+                ),
+                {
+                    "eid": compression_id,
+                    "tid": tract_id,
+                    "bn": branch_name,
+                    "ca": created_at,
+                    "ot": original_tokens,
+                    "ct": compressed_tokens,
+                    "pj": params_json,
+                },
+            )
+
+        # Migrate compression_sources -> operation_commits (role="source")
+        if "compression_sources" in tables:
+            sources = conn.execute(
+                text("SELECT compression_id, commit_hash, position FROM compression_sources")
+            ).fetchall()
+            for src in sources:
+                conn.execute(
+                    text(
+                        "INSERT INTO operation_commits "
+                        "(event_id, commit_hash, role, position) "
+                        "VALUES (:eid, :ch, 'source', :pos)"
+                    ),
+                    {"eid": src[0], "ch": src[1], "pos": src[2]},
+                )
+
+        # Migrate compression_results -> operation_commits (role="result")
+        if "compression_results" in tables:
+            results = conn.execute(
+                text("SELECT compression_id, commit_hash, position FROM compression_results")
+            ).fetchall()
+            for res in results:
+                conn.execute(
+                    text(
+                        "INSERT INTO operation_commits "
+                        "(event_id, commit_hash, role, position) "
+                        "VALUES (:eid, :ch, 'result', :pos)"
+                    ),
+                    {"eid": res[0], "ch": res[1], "pos": res[2]},
+                )
+
+        conn.commit()
+
+
 def init_db(engine: Engine) -> None:
     """Initialize the database: create all tables and set schema version.
 
     Creates all tables defined in Base.metadata, then sets schema_version.
-    For new databases, schema_version is set to "5".
-    For existing v1 databases, migrates v1->v2->v3->v4->v5.
-    For existing v2 databases, migrates v2->v3->v4->v5.
-    For existing v3 databases, migrates v3->v4->v5.
-    For existing v4 databases, migrates v4->v5 (policy tables).
+    For new databases, schema_version is set to "6".
+    For existing v1 databases, migrates v1->v2->v3->v4->v5->v6.
+    For existing v2 databases, migrates v2->v3->v4->v5->v6.
+    For existing v3 databases, migrates v3->v4->v5->v6.
+    For existing v4 databases, migrates v4->v5->v6 (policy tables).
+    For existing v5 databases, migrates v5->v6 (unified operation events).
     """
+    from sqlalchemy import text
+
     Base.metadata.create_all(engine)
 
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
@@ -89,8 +185,8 @@ def init_db(engine: Engine) -> None:
         ).scalar_one_or_none()
 
         if existing is None:
-            # New database: set schema version to 5
-            session.add(TraceMetaRow(key="schema_version", value="5"))
+            # New database: set schema version to 6
+            session.add(TraceMetaRow(key="schema_version", value="6"))
             session.commit()
         elif existing.value == "1":
             # Migrate v1 -> v2: create commit_parents table
@@ -102,9 +198,42 @@ def init_db(engine: Engine) -> None:
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
         if existing is not None and existing.value == "2":
-            # Migrate v2 -> v3: create compression record tables
-            for table_name in ["compressions", "compression_sources", "compression_results"]:
-                Base.metadata.tables[table_name].create(engine, checkfirst=True)
+            # Migrate v2 -> v3: create compression record tables (raw SQL
+            # because the ORM classes were removed in v6)
+            with engine.connect() as conn:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS compressions (
+                        compression_id VARCHAR(64) PRIMARY KEY,
+                        tract_id VARCHAR(64) NOT NULL,
+                        branch_name VARCHAR(255),
+                        created_at DATETIME NOT NULL,
+                        original_tokens INTEGER NOT NULL DEFAULT 0,
+                        compressed_tokens INTEGER NOT NULL DEFAULT 0,
+                        target_tokens INTEGER,
+                        instructions TEXT
+                    )
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS compression_sources (
+                        compression_id VARCHAR(64) NOT NULL
+                            REFERENCES compressions(compression_id),
+                        commit_hash VARCHAR(64) NOT NULL
+                            REFERENCES commits(commit_hash),
+                        position INTEGER NOT NULL,
+                        PRIMARY KEY (compression_id, commit_hash)
+                    )
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS compression_results (
+                        compression_id VARCHAR(64) NOT NULL
+                            REFERENCES compressions(compression_id),
+                        commit_hash VARCHAR(64) NOT NULL
+                            REFERENCES commits(commit_hash),
+                        position INTEGER NOT NULL,
+                        PRIMARY KEY (compression_id, commit_hash)
+                    )
+                """))
+                conn.commit()
             existing.value = "3"
             session.commit()
         if existing is not None and existing.value == "3":
@@ -117,4 +246,24 @@ def init_db(engine: Engine) -> None:
             for table_name in ["policy_proposals", "policy_log"]:
                 Base.metadata.tables[table_name].create(engine, checkfirst=True)
             existing.value = "5"
+            session.commit()
+        if existing is not None and existing.value == "5":
+            # Migrate v5 -> v6: unified operation events + compile records
+            # Create new tables
+            for table_name in [
+                "operation_events",
+                "operation_commits",
+                "compile_records",
+                "compile_effectives",
+            ]:
+                Base.metadata.tables[table_name].create(engine, checkfirst=True)
+            # Migrate existing compression data to operation_events
+            _migrate_compressions_v5_to_v6(engine)
+            # Drop old compression tables (order matters: children first)
+            with engine.connect() as conn:
+                conn.execute(text("DROP TABLE IF EXISTS compression_results"))
+                conn.execute(text("DROP TABLE IF EXISTS compression_sources"))
+                conn.execute(text("DROP TABLE IF EXISTS compressions"))
+                conn.commit()
+            existing.value = "6"
             session.commit()

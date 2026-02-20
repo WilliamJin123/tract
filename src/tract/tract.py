@@ -39,7 +39,7 @@ from tract.storage.sqlite import (
     SqliteBlobRepository,
     SqliteCommitParentRepository,
     SqliteCommitRepository,
-    SqliteCompressionRepository,
+    SqliteOperationEventRepository,
     SqliteRefRepository,
     SqliteSpawnPointerRepository,
 )
@@ -126,7 +126,7 @@ class Tract:
         annotation_repo: SqliteAnnotationRepository,
         token_counter: TokenCounter,
         parent_repo: SqliteCommitParentRepository | None = None,
-        compression_repo: SqliteCompressionRepository | None = None,
+        compression_repo: SqliteOperationEventRepository | None = None,
         verify_cache: bool = False,
     ) -> None:
         self._engine = engine
@@ -268,7 +268,7 @@ class Tract:
         ref_repo = SqliteRefRepository(session)
         annotation_repo = SqliteAnnotationRepository(session)
         parent_repo = SqliteCommitParentRepository(session)
-        compression_repo = SqliteCompressionRepository(session)
+        compression_repo = SqliteOperationEventRepository(session)
 
         # Token counter
         token_counter = tokenizer or TiktokenCounter(

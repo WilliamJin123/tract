@@ -131,7 +131,7 @@ class Session:
             SqliteBlobRepository,
             SqliteCommitParentRepository,
             SqliteCommitRepository,
-            SqliteCompressionRepository,
+            SqliteOperationEventRepository,
             SqliteRefRepository,
         )
         from tract.tract import Tract
@@ -151,7 +151,7 @@ class Session:
         ref_repo = SqliteRefRepository(session)
         annotation_repo = SqliteAnnotationRepository(session)
         parent_repo = SqliteCommitParentRepository(session)
-        compression_repo = SqliteCompressionRepository(session)
+        compression_repo = SqliteOperationEventRepository(session)
 
         # Token counter
         token_counter = TiktokenCounter(
