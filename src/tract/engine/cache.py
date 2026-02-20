@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from tract.engine.compiler import DefaultContextCompiler
 from tract.models.annotations import Priority
+from tract.models.config import LLMConfig
 from tract.protocols import CompiledContext, CompileSnapshot, Message, TokenCounter
 
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ class CacheManager:
             token_count=snapshot.token_count,
             commit_count=snapshot.commit_count,
             token_source=snapshot.token_source,
-            generation_configs=[dict(c) for c in snapshot.generation_configs],
+            generation_configs=[LLMConfig.from_dict(c) if c else None for c in snapshot.generation_configs],
             commit_hashes=list(snapshot.commit_hashes),
         )
 
@@ -125,7 +126,7 @@ class CacheManager:
             commit_count=result.commit_count,
             token_count=token_count,
             token_source=result.token_source,
-            generation_configs=tuple(dict(c) for c in result.generation_configs),
+            generation_configs=tuple(c.to_dict() if c is not None else {} for c in result.generation_configs),
             commit_hashes=tuple(result.commit_hashes),
             message_token_counts=per_msg,
         )

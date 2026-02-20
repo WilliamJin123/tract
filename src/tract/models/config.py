@@ -2,13 +2,15 @@
 
 TractConfig holds per-tract settings.
 TokenBudgetConfig controls token budget enforcement behavior.
-LLMOperationConfig holds per-operation LLM defaults.
+LLMConfig holds fully-typed LLM configuration used everywhere:
+operation defaults, call-time overrides, and commit-level storage.
 """
 
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+import types
+from dataclasses import dataclass, fields as dc_fields
 from typing import Callable, Optional
 
 from pydantic import BaseModel
@@ -45,20 +47,89 @@ class TractConfig(BaseModel):
 
 
 @dataclass(frozen=True)
-class LLMOperationConfig:
-    """Per-operation LLM configuration defaults.
+class LLMConfig:
+    """Fully-typed LLM configuration.
 
-    None fields mean 'inherit from tract-level default'.
-    Use with Tract.configure_operations() to set different models
-    and parameters for each LLM-powered operation.
+    All fields are Optional -- None means 'not set / inherit from higher level.'
+    Used everywhere: operation defaults, call-time overrides, commit-level storage.
 
     Example::
 
-        from tract import LLMOperationConfig
-        config = LLMOperationConfig(model="gpt-4o", temperature=0.7)
+        from tract import LLMConfig
+        config = LLMConfig(model="gpt-4o", temperature=0.7)
     """
 
     model: str | None = None
     temperature: float | None = None
+    top_p: float | None = None
     max_tokens: int | None = None
-    extra_kwargs: dict | None = None
+    stop_sequences: tuple[str, ...] | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    top_k: int | None = None
+    seed: int | None = None
+    extra: dict | None = None
+
+    def __post_init__(self) -> None:
+        if self.extra is not None:
+            object.__setattr__(self, "extra", types.MappingProxyType(dict(self.extra)))
+        if self.stop_sequences is not None and not isinstance(self.stop_sequences, tuple):
+            object.__setattr__(self, "stop_sequences", tuple(self.stop_sequences))
+
+    def __hash__(self) -> int:
+        extra_hashable = tuple(sorted(self.extra.items())) if self.extra else ()
+        return hash((
+            self.model, self.temperature, self.top_p, self.max_tokens,
+            self.stop_sequences, self.frequency_penalty, self.presence_penalty,
+            self.top_k, self.seed, extra_hashable,
+        ))
+
+    @classmethod
+    def from_dict(cls, d: dict | None) -> LLMConfig | None:
+        """Create LLMConfig from a dict, routing unknown keys to extra.
+
+        Returns None if d is None.
+        """
+        if d is None:
+            return None
+        known = {f.name for f in dc_fields(cls)} - {"extra"}
+        known_kwargs: dict = {}
+        extra_kwargs: dict = {}
+        for k, v in d.items():
+            if k in known:
+                known_kwargs[k] = v
+            else:
+                extra_kwargs[k] = v
+        if "stop_sequences" in known_kwargs and isinstance(known_kwargs["stop_sequences"], list):
+            known_kwargs["stop_sequences"] = tuple(known_kwargs["stop_sequences"])
+        return cls(**known_kwargs, extra=extra_kwargs if extra_kwargs else None)
+
+    def to_dict(self) -> dict:
+        """Convert to a flat dict, merging extra keys at top level.
+
+        Only includes non-None fields. Tuples are converted to lists
+        for JSON compatibility.
+        """
+        result: dict = {}
+        for f in dc_fields(self):
+            if f.name == "extra":
+                continue
+            val = getattr(self, f.name)
+            if val is not None:
+                if isinstance(val, tuple):
+                    val = list(val)
+                result[f.name] = val
+        if self.extra:
+            result.update(dict(self.extra))
+        return result
+
+    def non_none_fields(self) -> dict:
+        """Return dict of only the named (non-extra) fields that are set."""
+        result: dict = {}
+        for f in dc_fields(self):
+            if f.name == "extra":
+                continue
+            val = getattr(self, f.name)
+            if val is not None:
+                result[f.name] = val
+        return result

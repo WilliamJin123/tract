@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from tract.models.annotations import DEFAULT_TYPE_PRIORITIES, Priority
+from tract.models.config import LLMConfig
 from tract.models.content import BUILTIN_TYPE_HINTS
 from tract.protocols import CompiledContext, Message
 
@@ -110,15 +111,15 @@ class DefaultContextCompiler:
         effective_commit_hashes = [c.commit_hash for c in effective_commits]
 
         # Step 4c: Collect generation configs for effective commits
-        generation_configs: list[dict] = []
+        generation_configs: list[LLMConfig | None] = []
         for c in effective_commits:
             # If this commit was edited, prefer the edit's config;
             # fall back to the original commit's config if the edit has none.
             edit_commit = edit_map.get(c.commit_hash)
             if edit_commit is not None and edit_commit.generation_config_json is not None:
-                config = edit_commit.generation_config_json
+                config = LLMConfig.from_dict(edit_commit.generation_config_json)
             else:
-                config = c.generation_config_json or {}
+                config = LLMConfig.from_dict(c.generation_config_json) if c.generation_config_json else None
             generation_configs.append(config)
 
         # Step 5-6: Map to messages

@@ -10,7 +10,9 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from tract.models.config import LLMConfig
 
 
 class CommitOperation(str, enum.Enum):
@@ -37,5 +39,15 @@ class CommitInfo(BaseModel):
     message: Optional[str] = None
     token_count: int
     metadata: Optional[dict] = None
-    generation_config: Optional[dict] = None
+    generation_config: Optional[LLMConfig] = None
     created_at: datetime
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    @field_validator("generation_config", mode="before")
+    @classmethod
+    def _coerce_generation_config(cls, v: object) -> object:
+        """Auto-coerce dict input to LLMConfig for backward compatibility."""
+        if isinstance(v, dict):
+            return LLMConfig.from_dict(v)
+        return v

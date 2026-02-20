@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from tract.models.config import LLMConfig
+
 if TYPE_CHECKING:
     from tract.models.commit import CommitInfo
 
@@ -37,7 +39,7 @@ class CompiledContext:
     token_count: int = 0
     commit_count: int = 0
     token_source: str = ""
-    generation_configs: list[dict] = field(default_factory=list)
+    generation_configs: list[LLMConfig | None] = field(default_factory=list)
     commit_hashes: list[str] = field(default_factory=list)
 
     def to_dicts(self) -> list[dict[str, str]]:
@@ -141,7 +143,7 @@ class ChatResponse:
     text: str
     usage: TokenUsage | None
     commit_info: CommitInfo
-    generation_config: dict
+    generation_config: LLMConfig
 
 
 @runtime_checkable

@@ -23,7 +23,7 @@ from tract.engine.compiler import DefaultContextCompiler
 from tract.engine.tokens import TiktokenCounter
 from tract.models.annotations import Priority, PriorityAnnotation
 from tract.models.commit import CommitInfo, CommitOperation
-from tract.models.config import LLMOperationConfig, TractConfig
+from tract.models.config import LLMConfig, TractConfig
 from tract.models.content import validate_content
 from tract.exceptions import (
     BranchNotFoundError,
@@ -161,7 +161,7 @@ class Tract:
         self._token_trigger_fired: bool = False
         self._owns_llm_client: bool = False
         self._default_model: str | None = None
-        self._operation_configs: dict[str, LLMOperationConfig] = {}
+        self._operation_configs: dict[str, LLMConfig] = {}
 
     @classmethod
     def open(
@@ -176,7 +176,7 @@ class Tract:
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        operation_configs: dict[str, LLMOperationConfig] | None = None,
+        operation_configs: dict[str, LLMConfig] | None = None,
     ) -> Tract:
         """Open (or create) a Trace repository.
 
@@ -195,7 +195,7 @@ class Tract:
             base_url: API base URL override for OpenAI-compatible APIs.
                 Only used when *api_key* is provided.
             operation_configs: Per-operation LLM configuration defaults.
-                Maps operation name to :class:`LLMOperationConfig`.
+                Maps operation name to :class:`LLMConfig`.
                 Valid keys: ``"chat"``, ``"merge"``, ``"compress"``,
                 ``"orchestrate"``.
 
@@ -678,9 +678,19 @@ class Tract:
         elif op_config is not None and op_config.max_tokens is not None:
             resolved["max_tokens"] = op_config.max_tokens
 
+        # New typed fields from LLMConfig: top_p, frequency_penalty, etc.
+        if op_config is not None:
+            for field_name in ("top_p", "frequency_penalty", "presence_penalty", "top_k", "seed", "stop_sequences"):
+                val = getattr(op_config, field_name, None)
+                if val is not None and field_name not in kwargs:
+                    if isinstance(val, tuple):
+                        resolved[field_name] = list(val)  # LLM clients expect list
+                    else:
+                        resolved[field_name] = val
+
         # Extra kwargs from operation config (call kwargs override)
-        if op_config is not None and op_config.extra_kwargs:
-            resolved.update(op_config.extra_kwargs)
+        if op_config is not None and op_config.extra:
+            resolved.update(dict(op_config.extra))
         resolved.update(kwargs)
 
         return resolved
@@ -792,7 +802,7 @@ class Tract:
             text=text,
             usage=usage,
             commit_info=commit_info,
-            generation_config=gen_config,
+            generation_config=LLMConfig.from_dict(gen_config) or LLMConfig(),
         )
 
     def chat(
@@ -1487,7 +1497,7 @@ class Tract:
         self._llm_client = client
         self._default_resolver = OpenAIResolver(client)
 
-    def configure_operations(self, **operation_configs: LLMOperationConfig) -> None:
+    def configure_operations(self, **operation_configs: LLMConfig) -> None:
         """Set per-operation LLM defaults.
 
         Each keyword argument maps an operation name to its config.
@@ -1502,27 +1512,27 @@ class Tract:
         highest priority.
 
         Args:
-            **operation_configs: Operation name -> LLMOperationConfig mappings.
+            **operation_configs: Operation name -> LLMConfig mappings.
 
         Example::
 
-            from tract import LLMOperationConfig
+            from tract import LLMConfig
             t.configure_operations(
-                chat=LLMOperationConfig(model="gpt-4o", temperature=0.7),
-                compress=LLMOperationConfig(model="gpt-3.5-turbo", temperature=0.0),
-                merge=LLMOperationConfig(model="gpt-4o", temperature=0.3),
+                chat=LLMConfig(model="gpt-4o", temperature=0.7),
+                compress=LLMConfig(model="gpt-3.5-turbo", temperature=0.0),
+                merge=LLMConfig(model="gpt-4o", temperature=0.3),
             )
         """
         for name, config in operation_configs.items():
-            if not isinstance(config, LLMOperationConfig):
+            if not isinstance(config, LLMConfig):
                 raise TypeError(
-                    f"Expected LLMOperationConfig for '{name}', "
+                    f"Expected LLMConfig for '{name}', "
                     f"got {type(config).__name__}"
                 )
             self._operation_configs[name] = config
 
     @property
-    def operation_configs(self) -> dict[str, LLMOperationConfig]:
+    def operation_configs(self) -> dict[str, LLMConfig]:
         """Current per-operation LLM configurations (read-only copy)."""
         return dict(self._operation_configs)
 
