@@ -4,7 +4,7 @@
 
 - v1.0 Core (Phases 1-5) -- shipped 2026-02-16
 - v2.0 Autonomy (Phases 6-7) -- shipped 2026-02-18
-- v3.0 DX & API Overhaul (Phases 8-13) -- in progress
+- v3.0 DX & API Overhaul (Phases 8-13) -- shipped 2026-02-20
 
 ## Phases
 
@@ -52,7 +52,7 @@
 </details>
 
 <details>
-<summary>v3.0 DX & API Overhaul (Phases 8-13)</summary>
+<summary>v3.0 DX & API Overhaul (Phases 8-13) -- SHIPPED 2026-02-20</summary>
 
 **Milestone Goal:** Rich functionality through minimal interfaces. Easy for the common case, configurable for every edge case. Cookbook-driven -- every API change must make a cookbook example simpler.
 
@@ -63,7 +63,7 @@
 - [x] **Phase 10: Per-Operation LLM Config** - Independent model/params per LLM-powered operation
 - [x] **Phase 11: Unified LLM Config & Query** - Replace LLMOperationConfig with fully-typed LLMConfig; upgrade query_by_config for multi-field, whole-config, and IN queries; update Tier 1 cookbook examples to use LLMConfig
 - [x] **Phase 12: LLMConfig Cleanup & Tightening** - Typed OperationConfigs, consolidated default config, call-level llm_config=, smart from_dict() aliases, full generation_config capture, orchestrator/compression fixes
-- [ ] **Phase 13: Unified Operation Events & Compile Records** - Replace per-operation tables with unified OperationEvent+OperationCommit model; add CompileRecord persistence; rewrite rebase as reorganize-with-receipts; dissolve cherry-pick; clean break from old schema
+- [x] **Phase 13: Unified Operation Events & Compile Records** - Replace per-operation tables with unified OperationEvent+OperationCommit model; add CompileRecord persistence; rewrite rebase as reorganize-with-receipts; dissolve cherry-pick; clean break from old schema
 
 </details>
 
@@ -161,12 +161,12 @@ Plans:
   6. OperationEventRow has indexed columns for original_tokens and compressed_tokens (not just params_json) for compression benchmarking
   7. GC respects OperationCommitRow FKs -- commits referenced as "source" in any event are not garbage collected
   8. No backward compatibility artifacts: no old table references, no migration shims, no compat layers, no renamed-but-unused code
-**Plans**: 3 plans
+**Plans**: 3/3 complete
 
 Plans:
-- [ ] 13-01-PLAN.md -- New schema tables (OperationEvent/OperationCommit/CompileRecord/CompileEffective), repository ABCs + SQLite impls, v5->v6 migration, rewritten storage tests
-- [ ] 13-02-PLAN.md -- Wire event_repo through compression/GC/rebase, dissolve cherry-pick into import_commit, remove old public API artifacts, update all operation tests
-- [ ] 13-03-PLAN.md -- Compile record persistence in generate(), compile record tests, full-suite regression sweep, SC-8 clean break verification
+- [x] 13-01-PLAN.md -- New schema tables (OperationEvent/OperationCommit/CompileRecord/CompileEffective), repository ABCs + SQLite impls, v5->v6 migration, rewritten storage tests
+- [x] 13-02-PLAN.md -- Wire event_repo through compression/GC/rebase, dissolve cherry-pick into import_commit, remove old public API artifacts, update all operation tests
+- [x] 13-03-PLAN.md -- Compile record persistence in generate(), compile record tests, full-suite regression sweep, SC-8 clean break verification
 
 ## Progress
 
@@ -191,4 +191,4 @@ Phases execute in numeric order: 8 -> 9 -> 10 -> 11 -> 12 -> 13 (plus any insert
 | 10. Per-Op LLM Config | v3.0 | 1/1 | Complete | 2026-02-20 |
 | 11. Unified LLM Config | v3.0 | 2/2 | Complete | 2026-02-20 |
 | 12. LLMConfig Cleanup | v3.0 | 2/2 | Complete | 2026-02-20 |
-| 13. Operation Events & Compile Records | v3.0 | 0/3 | Planned | - |
+| 13. Operation Events & Compile Records | v3.0 | 3/3 | Complete | 2026-02-20 |

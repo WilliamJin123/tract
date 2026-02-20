@@ -44,6 +44,15 @@
 - [x] **CLEAN-05**: _build_generation_config captures ALL resolved fields (top_p, seed, frequency_penalty, etc.)
 - [x] **CLEAN-06**: Compression gen_config threading, orchestrator full config forwarding, compress error guard
 
+### Provenance & Schema (PROV)
+
+- [x] **PROV-01**: Unified OperationEvent+OperationCommit 2-table model records compress, reorganize, and import operations
+- [x] **PROV-02**: CompileRecord+CompileEffective tables persist compiled context; chat()/generate() auto-create records
+- [x] **PROV-03**: Rebase creates "reorganize" events with source/result commit mappings
+- [x] **PROV-04**: Cherry-pick dissolved into import_commit with "import" event recording
+- [x] **PROV-05**: GC respects OperationCommitRow FKs — source commits protected from garbage collection
+- [x] **PROV-06**: Schema v5→v6 migration with compression data migration and old table removal
+
 ## Future Requirements
 
 - Cookbook-driven: additional requirements will be added as cookbook examples are rewritten against the new API
@@ -55,7 +64,6 @@
 | Feature | Reason |
 |---------|--------|
 | Async API | IO-bound but sync is simpler; async can be added in v4 |
-| Breaking storage schema | v3 is API-layer only; schema stays at v5 |
 | Removing existing low-level methods | Backward compat — commit(), compile(), etc. stay; they get smarter |
 | GUI/visualization | Deferred from v2, still deferred |
 
@@ -86,11 +94,18 @@
 | CLEAN-05 | Phase 12 | Complete |
 | CLEAN-06 | Phase 12 | Complete |
 
+| PROV-01 | Phase 13 | Complete |
+| PROV-02 | Phase 13 | Complete |
+| PROV-03 | Phase 13 | Complete |
+| PROV-04 | Phase 13 | Complete |
+| PROV-05 | Phase 13 | Complete |
+| PROV-06 | Phase 13 | Complete |
+
 **Coverage:**
-- v3 requirements: 21 total
-- Mapped to phases: 21
+- v3 requirements: 27 total
+- Mapped to phases: 27
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-19*
-*Last updated: 2026-02-20 after Phase 12 completion*
+*Last updated: 2026-02-20 after Phase 13 completion*
