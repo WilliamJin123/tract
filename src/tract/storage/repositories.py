@@ -88,6 +88,24 @@ class CommitRepository(ABC):
         ...
 
     @abstractmethod
+    def get_by_config_multi(
+        self, tract_id: str, conditions: list[tuple[str, str, object]]
+    ) -> Sequence[CommitRow]:
+        """Get commits matching multiple generation config conditions (AND semantics).
+
+        Args:
+            tract_id: Tract identifier to scope the query.
+            conditions: List of (json_path, operator, value) tuples.
+                Operators: "=", "!=", ">", "<", ">=", "<=", "in".
+                The "in" operator expects value to be a list/tuple.
+            All conditions are combined with AND.
+
+        Returns:
+            Matching commits ordered by created_at ascending.
+        """
+        ...
+
+    @abstractmethod
     def get_by_prefix(self, prefix: str, tract_id: str | None = None) -> CommitRow | None:
         """Find commit by hash prefix (min 4 chars).
 

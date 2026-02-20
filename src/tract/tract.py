@@ -1267,28 +1267,74 @@ class Tract:
 
     def query_by_config(
         self,
-        field: str,
-        operator: str,
-        value: object,
+        field_or_config: str | LLMConfig | None = None,
+        operator: str | None = None,
+        value: object = None,
+        *,
+        conditions: list[tuple[str, str, object]] | None = None,
     ) -> list[CommitInfo]:
         """Query commits by generation config values.
 
-        Uses SQL-side json_extract() for efficient filtering.
+        Supports three calling patterns:
+
+        1. **Single field** (backward compatible)::
+
+            t.query_by_config("model", "=", "gpt-4o")
+            t.query_by_config("temperature", ">", 0.5)
+
+        2. **Multi-field AND** (new)::
+
+            t.query_by_config(conditions=[
+                ("model", "=", "gpt-4o"),
+                ("temperature", ">", 0.5),
+            ])
+
+        3. **Whole-config match** (new)::
+
+            t.query_by_config(LLMConfig(model="gpt-4o", temperature=0.7))
+            # Finds commits matching ALL non-None fields with "=" semantics
+
+        The IN operator is supported for set membership::
+
+            t.query_by_config(conditions=[("model", "in", ["gpt-4o", "gpt-4o-mini"])])
 
         Args:
-            field: JSON field name in the generation config
-                (e.g., ``"temperature"``, ``"model"``).
-            operator: Comparison operator
-                (``"="``, ``"!="``, ``">"``, ``"<"``, ``">="``, ``"<="``).
-            value: Value to compare against.
+            field_or_config: A field name (str) for single-field query, or
+                an LLMConfig object for whole-config matching.
+            operator: Comparison operator (single-field mode only).
+            value: Value to compare against (single-field mode only).
+            conditions: List of (field, operator, value) tuples for
+                multi-field AND queries.
 
         Returns:
-            List of :class:`CommitInfo` matching the condition,
+            List of :class:`CommitInfo` matching the condition(s),
             ordered by created_at.
         """
-        rows = self._commit_repo.get_by_config(
-            self._tract_id, field, operator, value
-        )
+        if isinstance(field_or_config, LLMConfig):
+            # Whole-config match: convert non-None fields to AND conditions
+            conds: list[tuple[str, str, object]] = []
+            for k, v in field_or_config.non_none_fields().items():
+                if isinstance(v, tuple):
+                    v = list(v)  # SQLite expects list for JSON arrays
+                conds.append((k, "=", v))
+            if not conds:
+                return []
+            rows = self._commit_repo.get_by_config_multi(self._tract_id, conds)
+        elif conditions is not None:
+            # Multi-field AND
+            rows = self._commit_repo.get_by_config_multi(self._tract_id, conditions)
+        elif isinstance(field_or_config, str) and operator is not None:
+            # Single-field (backward compatible)
+            rows = self._commit_repo.get_by_config_multi(
+                self._tract_id, [(field_or_config, operator, value)]
+            )
+        else:
+            raise TypeError(
+                "query_by_config requires either: "
+                "(field, operator, value), "
+                "conditions=[...], "
+                "or an LLMConfig object"
+            )
         return [self._commit_engine._row_to_info(row) for row in rows]
 
     def resolve_commit(self, ref_or_prefix: str) -> str:

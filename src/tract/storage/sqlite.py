@@ -179,9 +179,12 @@ class SqliteCommitRepository(CommitRepository):
     def get_by_config(
         self, tract_id: str, json_path: str, operator: str, value: object
     ) -> Sequence[CommitRow]:
-        extracted = func.json_extract(
-            CommitRow.generation_config_json, f'$.{json_path}'
-        )
+        return self.get_by_config_multi(tract_id, [(json_path, operator, value)])
+
+    def get_by_config_multi(
+        self, tract_id: str, conditions: list[tuple[str, str, object]]
+    ) -> Sequence[CommitRow]:
+        where_clauses = [CommitRow.tract_id == tract_id]
         ops = {
             "=": lambda e, v: e == v,
             "!=": lambda e, v: e != v,
@@ -189,13 +192,21 @@ class SqliteCommitRepository(CommitRepository):
             "<": lambda e, v: e < v,
             ">=": lambda e, v: e >= v,
             "<=": lambda e, v: e <= v,
+            "in": lambda e, v: e.in_(v),
         }
-        if operator not in ops:
-            raise ValueError(f"Unsupported operator: {operator}. Use one of: {list(ops.keys())}")
-        condition = ops[operator](extracted, value)
+        for json_path, operator, value in conditions:
+            if operator not in ops:
+                raise ValueError(
+                    f"Unsupported operator: {operator}. "
+                    f"Use one of: {list(ops.keys())}"
+                )
+            extracted = func.json_extract(
+                CommitRow.generation_config_json, f'$.{json_path}'
+            )
+            where_clauses.append(ops[operator](extracted, value))
         stmt = (
             select(CommitRow)
-            .where(CommitRow.tract_id == tract_id, condition)
+            .where(and_(*where_clauses))
             .order_by(CommitRow.created_at)
         )
         return list(self._session.execute(stmt).scalars().all())
