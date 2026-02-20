@@ -12,26 +12,51 @@ from sqlalchemy.orm import Session, sessionmaker
 from tract.storage.schema import Base, TraceMetaRow
 
 
-def create_trace_engine(db_path: str = ":memory:") -> Engine:
-    """Create a SQLAlchemy engine with SQLite optimizations.
+def create_trace_engine(
+    db_path: str = ":memory:",
+    *,
+    url: str | None = None,
+) -> Engine:
+    """Create a SQLAlchemy engine for Trace storage.
+
+    Supports three modes:
+
+    1. **SQLite shorthand** (default): pass a file path or ``":memory:"``.
+    2. **Full URL**: pass any SQLAlchemy connection URL via *url=*.
+    3. **Pre-built engine**: callers who need full control can create
+       their own ``Engine`` and pass it directly to :meth:`Tract.open`.
+
+    SQLite performance pragmas (WAL, busy_timeout, foreign keys) are
+    applied automatically when the engine dialect is SQLite.
 
     Args:
-        db_path: Path to SQLite database file, or ":memory:" for in-memory.
+        db_path: Path to SQLite database file, or ``":memory:"`` for
+            in-memory.  Ignored when *url* is provided.
+        url: Full SQLAlchemy database URL, e.g.
+            ``"postgresql://user:pass@host/db"`` or
+            ``"sqlite:///path/to/file.db"``.
 
     Returns:
         Configured SQLAlchemy Engine.
     """
-    url = "sqlite://" if db_path == ":memory:" else f"sqlite:///{db_path}"
-    engine = create_engine(url, echo=False)
+    if url is not None:
+        engine = create_engine(url, echo=False)
+    elif db_path == ":memory:":
+        engine = create_engine("sqlite://", echo=False)
+    else:
+        engine = create_engine(f"sqlite:///{db_path}", echo=False)
 
-    @event.listens_for(engine, "connect")
-    def set_sqlite_pragma(dbapi_conn, connection_record):  # type: ignore[no-untyped-def]
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+    # Only apply SQLite pragmas when the backend is SQLite
+    if engine.dialect.name == "sqlite":
+
+        @event.listens_for(engine, "connect")
+        def set_sqlite_pragma(dbapi_conn, connection_record):  # type: ignore[no-untyped-def]
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
 
     return engine
 

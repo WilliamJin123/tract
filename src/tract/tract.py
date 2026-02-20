@@ -168,6 +168,8 @@ class Tract:
         cls,
         path: str = ":memory:",
         *,
+        url: str | None = None,
+        engine: Engine | None = None,
         tract_id: str | None = None,
         config: TractConfig | None = None,
         tokenizer: TokenCounter | None = None,
@@ -183,8 +185,24 @@ class Tract:
     ) -> Tract:
         """Open (or create) a Trace repository.
 
+        Supports three database modes:
+
+        1. **SQLite shorthand** (default): ``Tract.open(":memory:")`` or
+           ``Tract.open("/path/to/file.db")``.
+        2. **Full URL**: ``Tract.open(url="postgresql://user:pass@host/db")``
+           for any SQLAlchemy-supported backend.
+        3. **Pre-built engine**: ``Tract.open(engine=my_engine)`` for full
+           control over connection pooling, echo, etc.
+
         Args:
             path: SQLite path.  ``":memory:"`` for in-memory (default).
+                Ignored when *url* or *engine* is provided.
+            url: Full SQLAlchemy database URL.  Use this for non-SQLite
+                backends (PostgreSQL, MySQL, etc.) or for explicit SQLite
+                URLs like ``"sqlite:///path/to/file.db"``.
+            engine: A pre-built SQLAlchemy ``Engine``.  When provided,
+                Tract skips engine creation entirely and uses this engine
+                directly.  The caller owns the engine lifecycle.
             tract_id: Unique tract identifier.  Generated if not provided.
             config: Tract configuration.  Defaults created if *None*.
             tokenizer: Pluggable token counter.  TiktokenCounter by default.
@@ -212,17 +230,34 @@ class Tract:
             A ready-to-use ``Tract`` instance.
 
         Raises:
-            ValueError: If both *model=* and *default_config=* are provided,
-                or if both *api_key* and *llm_client* are provided.
+            ValueError: If mutually exclusive params are combined
+                (e.g. *url* + *engine*, *model* + *default_config*).
         """
+        # Validate mutual exclusivity of database params
+        _has_path = path != ":memory:"
+        _has_url = url is not None
+        _has_engine = engine is not None
+        if sum([_has_path, _has_url, _has_engine]) > 1:
+            raise ValueError(
+                "Specify at most one of: path= (SQLite shorthand), "
+                "url= (full SQLAlchemy URL), or engine= (pre-built engine)."
+            )
+
         if tract_id is None:
             tract_id = uuid.uuid4().hex
 
         if config is None:
-            config = TractConfig(db_path=path)
+            if url is not None:
+                config = TractConfig(db_url=url)
+            else:
+                config = TractConfig(db_path=path)
 
         # Engine / session
-        engine = create_trace_engine(path)
+        if engine is None:
+            if url is not None:
+                engine = create_trace_engine(url=url)
+            else:
+                engine = create_trace_engine(path)
         init_db(engine)
         session_factory = create_session_factory(engine)
         session = session_factory()

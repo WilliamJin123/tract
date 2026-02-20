@@ -200,9 +200,19 @@ class SqliteCommitRepository(CommitRepository):
                     f"Unsupported operator: {operator}. "
                     f"Use one of: {list(ops.keys())}"
                 )
-            extracted = func.json_extract(
-                CommitRow.generation_config_json, f'$.{json_path}'
-            )
+            extracted = CommitRow.generation_config_json[json_path]
+            # Cast to the appropriate scalar type for cross-dialect comparison.
+            # Without this, the JSON-typed result causes type mismatches on
+            # some backends (e.g. SQLite wraps bind values in JSON()).
+            _sample = value[0] if isinstance(value, (list, tuple)) and value else value
+            if isinstance(_sample, bool):
+                extracted = extracted.as_boolean()
+            elif isinstance(_sample, int):
+                extracted = extracted.as_integer()
+            elif isinstance(_sample, float):
+                extracted = extracted.as_float()
+            elif isinstance(_sample, str):
+                extracted = extracted.as_string()
             where_clauses.append(ops[operator](extracted, value))
         stmt = (
             select(CommitRow)

@@ -53,6 +53,7 @@ class TractConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     db_path: str = ":memory:"
+    db_url: Optional[str] = None
     tokenizer_encoding: str = "o200k_base"
     token_budget: Optional[TokenBudgetConfig] = None
     default_branch: str = "main"
