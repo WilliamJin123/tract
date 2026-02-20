@@ -39,6 +39,7 @@ from tract.storage.sqlite import (
     SqliteBlobRepository,
     SqliteCommitParentRepository,
     SqliteCommitRepository,
+    SqliteCompileRecordRepository,
     SqliteOperationEventRepository,
     SqliteRefRepository,
     SqliteSpawnPointerRepository,
@@ -127,6 +128,7 @@ class Tract:
         token_counter: TokenCounter,
         parent_repo: SqliteCommitParentRepository | None = None,
         event_repo: SqliteOperationEventRepository | None = None,
+        compile_record_repo: SqliteCompileRecordRepository | None = None,
         verify_cache: bool = False,
     ) -> None:
         self._engine = engine
@@ -142,6 +144,7 @@ class Tract:
         self._token_counter = token_counter
         self._parent_repo = parent_repo
         self._event_repo = event_repo
+        self._compile_record_repo = compile_record_repo
         self._spawn_repo: SqliteSpawnPointerRepository | None = None
         self._custom_type_registry: dict[str, type[BaseModel]] = {}
         self._cache = CacheManager(
@@ -269,6 +272,7 @@ class Tract:
         annotation_repo = SqliteAnnotationRepository(session)
         parent_repo = SqliteCommitParentRepository(session)
         event_repo = SqliteOperationEventRepository(session)
+        compile_record_repo = SqliteCompileRecordRepository(session)
 
         # Token counter
         token_counter = tokenizer or TiktokenCounter(
@@ -323,6 +327,7 @@ class Tract:
             token_counter=token_counter,
             parent_repo=parent_repo,
             event_repo=event_repo,
+            compile_record_repo=compile_record_repo,
             verify_cache=verify_cache,
         )
         tract._spawn_repo = spawn_repo
@@ -418,6 +423,7 @@ class Tract:
         verify_cache: bool = False,
         llm_client: object | None = None,
         event_repo: SqliteOperationEventRepository | None = None,
+        compile_record_repo: SqliteCompileRecordRepository | None = None,
     ) -> Tract:
         """Create a ``Tract`` from pre-built components.
 
@@ -425,6 +431,7 @@ class Tract:
 
         Args:
             llm_client: Optional custom LLM client.  Caller owns lifecycle.
+            compile_record_repo: Optional compile record repository.
         """
         if config is None:
             config = TractConfig()
@@ -453,6 +460,7 @@ class Tract:
             token_counter=token_counter,
             verify_cache=verify_cache,
             event_repo=event_repo,
+            compile_record_repo=compile_record_repo,
         )
         if llm_client is not None:
             tract.configure_llm(llm_client)
@@ -901,6 +909,28 @@ class Tract:
         compiled = self.compile()
         messages = compiled.to_dicts()
 
+        # 1b. Persist compile record (SC-3: chat/generate auto-create)
+        if self._compile_record_repo is not None:
+            import uuid as _uuid
+            from datetime import datetime as _dt, timezone as _tz
+
+            record_id = _uuid.uuid4().hex
+            current_head = self.head
+            self._compile_record_repo.save_record(
+                record_id=record_id,
+                tract_id=self._tract_id,
+                head_hash=current_head or "",
+                token_count=compiled.token_count,
+                commit_count=compiled.commit_count,
+                token_source=compiled.token_source,
+                params_json=None,  # No compile params for standard calls
+                created_at=_dt.now(_tz.utc),
+            )
+            for pos, commit_hash in enumerate(compiled.commit_hashes):
+                self._compile_record_repo.add_effective(
+                    record_id, commit_hash, pos
+                )
+
         # 2. Call LLM (resolve per-operation config)
         llm_kwargs = self._resolve_llm_config(
             "chat", model=model, temperature=temperature,
@@ -981,6 +1011,32 @@ class Tract:
             max_tokens=max_tokens,
             llm_config=llm_config,
         )
+
+    # ------------------------------------------------------------------
+    # Compile record accessors
+    # ------------------------------------------------------------------
+
+    def compile_records(self, limit: int = 100) -> list:
+        """Get compile records for this tract, newest first.
+
+        Returns list of CompileRecordRow objects, or empty list if
+        compile record repository is not available.
+        """
+        if self._compile_record_repo is None:
+            return []
+        records = self._compile_record_repo.get_all(self._tract_id)
+        return list(reversed(records))[:limit]  # newest first
+
+    def compile_record_commits(self, record_id: str) -> list[str]:
+        """Get the ordered commit hashes for a compile record.
+
+        Returns list of commit hashes in compilation order, or empty list
+        if record not found or compile record repository not available.
+        """
+        if self._compile_record_repo is None:
+            return []
+        effectives = self._compile_record_repo.get_effectives(record_id)
+        return [e.commit_hash for e in effectives]
 
     def compile(
         self,
