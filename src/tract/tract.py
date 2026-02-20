@@ -23,7 +23,7 @@ from tract.engine.compiler import DefaultContextCompiler
 from tract.engine.tokens import TiktokenCounter
 from tract.models.annotations import Priority, PriorityAnnotation
 from tract.models.commit import CommitInfo, CommitOperation
-from tract.models.config import TractConfig
+from tract.models.config import LLMOperationConfig, TractConfig
 from tract.models.content import validate_content
 from tract.exceptions import (
     BranchNotFoundError,
@@ -161,6 +161,7 @@ class Tract:
         self._token_trigger_fired: bool = False
         self._owns_llm_client: bool = False
         self._default_model: str | None = None
+        self._operation_configs: dict[str, LLMOperationConfig] = {}
 
     @classmethod
     def open(
@@ -175,6 +176,7 @@ class Tract:
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
+        operation_configs: dict[str, LLMOperationConfig] | None = None,
     ) -> Tract:
         """Open (or create) a Trace repository.
 
@@ -192,6 +194,10 @@ class Tract:
                 Only used when *api_key* is provided.
             base_url: API base URL override for OpenAI-compatible APIs.
                 Only used when *api_key* is provided.
+            operation_configs: Per-operation LLM configuration defaults.
+                Maps operation name to :class:`LLMOperationConfig`.
+                Valid keys: ``"chat"``, ``"merge"``, ``"compress"``,
+                ``"orchestrate"``.
 
         Returns:
             A ready-to-use ``Tract`` instance.
@@ -312,6 +318,10 @@ class Tract:
             tract.configure_llm(client)
             tract._owns_llm_client = True
             tract._default_model = model
+
+        # Apply per-operation configs if provided
+        if operation_configs is not None:
+            tract.configure_operations(**operation_configs)
 
         return tract
 
@@ -619,6 +629,61 @@ class Tract:
     # ------------------------------------------------------------------
     # Conversation layer (chat/generate)
     # ------------------------------------------------------------------
+
+    def _resolve_llm_config(
+        self,
+        operation: str,
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        **kwargs: object,
+    ) -> dict:
+        """Resolve effective LLM config: call-level > operation-level > tract-level.
+
+        Returns a dict of kwargs to pass to llm_client.chat(). Only includes
+        keys that have a non-None value at some level in the chain.
+
+        Args:
+            operation: Operation name ("chat", "merge", "compress", "orchestrate").
+            model: Call-level model override.
+            temperature: Call-level temperature override.
+            max_tokens: Call-level max_tokens override.
+            **kwargs: Additional call-level kwargs (highest priority).
+
+        Returns:
+            Dict of resolved kwargs for llm_client.chat().
+        """
+        op_config = self._operation_configs.get(operation)
+
+        resolved: dict = {}
+
+        # Model: call > operation > tract default
+        if model is not None:
+            resolved["model"] = model
+        elif op_config is not None and op_config.model is not None:
+            resolved["model"] = op_config.model
+        elif self._default_model is not None:
+            resolved["model"] = self._default_model
+
+        # Temperature: call > operation
+        if temperature is not None:
+            resolved["temperature"] = temperature
+        elif op_config is not None and op_config.temperature is not None:
+            resolved["temperature"] = op_config.temperature
+
+        # Max tokens: call > operation
+        if max_tokens is not None:
+            resolved["max_tokens"] = max_tokens
+        elif op_config is not None and op_config.max_tokens is not None:
+            resolved["max_tokens"] = op_config.max_tokens
+
+        # Extra kwargs from operation config (call kwargs override)
+        if op_config is not None and op_config.extra_kwargs:
+            resolved.update(op_config.extra_kwargs)
+        resolved.update(kwargs)
+
+        return resolved
 
     def _build_generation_config(
         self,
@@ -1423,6 +1488,45 @@ class Tract:
 
         self._llm_client = client
         self._default_resolver = OpenAIResolver(client)
+
+    def configure_operations(self, **operation_configs: LLMOperationConfig) -> None:
+        """Set per-operation LLM defaults.
+
+        Each keyword argument maps an operation name to its config.
+        Valid operation names: ``"chat"``, ``"merge"``, ``"compress"``,
+        ``"orchestrate"``.
+
+        Note: ``"auto_message"`` is NOT a valid operation name --
+        ``_auto_message()`` is a pure-string function that truncates text
+        without any LLM call.
+
+        Call-level overrides (e.g., ``model=`` on ``chat()``) still take
+        highest priority.
+
+        Args:
+            **operation_configs: Operation name -> LLMOperationConfig mappings.
+
+        Example::
+
+            from tract import LLMOperationConfig
+            t.configure_operations(
+                chat=LLMOperationConfig(model="gpt-4o", temperature=0.7),
+                compress=LLMOperationConfig(model="gpt-3.5-turbo", temperature=0.0),
+                merge=LLMOperationConfig(model="gpt-4o", temperature=0.3),
+            )
+        """
+        for name, config in operation_configs.items():
+            if not isinstance(config, LLMOperationConfig):
+                raise TypeError(
+                    f"Expected LLMOperationConfig for '{name}', "
+                    f"got {type(config).__name__}"
+                )
+            self._operation_configs[name] = config
+
+    @property
+    def operation_configs(self) -> dict[str, LLMOperationConfig]:
+        """Current per-operation LLM configurations (read-only copy)."""
+        return dict(self._operation_configs)
 
     def merge(
         self,
