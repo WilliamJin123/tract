@@ -1,52 +1,28 @@
-"""Tier 1.3 — Atomic Multi-Turn Exchange
+"""Atomic Multi-Turn Exchange
 
 A RAG pipeline that retrieves context, asks the LLM a question, and gets a
-response. All three commits (retrieval, user query, assistant response) land
-atomically via batch() — either all succeed or none do.
+response. The retrieval context and user question are committed atomically
+via batch() — either both land or neither does. Then generate() handles the
+LLM call and assistant commit separately.
 
-Also demonstrates generation_config tracking: the exact model and temperature
-that produced each response are stored with the commit.
+Also demonstrates auto-captured generation_config: the exact model and
+temperature that produced each response are stored with the commit
+automatically — no manual tracking required.
 
-Demonstrates: batch(), generation_config, compile(), log()
+Demonstrates: batch(), generate(), auto generation_config, query_by_config()
 """
 
 import os
 
-import httpx
 from dotenv import load_dotenv
 
-from tract import (
-    DialogueContent,
-    FreeformContent,
-    InstructionContent,
-    Tract,
-)
+from tract import FreeformContent, Tract
 
 load_dotenv()
 
 CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
 CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 CEREBRAS_MODEL = "gpt-oss-120b"
-TEMPERATURE = 0.3
-
-
-def call_llm(messages: list[dict]) -> dict:
-    """Call Cerebras and return the full response."""
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post(
-            f"{CEREBRAS_BASE_URL}/chat/completions",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {CEREBRAS_API_KEY}",
-            },
-            json={
-                "model": CEREBRAS_MODEL,
-                "messages": messages,
-                "temperature": TEMPERATURE,
-            },
-        )
-        response.raise_for_status()
-        return response.json()
 
 
 def fake_retrieval(query: str) -> str:
@@ -62,93 +38,48 @@ def fake_retrieval(query: str) -> str:
 
 
 def main():
-    with Tract.open() as t:
-        # System prompt (outside the batch — it's a one-time setup)
-        t.commit(
-            InstructionContent(
-                text="You are a Python expert. Answer based on the provided context. "
-                     "Cite specific features when possible."
-            ),
-            message="system prompt",
+    with Tract.open(
+        api_key=CEREBRAS_API_KEY,
+        base_url=CEREBRAS_BASE_URL,
+        model=CEREBRAS_MODEL,
+    ) as t:
+        # System prompt
+        t.system(
+            "You are a Python expert. Answer based on the provided context. "
+            "Cite specific features when possible."
         )
 
-        # --- Batch 1: RAG retrieval + question + answer ---
+        # --- Batch 1: RAG retrieval + question (atomic), then LLM call ---
         print("=== Batch 1: RAG-augmented Q&A ===\n")
 
         query = "What performance improvements came in Python 3.12?"
         retrieved_context = fake_retrieval(query)
 
-        # Compile context BEFORE the batch to get the messages for the LLM call
-        # (the batch hasn't started yet, so we include the system prompt)
-        pre_batch_compiled = t.compile()
-
+        # Batch the context setup: retrieval + user question land atomically
         with t.batch():
-            # Commit the retrieved context as freeform content
             t.commit(
                 FreeformContent(payload={"source": "vector_db", "text": retrieved_context}),
                 message="RAG retrieval: python 3.12 perf",
             )
+            t.user(query)
 
-            # Commit the user question
-            user_commit = t.commit(
-                DialogueContent(role="user", text=query),
-                message="user asks about 3.12 perf",
-            )
+        # generate() compiles all context, calls the LLM, commits the response,
+        # and auto-captures generation_config (model, temperature, etc.)
+        response = t.generate(temperature=0.3)
 
-            # Build messages for the LLM call (system prompt + retrieval + question)
-            messages = [{"role": m.role, "content": m.content} for m in pre_batch_compiled.messages]
-            messages.append({"role": "assistant", "content": retrieved_context})
-            messages.append({"role": "user", "content": query})
+        print(f"Assistant: {response.text[:200]}...")
+        print(f"Config captured: {response.generation_config}\n")
 
-            # Call the LLM
-            response = call_llm(messages)
-            assistant_text = response["choices"][0]["message"]["content"]
-
-            # Commit the response WITH generation_config so we know exactly
-            # what model/temperature produced it
-            t.commit(
-                DialogueContent(role="assistant", text=assistant_text),
-                message="assistant answers re: 3.12 perf",
-                generation_config={
-                    "model": CEREBRAS_MODEL,
-                    "temperature": TEMPERATURE,
-                    "provider": "cerebras",
-                },
-            )
-
-        # The batch committed atomically — all 3 or nothing
-        print(f"Assistant: {assistant_text[:200]}...\n")
-
-        # --- Batch 2: A follow-up exchange ---
+        # --- Batch 2: Follow-up exchange ---
         print("=== Batch 2: Follow-up ===\n")
 
         follow_up = "Which of those changes has the biggest real-world impact?"
 
-        # Compile now includes everything from batch 1
-        compiled = t.compile()
-        messages = [{"role": m.role, "content": m.content} for m in compiled.messages]
-        messages.append({"role": "user", "content": follow_up})
+        # For simple exchanges, user() + generate() works without batch
+        t.user(follow_up)
+        response = t.generate(temperature=0.3)
 
-        with t.batch():
-            t.commit(
-                DialogueContent(role="user", text=follow_up),
-                message="user asks about biggest impact",
-            )
-
-            response = call_llm(messages)
-            assistant_text = response["choices"][0]["message"]["content"]
-
-            t.commit(
-                DialogueContent(role="assistant", text=assistant_text),
-                message="assistant explains biggest impact",
-                generation_config={
-                    "model": CEREBRAS_MODEL,
-                    "temperature": TEMPERATURE,
-                    "provider": "cerebras",
-                },
-            )
-
-        print(f"Assistant: {assistant_text[:200]}...\n")
+        print(f"Assistant: {response.text[:200]}...\n")
 
         # --- Inspect the full history ---
         print("=== Full History ===\n")
@@ -165,9 +96,9 @@ def main():
             )
 
         # --- Query by generation config ---
-        print("\n=== Commits produced by Cerebras ===\n")
-        cerebras_commits = t.query_by_config("provider", "=", "cerebras")
-        for entry in cerebras_commits:
+        print(f"\n=== Commits using model {CEREBRAS_MODEL} ===\n")
+        model_commits = t.query_by_config("model", "=", CEREBRAS_MODEL)
+        for entry in model_commits:
             print(f"  {entry.commit_hash[:8]} | {entry.message} | model={entry.generation_config.get('model')}")
 
         # Final status
