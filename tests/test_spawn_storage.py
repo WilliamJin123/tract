@@ -88,18 +88,22 @@ class TestSpawnPointerSchema:
         table_names = set(inspector.get_table_names())
         assert "spawn_pointers" in table_names
 
-    def test_migration_v3_to_v4(self):
-        """Start with schema_version=3, call init_db, verify table + version=5."""
+    def test_migration_v3_to_v6(self):
+        """Start with schema_version=3, call init_db, verify table + version=6."""
         engine = create_trace_engine(":memory:")
 
         from tract.storage.schema import Base
 
-        # Create all tables, then drop spawn_pointers + policy tables to simulate v3
+        # Create all tables, then drop spawn_pointers + policy + v6 tables to simulate v3
         Base.metadata.create_all(engine)
         with engine.connect() as conn:
             conn.execute(text("DROP TABLE IF EXISTS policy_log"))
             conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
             conn.execute(text("DROP TABLE IF EXISTS spawn_pointers"))
+            conn.execute(text("DROP TABLE IF EXISTS compile_effectives"))
+            conn.execute(text("DROP TABLE IF EXISTS compile_records"))
+            conn.execute(text("DROP TABLE IF EXISTS operation_commits"))
+            conn.execute(text("DROP TABLE IF EXISTS operation_events"))
             conn.commit()
 
         # Set schema version to 3
@@ -108,7 +112,7 @@ class TestSpawnPointerSchema:
             session.add(TraceMetaRow(key="schema_version", value="3"))
             session.commit()
 
-        # Now call init_db -- should migrate v3->v4
+        # Now call init_db -- should migrate v3->v4->v5->v6
         init_db(engine)
 
         # Verify spawn_pointers table exists
@@ -116,30 +120,32 @@ class TestSpawnPointerSchema:
         table_names = set(inspector.get_table_names())
         assert "spawn_pointers" in table_names
 
-        # Verify schema version is now 4
+        # Verify schema version is now 6
         with SessionLocal() as session:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "5"
+            assert row.value == "6"
 
         engine.dispose()
 
-    def test_migration_v2_to_v4(self):
-        """Start with schema_version=2, verify both compression AND spawn tables, version=5."""
+    def test_migration_v2_to_v6(self):
+        """Start with schema_version=2, verify migration chain v2->v3->v4->v5->v6."""
         engine = create_trace_engine(":memory:")
 
         from tract.storage.schema import Base
 
-        # Create all tables, then drop compression + spawn + policy to simulate v2
+        # Create all tables, then drop compression + spawn + policy + v6 tables to simulate v2
         Base.metadata.create_all(engine)
         with engine.connect() as conn:
             conn.execute(text("DROP TABLE IF EXISTS policy_log"))
             conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
             conn.execute(text("DROP TABLE IF EXISTS spawn_pointers"))
-            conn.execute(text("DROP TABLE IF EXISTS compression_results"))
-            conn.execute(text("DROP TABLE IF EXISTS compression_sources"))
-            conn.execute(text("DROP TABLE IF EXISTS compressions"))
+            conn.execute(text("DROP TABLE IF EXISTS compile_effectives"))
+            conn.execute(text("DROP TABLE IF EXISTS compile_records"))
+            conn.execute(text("DROP TABLE IF EXISTS operation_commits"))
+            conn.execute(text("DROP TABLE IF EXISTS operation_events"))
+            conn.execute(text("DROP TABLE IF EXISTS commit_parents"))
             conn.commit()
 
         # Set schema version to 2
@@ -148,28 +154,32 @@ class TestSpawnPointerSchema:
             session.add(TraceMetaRow(key="schema_version", value="2"))
             session.commit()
 
-        # Now call init_db -- should migrate v2->v3->v4
+        # Now call init_db -- should migrate v2->v3->v4->v5->v6
         init_db(engine)
 
-        # Verify all tables exist
+        # Verify v6 tables exist (old compression tables dropped by v5->v6)
         inspector = inspect(engine)
         table_names = set(inspector.get_table_names())
-        assert "compressions" in table_names
-        assert "compression_sources" in table_names
-        assert "compression_results" in table_names
         assert "spawn_pointers" in table_names
+        assert "operation_events" in table_names
+        assert "operation_commits" in table_names
+        assert "compile_records" in table_names
+        # Old compression tables should be gone
+        assert "compressions" not in table_names
+        assert "compression_sources" not in table_names
+        assert "compression_results" not in table_names
 
-        # Verify schema version is now 4
+        # Verify schema version is now 6
         with SessionLocal() as session:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "5"
+            assert row.value == "6"
 
         engine.dispose()
 
-    def test_new_db_starts_at_v4(self):
-        """Fresh database gets schema_version=5."""
+    def test_new_db_starts_at_v6(self):
+        """Fresh database gets schema_version=6."""
         engine = create_trace_engine(":memory:")
         init_db(engine)
 
@@ -178,7 +188,7 @@ class TestSpawnPointerSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "5"
+            assert row.value == "6"
 
         engine.dispose()
 

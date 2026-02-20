@@ -94,8 +94,8 @@ class TestPolicySchema:
         assert "policy_proposals" in table_names
         assert "policy_log" in table_names
 
-    def test_new_db_starts_at_v5(self):
-        """Fresh database gets schema_version=5."""
+    def test_new_db_starts_at_v6(self):
+        """Fresh database gets schema_version=6."""
         engine = create_trace_engine(":memory:")
         init_db(engine)
 
@@ -104,21 +104,25 @@ class TestPolicySchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "5"
+            assert row.value == "6"
 
         engine.dispose()
 
-    def test_migration_v4_to_v5(self):
-        """Start with schema_version=4, call init_db, verify tables + version=5."""
+    def test_migration_v4_to_v6(self):
+        """Start with schema_version=4, call init_db, verify tables + version=6."""
         engine = create_trace_engine(":memory:")
 
         from tract.storage.schema import Base
 
-        # Create all tables, then drop policy tables to simulate v4
+        # Create all tables, then drop policy + v6 tables to simulate v4
         Base.metadata.create_all(engine)
         with engine.connect() as conn:
             conn.execute(text("DROP TABLE IF EXISTS policy_log"))
             conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
+            conn.execute(text("DROP TABLE IF EXISTS compile_effectives"))
+            conn.execute(text("DROP TABLE IF EXISTS compile_records"))
+            conn.execute(text("DROP TABLE IF EXISTS operation_commits"))
+            conn.execute(text("DROP TABLE IF EXISTS operation_events"))
             conn.commit()
 
         # Set schema version to 4
@@ -127,7 +131,7 @@ class TestPolicySchema:
             session.add(TraceMetaRow(key="schema_version", value="4"))
             session.commit()
 
-        # Now call init_db -- should migrate v4->v5
+        # Now call init_db -- should migrate v4->v5->v6
         init_db(engine)
 
         # Verify policy tables exist
@@ -135,18 +139,23 @@ class TestPolicySchema:
         table_names = set(inspector.get_table_names())
         assert "policy_proposals" in table_names
         assert "policy_log" in table_names
+        # Verify v6 tables exist
+        assert "operation_events" in table_names
+        assert "operation_commits" in table_names
+        assert "compile_records" in table_names
+        assert "compile_effectives" in table_names
 
-        # Verify schema version is now 5
+        # Verify schema version is now 6
         with SessionLocal() as session:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "5"
+            assert row.value == "6"
 
         engine.dispose()
 
-    def test_migration_v1_to_v5_full_chain(self):
-        """Start with schema_version=1, verify full migration chain v1->v2->v3->v4->v5."""
+    def test_migration_v1_to_v6_full_chain(self):
+        """Start with schema_version=1, verify full migration chain v1->v2->v3->v4->v5->v6."""
         engine = create_trace_engine(":memory:")
 
         from tract.storage.schema import Base
@@ -157,9 +166,10 @@ class TestPolicySchema:
             conn.execute(text("DROP TABLE IF EXISTS policy_log"))
             conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
             conn.execute(text("DROP TABLE IF EXISTS spawn_pointers"))
-            conn.execute(text("DROP TABLE IF EXISTS compression_results"))
-            conn.execute(text("DROP TABLE IF EXISTS compression_sources"))
-            conn.execute(text("DROP TABLE IF EXISTS compressions"))
+            conn.execute(text("DROP TABLE IF EXISTS compile_effectives"))
+            conn.execute(text("DROP TABLE IF EXISTS compile_records"))
+            conn.execute(text("DROP TABLE IF EXISTS operation_commits"))
+            conn.execute(text("DROP TABLE IF EXISTS operation_events"))
             conn.execute(text("DROP TABLE IF EXISTS commit_parents"))
             conn.commit()
 
@@ -169,26 +179,31 @@ class TestPolicySchema:
             session.add(TraceMetaRow(key="schema_version", value="1"))
             session.commit()
 
-        # Now call init_db -- should migrate v1->v2->v3->v4->v5
+        # Now call init_db -- should migrate v1->v2->v3->v4->v5->v6
         init_db(engine)
 
-        # Verify all tables exist
+        # Verify all tables exist (old compression tables dropped by v5->v6)
         inspector = inspect(engine)
         table_names = set(inspector.get_table_names())
         assert "commit_parents" in table_names
-        assert "compressions" in table_names
-        assert "compression_sources" in table_names
-        assert "compression_results" in table_names
         assert "spawn_pointers" in table_names
         assert "policy_proposals" in table_names
         assert "policy_log" in table_names
+        assert "operation_events" in table_names
+        assert "operation_commits" in table_names
+        assert "compile_records" in table_names
+        assert "compile_effectives" in table_names
+        # Old compression tables should be gone (dropped by v5->v6 migration)
+        assert "compressions" not in table_names
+        assert "compression_sources" not in table_names
+        assert "compression_results" not in table_names
 
-        # Verify schema version is now 5
+        # Verify schema version is now 6
         with SessionLocal() as session:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "5"
+            assert row.value == "6"
 
         engine.dispose()
 

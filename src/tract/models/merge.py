@@ -101,7 +101,7 @@ class RebaseWarning(BaseModel):
 
 
 class ImportIssue(BaseModel):
-    """Issue detected during import-commit (replaces CherryPickIssue)."""
+    """Issue detected during import-commit."""
 
     issue_type: Literal["edit_target_missing", "context_dependency"]
     commit: CommitInfo  # The commit being imported
@@ -125,7 +125,7 @@ class RebaseResult(BaseModel):
 
 
 class ImportResult(BaseModel):
-    """Result of an import-commit operation (replaces CherryPickResult)."""
+    """Result of an import-commit operation."""
 
     original_commit: Optional[CommitInfo] = None
     new_commit: Optional[CommitInfo] = None

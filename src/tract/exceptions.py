@@ -146,7 +146,7 @@ class RebaseError(TraceError):
 
 
 class ImportCommitError(TraceError):
-    """Base exception for import-commit errors (replaces CherryPickError)."""
+    """Base exception for import-commit errors."""
 
 
 class SemanticSafetyError(TraceError):

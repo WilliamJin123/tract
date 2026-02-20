@@ -316,7 +316,7 @@ class TestGCProvenanceCleanup:
         assert gc_result2.source_commits_removed == 0
 
     def test_gc_cleans_result_commit_fk(self):
-        """GC correctly handles CompressionResultRow FK when summary commits become unreachable."""
+        """GC correctly handles result commit FKs when summary commits become unreachable."""
         t, hashes = make_tract_with_commits(5)
 
         # Compress to create summary commits
@@ -337,7 +337,7 @@ class TestGCProvenanceCleanup:
         result2 = t.compress(content="Second summary replacing everything")
 
         # First summary commits are now unreachable (orphaned)
-        # GC should clean them up along with their CompressionResultRow entries
+        # GC should clean them up along with their operation commit entries
         gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
 
         # Should have removed the old summary commits and source archives

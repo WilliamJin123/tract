@@ -838,7 +838,7 @@ class TestCompressionModels:
             commits_removed=5,
             blobs_removed=3,
             tokens_freed=2000,
-            archives_removed=1,
+            source_commits_removed=1,
             duration_seconds=0.5,
         )
         with pytest.raises(AttributeError):

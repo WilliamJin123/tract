@@ -161,7 +161,7 @@ class OperationEventRow(Base):
     """A unified operation event record.
 
     Tracks any operation that transforms commits: compression, reorganization,
-    import, etc. Replaces the old CompressionRow with a more general schema.
+    import, etc.
     """
 
     __tablename__ = "operation_events"
