@@ -408,55 +408,43 @@ class TestChat:
 # ---------------------------------------------------------------------------
 
 class TestBuildGenerationConfig:
-    """Tests for generation config building from response/request."""
+    """Tests for generation config building from resolved kwargs + response."""
 
     def test_response_model_authoritative(self):
-        """Response model takes precedence over request model."""
+        """Response model takes precedence over resolved model."""
         t = Tract.open()
         response = {"model": "gpt-4o-2024-01-01"}
 
         config = t._build_generation_config(
-            response, model="gpt-4o"
+            response, resolved={"model": "gpt-4o"}
         )
 
         assert config["model"] == "gpt-4o-2024-01-01"
         t.close()
 
-    def test_request_model_fallback(self):
-        """When response has no model, use request model."""
+    def test_resolved_model_used_when_no_response(self):
+        """When response has no model, use resolved model."""
         t = Tract.open()
         response = {}
 
-        config = t._build_generation_config(response, model="gpt-4o")
+        config = t._build_generation_config(response, resolved={"model": "gpt-4o"})
 
         assert config["model"] == "gpt-4o"
         t.close()
 
-    def test_default_model_fallback(self, monkeypatch):
-        """When no response or request model, use _default_config."""
-        mock_client = MockLLMClient()
-        monkeypatch.setattr(
-            "tract.llm.client.OpenAIClient",
-            lambda **kwargs: mock_client,
-        )
-        t = Tract.open(api_key="key", model="gpt-4o-mini")
-        response = {}
-
-        config = t._build_generation_config(response)
-
-        assert config["model"] == "gpt-4o-mini"
-        t.close()
-
-    def test_temperature_and_max_tokens_captured(self):
+    def test_full_resolved_captured(self):
+        """All resolved fields are captured in generation_config."""
         t = Tract.open()
         response = {"model": "gpt-4o"}
 
         config = t._build_generation_config(
-            response, temperature=0.5, max_tokens=200
+            response, resolved={"model": "gpt-4o", "temperature": 0.5, "max_tokens": 200, "top_p": 0.9}
         )
 
+        assert config["model"] == "gpt-4o"
         assert config["temperature"] == 0.5
         assert config["max_tokens"] == 200
+        assert config["top_p"] == 0.9
         t.close()
 
     def test_no_model_anywhere_omitted(self):
@@ -464,7 +452,7 @@ class TestBuildGenerationConfig:
         t = Tract.open()
         response = {}
 
-        config = t._build_generation_config(response)
+        config = t._build_generation_config(response, resolved={})
 
         assert "model" not in config
         t.close()

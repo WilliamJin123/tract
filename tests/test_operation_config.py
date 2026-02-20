@@ -1073,3 +1073,464 @@ class TestDefaultConfig:
                 model="gpt-4o",
                 default_config=LLMConfig(model="gpt-4o"),
             )
+
+
+# ---------------------------------------------------------------------------
+# 4-level resolution chain tests (Plan 02)
+# ---------------------------------------------------------------------------
+
+class TestFourLevelResolution:
+    """Tests for the 4-level _resolve_llm_config chain."""
+
+    def test_sugar_beats_llm_config(self):
+        """Sugar param (model=) overrides llm_config.model."""
+        t = Tract.open()
+        t._default_config = LLMConfig(model="default")
+        t.configure_operations(chat=LLMConfig(model="op"))
+        llm_cfg = LLMConfig(model="llm-config")
+
+        resolved = t._resolve_llm_config(
+            "chat", model="sugar", llm_config=llm_cfg,
+        )
+        assert resolved["model"] == "sugar"
+        t.close()
+
+    def test_llm_config_beats_operation(self):
+        """llm_config.model overrides operation config."""
+        t = Tract.open()
+        t.configure_operations(chat=LLMConfig(model="op"))
+        llm_cfg = LLMConfig(model="llm-config")
+
+        resolved = t._resolve_llm_config("chat", llm_config=llm_cfg)
+        assert resolved["model"] == "llm-config"
+        t.close()
+
+    def test_operation_beats_default(self):
+        """Operation config overrides tract default."""
+        t = Tract.open()
+        t._default_config = LLMConfig(model="default")
+        t.configure_operations(chat=LLMConfig(model="op"))
+
+        resolved = t._resolve_llm_config("chat")
+        assert resolved["model"] == "op"
+        t.close()
+
+    def test_default_used_as_fallback(self):
+        """Tract default is used when no higher-level config is set."""
+        t = Tract.open()
+        t._default_config = LLMConfig(model="default", temperature=0.5)
+
+        resolved = t._resolve_llm_config("chat")
+        assert resolved["model"] == "default"
+        assert resolved["temperature"] == 0.5
+        t.close()
+
+    def test_all_nine_fields_resolved(self):
+        """All 9 typed fields go through the resolution chain."""
+        t = Tract.open()
+        t._default_config = LLMConfig(
+            model="m", temperature=0.1, top_p=0.2, max_tokens=100,
+            stop_sequences=("s",), frequency_penalty=0.3,
+            presence_penalty=0.4, top_k=10, seed=42,
+        )
+        resolved = t._resolve_llm_config("chat")
+        assert resolved["model"] == "m"
+        assert resolved["temperature"] == 0.1
+        assert resolved["top_p"] == 0.2
+        assert resolved["max_tokens"] == 100
+        assert resolved["stop_sequences"] == ["s"]  # tuple -> list for LLM compat
+        assert resolved["frequency_penalty"] == 0.3
+        assert resolved["presence_penalty"] == 0.4
+        assert resolved["top_k"] == 10
+        assert resolved["seed"] == 42
+        t.close()
+
+    def test_mixed_levels(self):
+        """Different fields come from different levels."""
+        t = Tract.open()
+        t._default_config = LLMConfig(model="default-model", seed=42)
+        t.configure_operations(chat=LLMConfig(temperature=0.5))
+        llm_cfg = LLMConfig(top_p=0.9)
+
+        resolved = t._resolve_llm_config("chat", max_tokens=100, llm_config=llm_cfg)
+        assert resolved["model"] == "default-model"  # level 4
+        assert resolved["temperature"] == 0.5  # level 3
+        assert resolved["top_p"] == 0.9  # level 2
+        assert resolved["max_tokens"] == 100  # level 1 (sugar)
+        assert resolved["seed"] == 42  # level 4
+        t.close()
+
+    def test_extra_kwargs_merge_order(self):
+        """Extra kwargs merge: default < operation < llm_config < call."""
+        t = Tract.open()
+        t._default_config = LLMConfig(extra={"a": 1, "b": 1})
+        t.configure_operations(chat=LLMConfig(extra={"b": 2, "c": 2}))
+        llm_cfg = LLMConfig(extra={"c": 3, "d": 3})
+
+        resolved = t._resolve_llm_config("chat", llm_config=llm_cfg, e=4)
+        assert resolved["a"] == 1  # from default
+        assert resolved["b"] == 2  # op overrides default
+        assert resolved["c"] == 3  # llm_config overrides op
+        assert resolved["d"] == 3  # from llm_config
+        assert resolved["e"] == 4  # from call kwargs
+        t.close()
+
+    def test_default_temperature_resolved(self):
+        """Temperature from default config is used when no higher level sets it."""
+        t = Tract.open()
+        t._default_config = LLMConfig(temperature=0.3)
+
+        resolved = t._resolve_llm_config("chat")
+        assert resolved["temperature"] == 0.3
+        t.close()
+
+
+# ---------------------------------------------------------------------------
+# Full generation_config capture tests (Plan 02)
+# ---------------------------------------------------------------------------
+
+class TestFullGenerationConfigCapture:
+    """Tests for _build_generation_config capturing all resolved fields."""
+
+    def test_captures_all_fields(self):
+        """generation_config on commit captures full resolved config."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+        t.configure_operations(
+            chat=LLMConfig(model="gpt-4o", temperature=0.7, top_p=0.9, seed=42)
+        )
+
+        t.system("You are helpful")
+        t.user("Hello")
+        resp = t.generate()
+
+        # All fields should be captured in generation_config
+        gc = resp.generation_config
+        assert gc.model is not None  # from response (authoritative)
+        assert gc.temperature == 0.7
+        assert gc.top_p == 0.9
+        assert gc.seed == 42
+        t.close()
+
+    def test_response_model_authoritative(self):
+        """Response model overrides requested model in generation_config."""
+        t = Tract.open()
+        # Mock always returns requested model in response (kwargs.get("model", self._model)).
+        # To test authoritative response model, we need a mock that returns a
+        # different model than what was requested. Use a subclass.
+        class AuthoritativeMock(MockLLMClient):
+            def chat(self, messages, **kwargs):
+                self.last_messages = messages
+                self.last_kwargs = kwargs
+                text = self.responses[min(self._call_count, len(self.responses) - 1)]
+                self._call_count += 1
+                return {
+                    "choices": [{"message": {"content": text}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                    "model": "actual-model-from-api",  # Always return this regardless of request
+                }
+
+        mock = AuthoritativeMock()
+        t.configure_llm(mock)
+        t.configure_operations(chat=LLMConfig(model="requested-model"))
+
+        t.system("You are helpful")
+        t.user("Hello")
+        resp = t.generate()
+
+        assert resp.generation_config.model == "actual-model-from-api"
+        t.close()
+
+
+# ---------------------------------------------------------------------------
+# llm_config= parameter tests (Plan 02)
+# ---------------------------------------------------------------------------
+
+class TestLlmConfigParameter:
+    """Tests for llm_config= parameter on chat/generate/merge/compress."""
+
+    def test_generate_with_llm_config(self):
+        """generate(llm_config=...) forwards config to LLM."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        t.system("You are helpful")
+        t.user("Hello")
+        cfg = LLMConfig(model="cfg-model", temperature=0.3, top_p=0.8)
+        resp = t.generate(llm_config=cfg)
+
+        assert mock.last_kwargs.get("model") == "cfg-model"
+        assert mock.last_kwargs.get("temperature") == 0.3
+        assert mock.last_kwargs.get("top_p") == 0.8
+        t.close()
+
+    def test_chat_with_llm_config(self):
+        """chat(text, llm_config=...) forwards config to LLM."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        t.system("You are helpful")
+        cfg = LLMConfig(model="cfg-model", seed=42)
+        resp = t.chat("Hello", llm_config=cfg)
+
+        assert mock.last_kwargs.get("model") == "cfg-model"
+        assert mock.last_kwargs.get("seed") == 42
+        t.close()
+
+    def test_sugar_overrides_llm_config(self):
+        """model= sugar param overrides llm_config.model."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        t.system("You are helpful")
+        t.user("Hello")
+        cfg = LLMConfig(model="cfg-model")
+        resp = t.generate(model="sugar-model", llm_config=cfg)
+
+        assert mock.last_kwargs.get("model") == "sugar-model"
+        t.close()
+
+    def test_compress_with_llm_config(self):
+        """compress(llm_config=...) forwards config to LLM."""
+        t = Tract.open()
+        mock = MockLLMClient(responses=["Summary"])
+        t.configure_llm(mock)
+
+        t.commit(InstructionContent(text="First"))
+        t.commit(DialogueContent(role="user", text="Hello"))
+        t.commit(DialogueContent(role="assistant", text="Hi"))
+
+        cfg = LLMConfig(model="compress-cfg-model", temperature=0.1)
+        t.compress(llm_config=cfg)
+
+        assert mock.last_kwargs.get("model") == "compress-cfg-model"
+        assert mock.last_kwargs.get("temperature") == 0.1
+        t.close()
+
+
+# ---------------------------------------------------------------------------
+# Compress error guard tests (Plan 02)
+# ---------------------------------------------------------------------------
+
+class TestCompressErrorGuard:
+    """Tests for compress() error when LLM params provided without client."""
+
+    def test_compress_model_without_client_raises(self):
+        """compress(model=...) without LLM client raises LLMConfigError."""
+        from tract.llm.errors import LLMConfigError
+
+        t = Tract.open()
+        t.commit(InstructionContent(text="First"))
+        t.commit(DialogueContent(role="user", text="Hello"))
+        t.commit(DialogueContent(role="assistant", text="Hi"))
+
+        with pytest.raises(LLMConfigError, match="LLM parameters provided"):
+            t.compress(model="gpt-4o")
+        t.close()
+
+    def test_compress_llm_config_without_client_raises(self):
+        """compress(llm_config=...) without LLM client raises LLMConfigError."""
+        from tract.llm.errors import LLMConfigError
+
+        t = Tract.open()
+        t.commit(InstructionContent(text="First"))
+        t.commit(DialogueContent(role="user", text="Hello"))
+        t.commit(DialogueContent(role="assistant", text="Hi"))
+
+        with pytest.raises(LLMConfigError, match="LLM parameters provided"):
+            t.compress(llm_config=LLMConfig(model="gpt-4o"))
+        t.close()
+
+    def test_compress_content_without_client_ok(self):
+        """compress(content=...) without LLM client works fine (manual mode)."""
+        t = Tract.open()
+        t.commit(InstructionContent(text="First"))
+        t.commit(DialogueContent(role="user", text="Hello"))
+        t.commit(DialogueContent(role="assistant", text="Hi"))
+
+        result = t.compress(content="Manual summary")
+        assert result is not None
+        t.close()
+
+    def test_compress_model_with_content_without_client_ok(self):
+        """compress(model=..., content=...) without LLM client works (content bypasses guard)."""
+        t = Tract.open()
+        t.commit(InstructionContent(text="First"))
+        t.commit(DialogueContent(role="user", text="Hello"))
+        t.commit(DialogueContent(role="assistant", text="Hi"))
+
+        # content= provided so no LLM call needed
+        result = t.compress(model="gpt-4o", content="Manual summary")
+        assert result is not None
+        t.close()
+
+    def test_compress_operation_config_without_client_ok(self):
+        """Operation-level config without client does not raise (no explicit call-level request)."""
+        from tract.exceptions import CompressionError
+
+        t = Tract.open()
+        t.configure_operations(compress=LLMConfig(model="gpt-4o"))
+
+        t.commit(InstructionContent(text="First"))
+        t.commit(DialogueContent(role="user", text="Hello"))
+        t.commit(DialogueContent(role="assistant", text="Hi"))
+
+        # No explicit LLM params on compress() call, so no error -- but it still
+        # fails because no LLM client (existing CompressionError behavior)
+        with pytest.raises(CompressionError, match="No LLM client configured"):
+            t.compress()
+        t.close()
+
+
+# ---------------------------------------------------------------------------
+# Compression generation_config tests (Plan 02)
+# ---------------------------------------------------------------------------
+
+class TestCompressionGenerationConfig:
+    """Tests for compression summary commits recording generation_config."""
+
+    def test_summary_commit_has_generation_config(self):
+        """LLM-compressed summary commit records the LLM config used."""
+        t = Tract.open()
+        mock = MockLLMClient(responses=["Summary text"])
+        t.configure_llm(mock)
+        t.configure_operations(compress=LLMConfig(model="compress-model", temperature=0.1))
+
+        t.commit(InstructionContent(text="First"))
+        t.commit(DialogueContent(role="user", text="Hello"))
+        t.commit(DialogueContent(role="assistant", text="Hi"))
+
+        result = t.compress()
+        # The summary commit should have generation_config
+        # We can check via query_by_config
+        results = t.query_by_config("model", "=", "compress-model")
+        assert len(results) >= 1, "Summary commit should have generation_config with compress-model"
+        t.close()
+
+    def test_summary_commit_captures_temperature(self):
+        """Summary commit generation_config captures temperature from operation config."""
+        t = Tract.open()
+        mock = MockLLMClient(responses=["Summary text"])
+        t.configure_llm(mock)
+        t.configure_operations(compress=LLMConfig(temperature=0.2))
+
+        t.commit(InstructionContent(text="First"))
+        t.commit(DialogueContent(role="user", text="Hello"))
+        t.commit(DialogueContent(role="assistant", text="Hi"))
+
+        t.compress()
+        results = t.query_by_config("temperature", "=", 0.2)
+        assert len(results) >= 1, "Summary commit should have temperature=0.2"
+        t.close()
+
+    def test_manual_compress_no_generation_config(self):
+        """Manual compression (content=...) has no generation_config."""
+        t = Tract.open()
+
+        t.commit(InstructionContent(text="First"))
+        t.commit(DialogueContent(role="user", text="Hello"))
+        t.commit(DialogueContent(role="assistant", text="Hi"))
+
+        t.compress(content="Manual summary")
+        # No generation_config on manual compression
+        results = t.query_by_config("model", "=", "anything")
+        assert len(results) == 0
+        t.close()
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator full config tests (Plan 02)
+# ---------------------------------------------------------------------------
+
+class TestOrchestratorFullConfig:
+    """Tests for orchestrator forwarding full config."""
+
+    def test_orchestrator_config_has_max_tokens(self):
+        """OrchestratorConfig accepts max_tokens field."""
+        from tract.orchestrator.config import OrchestratorConfig
+        config = OrchestratorConfig(max_tokens=500)
+        assert config.max_tokens == 500
+
+    def test_orchestrator_config_has_extra_llm_kwargs(self):
+        """OrchestratorConfig accepts extra_llm_kwargs field."""
+        from tract.orchestrator.config import OrchestratorConfig
+        config = OrchestratorConfig(extra_llm_kwargs={"top_p": 0.9, "seed": 42})
+        assert config.extra_llm_kwargs["top_p"] == 0.9
+        assert config.extra_llm_kwargs["seed"] == 42
+
+    def test_orchestrator_config_defaults_none(self):
+        """OrchestratorConfig defaults max_tokens and extra_llm_kwargs to None."""
+        from tract.orchestrator.config import OrchestratorConfig
+        config = OrchestratorConfig()
+        assert config.max_tokens is None
+        assert config.extra_llm_kwargs is None
+
+    def test_orchestrate_forwards_max_tokens(self):
+        """orchestrate() with operation config forwards max_tokens."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+        t.configure_operations(
+            orchestrate=LLMConfig(model="orch-model", max_tokens=500)
+        )
+
+        created_configs = []
+        from tract.orchestrator.loop import Orchestrator as _Orchestrator
+        original_init = _Orchestrator.__init__
+
+        def capture_init(self_orch, tract_inst, *, config=None, llm_callable=None):
+            created_configs.append(config)
+            original_init(self_orch, tract_inst, config=config, llm_callable=llm_callable)
+
+        _Orchestrator.__init__ = capture_init
+        try:
+            t.commit(InstructionContent(text="System prompt"))
+            try:
+                t.orchestrate()
+            except Exception:
+                pass
+
+            assert len(created_configs) == 1
+            config = created_configs[0]
+            assert config.model == "orch-model"
+            assert config.max_tokens == 500
+        finally:
+            _Orchestrator.__init__ = original_init
+        t.close()
+
+    def test_orchestrate_forwards_extra_fields(self):
+        """orchestrate() with operation config containing top_p/seed forwards them."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+        t.configure_operations(
+            orchestrate=LLMConfig(model="orch-model", top_p=0.9, seed=42)
+        )
+
+        created_configs = []
+        from tract.orchestrator.loop import Orchestrator as _Orchestrator
+        original_init = _Orchestrator.__init__
+
+        def capture_init(self_orch, tract_inst, *, config=None, llm_callable=None):
+            created_configs.append(config)
+            original_init(self_orch, tract_inst, config=config, llm_callable=llm_callable)
+
+        _Orchestrator.__init__ = capture_init
+        try:
+            t.commit(InstructionContent(text="System prompt"))
+            try:
+                t.orchestrate()
+            except Exception:
+                pass
+
+            config = created_configs[0]
+            assert config.extra_llm_kwargs is not None
+            assert config.extra_llm_kwargs.get("top_p") == 0.9
+            assert config.extra_llm_kwargs.get("seed") == 42
+        finally:
+            _Orchestrator.__init__ = original_init
+        t.close()
