@@ -7,7 +7,8 @@ token usage, so tracking reflects reality — not just tiktoken estimates.
 Migrated from: 01_foundations/token_budget_guardrail.py
 
 Demonstrates: status() in a loop, chat() with auto usage recording,
-              record_usage() for manual calls
+              record_usage() for manual calls, print(status) compact,
+              print(response) for assistant text, status.pprint() final summary
 """
 
 import os
@@ -52,7 +53,8 @@ def main():
             usage_pct = (status.token_count / budget_max * 100) if budget_max else 0
 
             print(f"\n--- Turn {i} ---")
-            print(f"  Tokens: {status.token_count}/{budget_max} ({usage_pct:.0f}%)")
+            # print(status) gives a compact one-liner per turn — doesn't clutter the loop
+            print(f"  {status}")
 
             if usage_pct > 90:
                 print(f"  STOPPING: Budget nearly exhausted ({usage_pct:.0f}%).")
@@ -67,15 +69,13 @@ def main():
                 print(f"  API usage: {response.usage.prompt_tokens} prompt + "
                       f"{response.usage.completion_tokens} completion")
 
-            print(f"  Assistant: {response.text[:100]}...")
+            # str(response) is the same as response.text — compact for loop output
+            print(f"  Assistant: {str(response)[:100]}...")
 
         # --- Final summary ---
         print("\n=== Final Status ===")
-        status = t.status()
-        budget_max = status.token_budget_max or 0
-        print(f"Commits:      {status.commit_count}")
-        print(f"Tokens:       {status.token_count}/{budget_max}")
-        print(f"Token source: {status.token_source}")
+        # pprint() gives the full panel with branch, HEAD, budget bar, and source
+        t.status().pprint()
 
 
 if __name__ == "__main__":

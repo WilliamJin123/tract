@@ -4,7 +4,7 @@ Check how many tokens are in the context window and how close you are to a
 limit. No LLM needed — this is pure local tracking via tiktoken.
 
 Demonstrates: status(), TractConfig(token_budget=), TokenBudgetConfig,
-              budget tracking fields
+              budget tracking fields, status.pprint(), print(status)
 """
 
 from tract import Tract, TractConfig, TokenBudgetConfig
@@ -22,12 +22,13 @@ def main():
     t.assistant("Python is a high-level programming language.")
 
     status = t.status()
+    # The individual fields are there if you need them — e.g. for conditional logic:
     print(f"Commits:     {status.commit_count}")
-    print(f"Tokens:      {status.token_count}")
     print(f"Token source: {status.token_source}")
     print(f"Budget max:  {status.token_budget_max}")  # None — no budget set
-    print(f"Branch:      {status.branch_name}")
-    print(f"HEAD:        {status.head_hash[:8]}")
+    # pprint() shows all of the above in a rich panel at once
+    print()
+    status.pprint()
 
     t.close()
 
@@ -53,11 +54,8 @@ def main():
     status = t.status()
     budget_max = status.token_budget_max or 0
     usage_pct = (status.token_count / budget_max * 100) if budget_max else 0
-
-    print(f"Commits:     {status.commit_count}")
-    print(f"Tokens:      {status.token_count} / {budget_max}")
-    print(f"Usage:       {usage_pct:.1f}%")
-    print(f"Token source: {status.token_source}")
+    # str(status) gives a compact one-liner: "main @ abc1234f | N commits | X/Y (Z%) tokens"
+    print(status)
 
     # Add more messages and watch the budget fill up
     t.user("Explain decorators in Python.")
@@ -71,8 +69,8 @@ def main():
     status = t.status()
     usage_pct = (status.token_count / budget_max * 100) if budget_max else 0
     print(f"\nAfter 2 more commits:")
-    print(f"Tokens:      {status.token_count} / {budget_max}")
-    print(f"Usage:       {usage_pct:.1f}%")
+    # str(status) in a loop is compact and doesn't clutter the output
+    print(status)
 
     if usage_pct > 80:
         print("WARNING: Over 80% budget — time to compress or take action!")

@@ -5,7 +5,8 @@ assistant() instead of manual content models, and format methods to produce
 output ready for any LLM provider. Still no LLM call — just building and
 formatting context.
 
-Demonstrates: system(), user(), assistant(), to_dicts(), to_openai(), to_anthropic()
+Demonstrates: system(), user(), assistant(), to_dicts(), to_openai(),
+              to_anthropic(), print(ctx) compact summary, ctx.pprint()
 """
 
 from tract import Tract
@@ -25,7 +26,9 @@ def main():
     # --- Compile and format for different providers ---
 
     ctx = t.compile()
-    print(f"Compiled: {ctx.commit_count} messages, {ctx.token_count} tokens\n")
+    # str(ctx) gives a compact one-liner summary — handy for logging or quick checks
+    print(ctx)
+    print()
 
     # Generic format — list of {"role": ..., "content": ...} dicts
     print("=== to_dicts() ===")
@@ -44,6 +47,10 @@ def main():
     print(f"  messages:")
     for msg in anthropic_fmt["messages"]:
         print(f"    {msg}")
+
+    # pprint() gives the full rich table view of the compiled context
+    print()
+    ctx.pprint()
 
     t.close()
 

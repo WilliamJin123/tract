@@ -4,7 +4,7 @@ Set a tract-level default (every call inherits it), then override per
 operation so chat is creative and compression is deterministic.
 
 Demonstrates: default_config=, configure_operations(), OperationConfigs,
-              per-operation LLMConfig, field-level inheritance
+              per-operation LLMConfig, field-level inheritance, response.pprint()
 """
 
 import os
@@ -54,10 +54,13 @@ def main():
         print("=== Chat: creative (temp=0.8 from operation config) ===\n")
         response = t.chat("Invent a metaphor for Python's import system.")
         gc = response.generation_config
+        # Keep the field-level prints — they teach the resolution chain explicitly
         print(f"  model={gc.model}")
         print(f"  temperature={gc.temperature}  (operation override)")
         print(f"  top_p={gc.top_p}  (inherited from tract default)")
-        print(f"  Response: {response.text[:120]}...\n")
+        # pprint() combines text + usage + resolved config in one panel
+        response.pprint()
+        print()
 
         # --- Inspect the operation configs ---
         print("=== Current operation configs ===\n")
@@ -73,6 +76,7 @@ def main():
         gc = response.generation_config
         print(f"  temperature={gc.temperature}  (per-call sugar won over 0.8)")
         print(f"  Response: {response.text[:120]}...")
+        # Note: response.pprint() would show the full panel with all resolved fields
 
 
 if __name__ == "__main__":

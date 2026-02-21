@@ -7,7 +7,8 @@ you left it.
 
 Migrated from: 01_foundations/first_conversation.py
 
-Demonstrates: chat(), ChatResponse, persistence, log()
+Demonstrates: chat(), ChatResponse, persistence, log(),
+              response.pprint(), print(status), print(entry)
 """
 
 import os
@@ -46,14 +47,8 @@ def main():
         # commit response -> record usage
         response = t.chat("What's the difference between a list and a tuple in Python?")
 
-        print(f"Assistant: {response.text[:200]}...")
-        print(f"Model: {response.generation_config.model}")
-        if response.usage:
-            print(f"Tokens: {response.usage.prompt_tokens} prompt + "
-                  f"{response.usage.completion_tokens} completion")
-
-        status = t.status()
-        print(f"\nStatus: {status.commit_count} commits, {status.token_count} tokens")
+        # pprint() shows the response text, usage, and config in one rich panel
+        response.pprint()
         print(f"DB: {db_path}\n")
 
     # --- Session 2: Reopen and continue ---
@@ -67,22 +62,23 @@ def main():
         base_url=CEREBRAS_BASE_URL,
         model=CEREBRAS_MODEL,
     ) as t:
-        # Everything is restored
+        # Everything is restored — print(status) gives a compact one-liner
         status = t.status()
-        print(f"Restored: {status.commit_count} commits, {status.token_count} tokens")
+        print(status)
 
-        # Walk the log to see what's there
+        # Walk the log to see what's there — print(entry) gives "hash message" format
         history = t.log()
         print(f"\nHistory ({len(history)} commits):")
         for entry in reversed(history):
-            print(f"  {entry.commit_hash[:8]} [{entry.content_type}] {entry.message}")
+            print(f"  {entry}")
 
         # Continue — chat() includes all prior context automatically
         response = t.chat("Show me a quick example of each.")
-        print(f"\nAssistant: {response.text[:200]}...")
+        response.pprint()
 
-        status = t.status()
-        print(f"\nFinal: {status.commit_count} commits, {status.token_count} tokens")
+        # pprint() for the final status gives the full rich panel
+        print()
+        t.status().pprint()
 
 
 if __name__ == "__main__":

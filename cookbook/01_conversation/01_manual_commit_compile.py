@@ -5,7 +5,7 @@ the content type models, compile them into a message list, and inspect
 the result. No LLM, no shorthand — just the raw mechanics.
 
 Demonstrates: Tract.open(), commit(), compile(), CompiledContext.messages,
-              InstructionContent, DialogueContent
+              InstructionContent, DialogueContent, ctx.pprint()
 """
 
 from tract import Tract, InstructionContent, DialogueContent
@@ -36,13 +36,10 @@ def main():
 
     ctx = t.compile()
 
-    print(f"\nCompiled context: {ctx.commit_count} messages, {ctx.token_count} tokens")
-    print(f"Token source: {ctx.token_source}\n")
-
-    # Inspect each message — this is what you'd send to an LLM
-    print("Messages:")
-    for msg in ctx.messages:
-        print(f"  [{msg.role:>9}] {msg.content[:80]}")
+    # pprint() shows all messages in a rich table with token totals —
+    # the easiest way to inspect a compiled context at a glance.
+    print()
+    ctx.pprint()
 
     t.close()
 

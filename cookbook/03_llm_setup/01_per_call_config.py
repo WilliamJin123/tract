@@ -5,7 +5,8 @@ without changing your defaults. Two styles: sugar params for quick tweaks,
 LLMConfig for full control.
 
 Demonstrates: LLMConfig, chat(temperature=), generate(llm_config=),
-              sugar params vs LLMConfig, generate() two-step control
+              sugar params vs LLMConfig, generate() two-step control,
+              response.pprint() for full response details
 """
 
 import os
@@ -37,8 +38,11 @@ def main():
 
         response = t.chat("What is Python?", temperature=0.2)
         gc = response.generation_config
+        # Keep the field-level prints — they teach what's resolved where
         print(f"  temperature={gc.temperature}, model={gc.model}")
-        print(f"  Response: {response.text[:100]}...\n")
+        # pprint() shows the full response panel (text + usage + config)
+        response.pprint()
+        print()
 
         # --- Style 2: LLMConfig object ---
         # For more settings or when you want to pass config around.
@@ -50,6 +54,7 @@ def main():
         gc = response.generation_config
         print(f"  temperature={gc.temperature}, top_p={gc.top_p}")
         print(f"  Response: {response.text[:100]}...\n")
+
 
         # --- Style 3: Both (sugar wins) ---
         # If you pass both llm_config= and a sugar param, sugar wins
@@ -77,6 +82,7 @@ def main():
         response = t.generate(temperature=0.1, max_tokens=100)
         print(f"  temperature={response.generation_config.temperature}")
         print(f"  Response: {response.text[:100]}...")
+        # Note: response.pprint() would show the same info as a rich panel
 
 
 if __name__ == "__main__":

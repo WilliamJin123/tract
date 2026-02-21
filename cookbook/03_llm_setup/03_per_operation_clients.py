@@ -8,7 +8,8 @@ send the request*. They're fully decoupled: you can use temperature=0.1
 with either OpenAI or Ollama.
 
 Demonstrates: configure_clients(), OperationClients, per-operation routing,
-              _resolve_llm_client fallback, client lifecycle (close)
+              _resolve_llm_client fallback, client lifecycle (close),
+              response.pprint() for full response details
 """
 
 import os
@@ -70,7 +71,9 @@ def main():
 
         print("=== Chat: routed to chat_client ===\n")
         response = t.chat("What are Python generators?")
-        print(f"  Response: {response.text[:120]}...\n")
+        # pprint() shows the full response — text, usage, and which config was used
+        response.pprint()
+        print()
 
         # --- Combine with per-operation configs ---
         # Clients and configs are independent: set both.
@@ -84,6 +87,7 @@ def main():
         gc = response.generation_config
         print(f"  temperature={gc.temperature} (from operation config)")
         print(f"  Response: {response.text[:120]}...\n")
+
 
         # --- Inspect current routing ---
         print("=== Client routing ===\n")

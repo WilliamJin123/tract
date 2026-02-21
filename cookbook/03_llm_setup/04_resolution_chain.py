@@ -14,7 +14,8 @@ Every resolved config is auto-captured on assistant commits for provenance.
 Migrated from: 01_foundations/config_hierarchy.py
 
 Demonstrates: 4-level resolution, LLMConfig.from_dict(), cross-framework
-              aliases, generation_config provenance, query_by_config()
+              aliases, generation_config provenance, query_by_config(),
+              response.pprint() for final call, print(entry) in log loop
 """
 
 import os
@@ -108,14 +109,17 @@ def main():
         response = t.chat("Summarize the GIL in 2 sentences.", llm_config=config)
         gc = response.generation_config
         print(f"  Captured: model={gc.model}, temp={gc.temperature}, max_tokens={gc.max_tokens}")
-        print(f"  Response: {response.text[:120]}...\n")
+        # pprint() for the final call — shows resolved config + usage together
+        response.pprint()
+        print()
 
         # --- Provenance: every config is captured ---
         print("=== Generation configs across all calls ===\n")
         history = t.log(limit=20)
         for entry in reversed(history):
             if entry.generation_config:
-                print(f"  {entry.commit_hash[:8]} | {entry.generation_config.to_dict()}")
+                # print(entry) gives "hash message" — compact for the provenance loop
+                print(f"  {entry} | {entry.generation_config.to_dict()}")
 
 
 if __name__ == "__main__":
