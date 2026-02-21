@@ -23,7 +23,7 @@ from tract.engine.compiler import DefaultContextCompiler
 from tract.engine.tokens import TiktokenCounter
 from tract.models.annotations import Priority, PriorityAnnotation
 from tract.models.commit import CommitInfo, CommitOperation
-from tract.models.config import LLMConfig, OperationConfigs, TractConfig
+from tract.models.config import LLMConfig, OperationClients, OperationConfigs, TractConfig
 from tract.models.content import validate_content
 from tract.exceptions import (
     BranchNotFoundError,
@@ -165,6 +165,7 @@ class Tract:
         self._owns_llm_client: bool = False
         self._default_config: LLMConfig | None = None
         self._operation_configs: OperationConfigs = OperationConfigs()
+        self._operation_clients: OperationClients = OperationClients()
 
     @classmethod
     def open(
@@ -832,14 +833,20 @@ class Tract:
             config["model"] = response["model"]
         return config
 
-    def _extract_content(self, response: dict) -> str:
+    def _extract_content(self, response: dict, *, client: object | None = None) -> str:
         """Extract content from LLM response, dispatching to the client's method.
 
         Falls back to OpenAI-format extraction for duck-typed clients that
         don't implement ``extract_content()``.
+
+        Args:
+            response: Raw LLM response dict.
+            client: The LLM client that produced the response.  If None,
+                falls back to the tract-level default.
         """
-        if hasattr(self._llm_client, "extract_content"):
-            return self._llm_client.extract_content(response)
+        c = client if client is not None else getattr(self, "_llm_client", None)
+        if c is not None and hasattr(c, "extract_content"):
+            return c.extract_content(response)
         # Default: OpenAI format
         try:
             return response["choices"][0]["message"]["content"]
@@ -851,14 +858,20 @@ class Tract:
                 f"Implement extract_content() on your client for custom formats."
             ) from exc
 
-    def _extract_usage(self, response: dict) -> dict | None:
+    def _extract_usage(self, response: dict, *, client: object | None = None) -> dict | None:
         """Extract usage from LLM response, dispatching to the client's method.
 
         Falls back to OpenAI-format extraction for duck-typed clients that
         don't implement ``extract_usage()``.
+
+        Args:
+            response: Raw LLM response dict.
+            client: The LLM client that produced the response.  If None,
+                falls back to the tract-level default.
         """
-        if hasattr(self._llm_client, "extract_usage"):
-            return self._llm_client.extract_usage(response)
+        c = client if client is not None else getattr(self, "_llm_client", None)
+        if c is not None and hasattr(c, "extract_usage"):
+            return c.extract_usage(response)
         # Default: OpenAI format
         return response.get("usage")
 
@@ -892,7 +905,7 @@ class Tract:
             LLMConfigError: If no LLM client is configured.
             TraceError: If called inside batch().
         """
-        if not hasattr(self, "_llm_client"):
+        if not self._has_llm_client("chat"):
             from tract.llm.errors import LLMConfigError
 
             raise LLMConfigError(
@@ -931,17 +944,18 @@ class Tract:
                     record_id, commit_hash, pos
                 )
 
-        # 2. Call LLM (resolve per-operation config)
+        # 2. Call LLM (resolve per-operation client and config)
+        chat_client = self._resolve_llm_client("chat")
         llm_kwargs = self._resolve_llm_config(
             "chat", model=model, temperature=temperature,
             max_tokens=max_tokens, llm_config=llm_config,
         )
-        response = self._llm_client.chat(messages, **llm_kwargs)
+        response = chat_client.chat(messages, **llm_kwargs)
 
         # 3. Extract content and usage (dispatch to client methods, with
         #    OpenAI-format defaults for duck-typed clients that lack them)
-        text = self._extract_content(response)
-        usage_dict = self._extract_usage(response)
+        text = self._extract_content(response, client=chat_client)
+        usage_dict = self._extract_usage(response, client=chat_client)
 
         # 4. Build generation_config (use resolved kwargs for accurate tracking)
         gen_config = self._build_generation_config(response, resolved=llm_kwargs)
@@ -1813,6 +1827,99 @@ class Tract:
         """Current per-operation LLM configurations (read-only, frozen)."""
         return self._operation_configs
 
+    def configure_clients(
+        self,
+        _clients: OperationClients | None = None,
+        /,
+        **operation_clients: object,
+    ) -> None:
+        """Set per-operation LLM client overrides.
+
+        Each operation can use a different LLM client (e.g. OpenAI for chat,
+        Ollama for compression).  Operations without a per-operation client
+        fall back to the tract-level default set via ``configure_llm()`` or
+        ``Tract.open(api_key=...)``.
+
+        Accepts either an OperationClients instance or keyword arguments.
+
+        Args:
+            _clients: OperationClients instance with typed fields.
+            **operation_clients: Operation name -> client mappings.
+                Valid names: ``"chat"``, ``"merge"``, ``"compress"``,
+                ``"orchestrate"``.
+
+        Raises:
+            TypeError: If both positional and keyword arguments provided.
+            ValueError: If an unknown operation name is given.
+
+        Example::
+
+            t.configure_clients(
+                chat=openai_client,
+                compress=ollama_client,
+            )
+        """
+        if _clients is not None and operation_clients:
+            raise TypeError(
+                "Cannot mix positional OperationClients with keyword arguments"
+            )
+        if _clients is not None:
+            if not isinstance(_clients, OperationClients):
+                raise TypeError(
+                    f"Expected OperationClients, got {type(_clients).__name__}"
+                )
+            self._operation_clients = _clients
+            return
+        _valid_ops = {"chat", "merge", "compress", "orchestrate"}
+        for name in operation_clients:
+            if name not in _valid_ops:
+                raise ValueError(
+                    f"Unknown operation '{name}'. "
+                    f"Valid operations: {', '.join(sorted(_valid_ops))}"
+                )
+        from dataclasses import replace as _replace
+        self._operation_clients = _replace(self._operation_clients, **operation_clients)
+
+    @property
+    def operation_clients(self) -> OperationClients:
+        """Current per-operation LLM client overrides (read-only, frozen)."""
+        return self._operation_clients
+
+    def _resolve_llm_client(self, operation: str) -> object:
+        """Resolve the LLM client for a given operation.
+
+        Two-level lookup: per-operation client > tract-level default.
+
+        Args:
+            operation: Operation name (``"chat"``, ``"merge"``, etc.).
+
+        Returns:
+            The resolved LLM client.
+
+        Raises:
+            AttributeError: If no client is configured at any level.
+        """
+        client = getattr(self._operation_clients, operation, None)
+        if client is not None:
+            return client
+        # Fall back to tract-level default (AttributeError if not set)
+        return self._llm_client
+
+    def _has_llm_client(self, operation: str | None = None) -> bool:
+        """Check if an LLM client is available.
+
+        Args:
+            operation: If given, also checks per-operation client.
+
+        Returns:
+            True if a client is available at any level.
+        """
+        if operation is not None:
+            op_client = getattr(self._operation_clients, operation, None)
+            if op_client is not None:
+                return True
+        return hasattr(self, "_llm_client")
+
     def merge(
         self,
         source_branch: str,
@@ -1864,11 +1971,11 @@ class Tract:
 
         # If using default resolver AND config differs from default, create tailored resolver
         if effective_resolver is getattr(self, "_default_resolver", None) and merge_config:
-            if hasattr(self, "_llm_client"):
+            if self._has_llm_client("merge"):
                 from tract.llm.resolver import OpenAIResolver
 
                 effective_resolver = OpenAIResolver(
-                    self._llm_client,
+                    self._resolve_llm_client("merge"),
                     model=merge_config.get("model"),
                     temperature=merge_config.get("temperature", 0.3),
                     max_tokens=merge_config.get("max_tokens", 2048),
@@ -2166,7 +2273,8 @@ class Tract:
             from tract.exceptions import CompressionError
             raise CompressionError("Compression repository not available")
 
-        llm_client = getattr(self, "_llm_client", None)
+        has_client = self._has_llm_client("compress")
+        llm_client = self._resolve_llm_client("compress") if has_client else None
 
         # Guard: explicit LLM config without LLM client
         has_explicit_llm = (
@@ -2826,7 +2934,7 @@ class Tract:
             self, config=config, llm_callable=llm_callable
         )
 
-        if llm_callable is None and not hasattr(self, "_llm_client"):
+        if llm_callable is None and not self._has_llm_client("orchestrate"):
             import logging
 
             logging.getLogger(__name__).warning(

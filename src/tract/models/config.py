@@ -199,3 +199,26 @@ class OperationConfigs:
     merge: LLMConfig | None = None
     compress: LLMConfig | None = None
     orchestrate: LLMConfig | None = None
+
+
+@dataclass(frozen=True)
+class OperationClients:
+    """Per-operation LLM client overrides.
+
+    Each field holds an LLM client (conforming to the LLMClient protocol)
+    for a specific operation.  None means 'use the tract-level default client.'
+    Frozen for safety -- use dataclasses.replace() to create modified copies.
+
+    Example::
+
+        from tract import OperationClients
+        t.configure_clients(OperationClients(
+            chat=openai_client,
+            compress=ollama_client,
+        ))
+    """
+
+    chat: object | None = None
+    merge: object | None = None
+    compress: object | None = None
+    orchestrate: object | None = None
