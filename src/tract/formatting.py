@@ -11,7 +11,8 @@ from __future__ import annotations
 from io import StringIO
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -34,31 +35,34 @@ def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any =
     """
     console = _make_console(file)
 
-    body_parts: list[str] = []
-
-    # Main text
+    # Main text — rendered as Markdown (LLM responses are almost always markdown)
     text = response.text
     if abbreviate and len(text) > 200:
         text = text[:197] + "..."
-    body_parts.append(text)
+    body = Markdown(text) if text else Text("(empty response)")
 
-    # Usage line
+    # Footer metadata (usage + config) as plain Rich markup
+    footer_parts: list[str] = []
     if response.usage is not None:
         u = response.usage
-        body_parts.append(
-            f"\n[dim]{u.prompt_tokens} prompt + {u.completion_tokens} completion"
+        footer_parts.append(
+            f"[dim]{u.prompt_tokens} prompt + {u.completion_tokens} completion"
             f" = {u.total_tokens} tokens[/dim]"
         )
-
-    # Generation config
     if response.generation_config is not None:
         fields = response.generation_config.non_none_fields()
         if fields:
             parts = [f"{k}={v}" for k, v in fields.items()]
-            body_parts.append(f"\n[dim]config: {', '.join(parts)}[/dim]")
+            footer_parts.append(f"[dim]config: {', '.join(parts)}[/dim]")
+
+    # Combine markdown body + plain-text footer into a single panel
+    if footer_parts:
+        content = Group(body, Text(""), Text.from_markup("\n".join(footer_parts)))
+    else:
+        content = body
 
     panel = Panel(
-        "\n".join(body_parts) if body_parts else "(empty response)",
+        content,
         title="[bold]Assistant[/bold]",
         border_style="green",
     )
