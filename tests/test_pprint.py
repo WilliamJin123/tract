@@ -437,7 +437,7 @@ class TestIntegrationWithTract:
     """Test pprint on objects produced by actual Tract operations."""
 
     def test_commit_info_from_tract(self, tmp_path: object) -> None:
-        t = Tract.open(str(tmp_path))
+        t = Tract.open(str(tmp_path / "test.db"))
         t.system("You are a helpful assistant.")
         t.user("Hello!")
         log = t.log()
@@ -454,7 +454,7 @@ class TestIntegrationWithTract:
         assert len(buf.getvalue()) > 0
 
     def test_status_info_from_tract(self, tmp_path: object) -> None:
-        t = Tract.open(str(tmp_path))
+        t = Tract.open(str(tmp_path / "test.db"))
         t.system("You are a helpful assistant.")
         t.user("Hello!")
         status = t.status()
@@ -471,7 +471,7 @@ class TestIntegrationWithTract:
         assert "main" in buf.getvalue()
 
     def test_compiled_context_from_tract(self, tmp_path: object) -> None:
-        t = Tract.open(str(tmp_path))
+        t = Tract.open(str(tmp_path / "test.db"))
         t.system("You are a helpful assistant.")
         t.user("What is Python?")
         ctx = t.compile()
