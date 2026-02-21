@@ -14,10 +14,11 @@ cookbook/
 ├── 02_token_awareness/
 │   ├── 01_status_and_budget.py
 │   └── 02_budget_guardrail_loop.py
-├── 03_llm_config/
+├── 03_llm_setup/
 │   ├── 01_per_call_config.py
 │   ├── 02_defaults_and_operations.py
-│   └── 03_resolution_chain.py
+│   ├── 03_per_operation_clients.py
+│   └── 04_resolution_chain.py
 ├── 04_curation/
 │   ├── 01_edit_in_place.py
 │   ├── 02_pin_skip_annotate.py
@@ -116,9 +117,9 @@ In a multi-turn loop, check `status()` before each `chat()` call. After the call
 
 ---
 
-## 03 — Tuning LLM Behavior
+## 03 — LLM Setup
 
-Controlling model, temperature, and other settings at every granularity.
+Controlling which model, which settings, and which client — at every granularity.
 
 ### 03/01 — Per-Call Config
 
@@ -136,7 +137,15 @@ Set tract-level defaults with `default_config=LLMConfig(...)` on open. Override 
 
 > `default_config=`, `configure_operations()`, `OperationConfigs`
 
-### 03/03 — Resolution Chain and Cross-Framework Config
+### 03/03 — Per-Operation Clients
+
+**Use case:** Chat goes to OpenAI, compression goes to local Ollama, merge conflict resolution goes to Anthropic.
+
+`configure_clients()` assigns a different LLM *client* to each operation. LLMConfig controls *what settings* to use; LLMClient controls *where to send the request*. They're fully decoupled. Per-operation clients are user-managed — `close()` only closes the tract's own internally-created client.
+
+> `configure_clients(chat=openai, compress=ollama)`, `OperationClients`, client lifecycle
+
+### 03/04 — Resolution Chain and Cross-Framework Config
 
 **Use case:** You need to understand which setting wins, and your config comes from an OpenAI-style JSON dict.
 
