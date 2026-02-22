@@ -179,3 +179,17 @@ class PolicyConfigError(TraceError):
 
 class OrchestratorError(TraceError):
     """Raised when the orchestrator encounters an unrecoverable error."""
+
+
+class RetryExhaustedError(TraceError):
+    """All retry attempts failed."""
+
+    def __init__(
+        self, attempts: int, last_diagnosis: str, last_result: object = None
+    ) -> None:
+        self.attempts = attempts
+        self.last_diagnosis = last_diagnosis
+        self.last_result = last_result
+        super().__init__(
+            f"All {attempts} retry attempts failed. Last diagnosis: {last_diagnosis}"
+        )

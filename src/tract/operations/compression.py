@@ -388,6 +388,8 @@ def compress_range(
     llm_kwargs: dict | None = None,
     generation_config: dict | None = None,
     type_registry: dict[str, type] | None = None,
+    validator: object | None = None,
+    max_retries: int = 3,
 ) -> CompressResult | PendingCompression:
     """Core compression operation.
 
@@ -472,14 +474,52 @@ def compress_range(
         summaries = []
         for group in groups:
             text = _build_messages_text(group, blob_repo)
-            summary = _summarize_group(
-                text, llm_client, token_counter,
-                target_tokens=target_tokens,
-                instructions=instructions,
-                system_prompt=system_prompt,
-                llm_kwargs=llm_kwargs,
-            )
-            summaries.append(summary)
+            if validator is not None:
+                # Retry-guarded summarization
+                from tract.retry import retry_with_steering
+
+                # Mutable instructions for steering (amend, don't commit)
+                current_instructions = instructions
+
+                def _attempt_summarize(
+                    _text=text,
+                ) -> str:
+                    return _summarize_group(
+                        _text, llm_client, token_counter,
+                        target_tokens=target_tokens,
+                        instructions=current_instructions,
+                        system_prompt=system_prompt,
+                        llm_kwargs=llm_kwargs,
+                    )
+
+                def _validate_summary(result: str) -> tuple[bool, str | None]:
+                    return validator(result)
+
+                def _steer_summary(diagnosis: str) -> None:
+                    nonlocal current_instructions
+                    base = current_instructions or ""
+                    current_instructions = (
+                        f"{base}\n\nPrevious summary was rejected: {diagnosis}"
+                    ).strip()
+
+                retry_result = retry_with_steering(
+                    attempt=_attempt_summarize,
+                    validate=_validate_summary,
+                    steer=_steer_summary,
+                    head_fn=lambda: "n/a",
+                    reset_fn=lambda _h: None,
+                    max_retries=max_retries,
+                )
+                summaries.append(retry_result.value)
+            else:
+                summary = _summarize_group(
+                    text, llm_client, token_counter,
+                    target_tokens=target_tokens,
+                    instructions=instructions,
+                    system_prompt=system_prompt,
+                    llm_kwargs=llm_kwargs,
+                )
+                summaries.append(summary)
     else:
         raise CompressionError(
             "No LLM client configured and no manual content provided. "

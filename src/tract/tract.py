@@ -885,6 +885,11 @@ class Tract:
         llm_config: LLMConfig | None = None,
         message: str | None = None,
         metadata: dict | None = None,
+        validator: Callable[[str], tuple[bool, str | None]] | None = None,
+        max_retries: int = 3,
+        purify: bool = False,
+        provenance_note: bool = False,
+        retry_prompt: str | None = None,
     ) -> ChatResponse:
         """Compile context, call LLM, commit assistant response, record usage.
 
@@ -898,6 +903,15 @@ class Tract:
             llm_config: Full LLMConfig override for this call.
             message: Optional commit message for the assistant commit.
             metadata: Optional metadata for the assistant commit.
+            validator: Optional callable that validates the response text.
+                Takes the response text, returns (ok, diagnosis). When provided,
+                the generate call is wrapped with retry_with_steering.
+            max_retries: Maximum retry attempts when validator is set (default 3).
+            purify: If True, reset to pre-retry state on success and re-commit
+                clean results (no retry artifacts in history).
+            provenance_note: If True, commit a meta note recording retry count.
+            retry_prompt: Custom steering prompt template. The diagnosis string
+                is appended to this. Defaults to a standard steering message.
 
         Returns:
             :class:`ChatResponse` with text, usage, commit_info, generation_config.
@@ -905,6 +919,7 @@ class Tract:
         Raises:
             LLMConfigError: If no LLM client is configured.
             TraceError: If called inside batch().
+            RetryExhaustedError: If all retry attempts fail validation.
         """
         if not self._has_llm_client("chat"):
             from tract.llm.errors import LLMConfigError
@@ -917,6 +932,94 @@ class Tract:
         if self._in_batch:
             raise TraceError("chat()/generate() cannot be used inside batch()")
 
+        if validator is None:
+            return self._generate_once(
+                model=model, temperature=temperature,
+                max_tokens=max_tokens, llm_config=llm_config,
+                message=message, metadata=metadata,
+            )
+
+        # Retry-guarded path
+        from tract.retry import RetryResult, retry_with_steering
+
+        def _attempt() -> ChatResponse:
+            return self._generate_once(
+                model=model, temperature=temperature,
+                max_tokens=max_tokens, llm_config=llm_config,
+                message=message, metadata=metadata,
+            )
+
+        def _validate(resp: ChatResponse) -> tuple[bool, str | None]:
+            return validator(resp.text)
+
+        def _steer(diagnosis: str) -> None:
+            prompt = retry_prompt or "The previous response did not pass validation."
+            self.user(f"{prompt}\nDiagnosis: {diagnosis}")
+
+        def _head_fn() -> str:
+            return self.head or ""
+
+        def _reset_fn(restore_point: str) -> None:
+            if restore_point:
+                self.reset(restore_point)
+
+        def _provenance(attempts: int, history: list[str]) -> None:
+            if provenance_note and attempts > 1:
+                note = f"[retry] Succeeded on attempt {attempts}/{max_retries}"
+                if history:
+                    note += f". Previous failures: {'; '.join(history)}"
+                self.user(note, message="retry provenance note")
+
+        retry_result: RetryResult[ChatResponse] = retry_with_steering(
+            attempt=_attempt,
+            validate=_validate,
+            steer=_steer,
+            head_fn=_head_fn,
+            reset_fn=_reset_fn,
+            max_retries=max_retries,
+            purify=purify,
+            provenance_note=_provenance if provenance_note else None,
+        )
+
+        chat_response = retry_result.value
+
+        # If purify was active and we had retries, re-commit clean result
+        if purify and retry_result.attempts > 1:
+            commit_info = self.assistant(
+                chat_response.text,
+                message=message,
+                metadata=metadata,
+                generation_config=(
+                    chat_response.generation_config.to_dict()
+                    if chat_response.generation_config
+                    else None
+                ),
+            )
+            from tract.protocols import ChatResponse as _CR
+
+            chat_response = _CR(
+                text=chat_response.text,
+                usage=chat_response.usage,
+                commit_info=commit_info,
+                generation_config=chat_response.generation_config,
+            )
+
+        return chat_response
+
+    def _generate_once(
+        self,
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        llm_config: LLMConfig | None = None,
+        message: str | None = None,
+        metadata: dict | None = None,
+    ) -> ChatResponse:
+        """Single generate attempt (no retry). Internal helper.
+
+        Contains the original generate() logic: compile, LLM call, commit, usage.
+        """
         from tract.protocols import ChatResponse
 
         # 1. Compile context
@@ -990,6 +1093,11 @@ class Tract:
         message: str | None = None,
         name: str | None = None,
         metadata: dict | None = None,
+        validator: Callable[[str], tuple[bool, str | None]] | None = None,
+        max_retries: int = 3,
+        purify: bool = False,
+        provenance_note: bool = False,
+        retry_prompt: str | None = None,
     ) -> ChatResponse:
         """Send a user message and get an LLM response in one call.
 
@@ -1008,6 +1116,15 @@ class Tract:
             message: Optional commit message for the user commit.
             name: Optional speaker name for the user commit.
             metadata: Optional metadata for the user commit.
+            validator: Optional callable that validates the response text.
+                Takes the response text, returns (ok, diagnosis). When provided,
+                the generate call is wrapped with retry_with_steering.
+            max_retries: Maximum retry attempts when validator is set (default 3).
+            purify: If True, reset to pre-retry state on success and re-commit
+                clean results (no retry artifacts in history).
+            provenance_note: If True, commit a meta note recording retry count.
+            retry_prompt: Custom steering prompt template. The diagnosis string
+                is appended to this. Defaults to a standard steering message.
 
         Returns:
             :class:`ChatResponse` with text, usage, commit_info, generation_config.
@@ -1016,6 +1133,7 @@ class Tract:
             LLMConfigError: If no LLM client is configured.
             DetachedHeadError: If HEAD is detached.
             TraceError: If called inside batch().
+            RetryExhaustedError: If all retry attempts fail validation.
         """
         # Commit user message
         self.user(text, message=message, name=name, metadata=metadata)
@@ -1025,6 +1143,11 @@ class Tract:
             temperature=temperature,
             max_tokens=max_tokens,
             llm_config=llm_config,
+            validator=validator,
+            max_retries=max_retries,
+            purify=purify,
+            provenance_note=provenance_note,
+            retry_prompt=retry_prompt,
         )
 
     # ------------------------------------------------------------------
@@ -2228,6 +2351,8 @@ class Tract:
         temperature: float | None = None,
         max_tokens: int | None = None,
         llm_config: LLMConfig | None = None,
+        validator: Callable[[str], tuple[bool, str | None]] | None = None,
+        max_retries: int = 3,
     ) -> CompressResult | PendingCompression:
         """Compress commit chains into summaries.
 
@@ -2254,6 +2379,10 @@ class Tract:
             temperature: Override temperature for LLM summarization.
             max_tokens: Override max_tokens for LLM summarization.
             llm_config: Full LLMConfig override for this call.
+            validator: Optional callable that validates the summary text.
+                Takes the summary text, returns (ok, diagnosis). When provided,
+                each LLM summarization is wrapped with retry_with_steering.
+            max_retries: Maximum retry attempts when validator is set (default 3).
 
         Returns:
             :class:`CompressResult` or :class:`PendingCompression`.
@@ -2262,6 +2391,7 @@ class Tract:
             DetachedHeadError: If HEAD is detached.
             CompressionError: On various error conditions.
             LLMConfigError: If explicit LLM params given without client.
+            RetryExhaustedError: If all retry attempts fail validation.
         """
         from tract.models.compression import PendingCompression as _PendingCompression
         from tract.operations.compression import compress_range
@@ -2325,6 +2455,8 @@ class Tract:
                 instructions=instructions,
                 system_prompt=system_prompt,
                 type_registry=self._custom_type_registry,
+                validator=validator,
+                max_retries=max_retries,
             )
         except Exception:
             nested.rollback()

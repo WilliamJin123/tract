@@ -97,6 +97,9 @@ from tract.orchestrator import (
     reject_all,
 )
 
+# Retry protocol
+from tract.retry import RetryResult, retry_with_steering
+
 # Exceptions
 from tract.exceptions import (
     TraceError,
@@ -124,6 +127,7 @@ from tract.exceptions import (
     PolicyExecutionError,
     PolicyConfigError,
     OrchestratorError,
+    RetryExhaustedError,
 )
 
 __all__ = [
@@ -202,6 +206,10 @@ __all__ = [
     "PolicyExecutionError",
     "PolicyConfigError",
     "OrchestratorError",
+    "RetryExhaustedError",
+    # Retry protocol
+    "RetryResult",
+    "retry_with_steering",
     # Policy engine
     "Policy",
     "PolicyEvaluator",
