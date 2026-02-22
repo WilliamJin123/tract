@@ -6,7 +6,7 @@ edit the system prompt in place and ask again. The LLM now sees the
 corrected context and gives the right answer. Both versions stay in
 history for audit.
 
-Demonstrates: commit(operation=EDIT, edit_target=), chat() before/after edit,
+Demonstrates: system(edit=hash), chat() before/after edit,
               compile() serves corrected content, log() preserves both versions
 """
 
@@ -14,7 +14,7 @@ import os
 
 from dotenv import load_dotenv
 
-from tract import CommitOperation, InstructionContent, Tract
+from tract import Tract
 
 load_dotenv()
 
@@ -45,19 +45,14 @@ def main():
         response.pprint()
 
         # --- Fix the system prompt: 60 days -> 30 days ---
-        # operation=EDIT replaces the original in compiled context.
-        # edit_target points at the commit being corrected.
+        # edit= replaces the target commit in compiled context.
+        # Same shorthand, one extra param.
 
-        fix = t.commit(
-            InstructionContent(
-                text="You are a customer support agent for Acme Corp.\n"
-                     "Return policy: customers may return any item within 30 days."
-            ),
-            operation=CommitOperation.EDIT,
-            edit_target=bad_prompt.commit_hash,
-            message="fix: 60-day -> 30-day return policy",
+        fix = t.system(
+            "You are a customer support agent for Acme Corp.\n"
+            "Return policy: customers may return any item within 30 days.",
+            edit=bad_prompt.commit_hash,
         )
-        fix.pprint()
         print(f"\nEdited system prompt: {fix.commit_hash[:8]}")
 
         # --- Ask again — the LLM now sees the corrected prompt ---

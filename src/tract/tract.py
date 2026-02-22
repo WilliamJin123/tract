@@ -780,6 +780,7 @@ class Tract:
         self,
         text: str,
         *,
+        edit: str | None = None,
         message: str | None = None,
         metadata: dict | None = None,
         priority: Priority | None = None,
@@ -792,6 +793,8 @@ class Tract:
 
         Args:
             text: The instruction text.
+            edit: If provided, the hash of the commit to replace (EDIT
+                operation).  Omit for a normal APPEND.
             message: Optional commit message.
             metadata: Optional commit metadata.
             priority: Optional priority annotation to set on the commit.
@@ -805,6 +808,8 @@ class Tract:
 
         info = self.commit(
             InstructionContent(text=text),
+            operation=CommitOperation.EDIT if edit else CommitOperation.APPEND,
+            edit_target=edit,
             message=message,
             metadata=metadata,
         )
@@ -819,6 +824,7 @@ class Tract:
         self,
         text: str,
         *,
+        edit: str | None = None,
         message: str | None = None,
         name: str | None = None,
         metadata: dict | None = None,
@@ -832,6 +838,8 @@ class Tract:
 
         Args:
             text: The message text.
+            edit: If provided, the hash of the commit to replace (EDIT
+                operation).  Omit for a normal APPEND.
             message: Optional commit message.
             name: Optional speaker name.
             metadata: Optional commit metadata.
@@ -846,6 +854,8 @@ class Tract:
 
         info = self.commit(
             DialogueContent(role="user", text=text, name=name),
+            operation=CommitOperation.EDIT if edit else CommitOperation.APPEND,
+            edit_target=edit,
             message=message,
             metadata=metadata,
         )
@@ -860,6 +870,7 @@ class Tract:
         self,
         text: str,
         *,
+        edit: str | None = None,
         message: str | None = None,
         name: str | None = None,
         metadata: dict | None = None,
@@ -874,6 +885,8 @@ class Tract:
 
         Args:
             text: The response text.
+            edit: If provided, the hash of the commit to replace (EDIT
+                operation).  Omit for a normal APPEND.
             message: Optional commit message.
             name: Optional speaker name.
             metadata: Optional commit metadata.
@@ -889,6 +902,8 @@ class Tract:
 
         info = self.commit(
             DialogueContent(role="assistant", text=text, name=name),
+            operation=CommitOperation.EDIT if edit else CommitOperation.APPEND,
+            edit_target=edit,
             message=message,
             metadata=metadata,
             generation_config=generation_config,
