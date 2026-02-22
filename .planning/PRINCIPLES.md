@@ -8,7 +8,7 @@
 - HITL prompt interjection ==> AITL monitoring
 - human-triggered context operations (rebase, reset, edits + appends, branching, etc.) ==> agent-triggered is possible
 - Any human-exposed interface (apis, python functions, etc.) can also be exposed to an LLM (toolkits, customizable prompts, etc.)
-- An agent should eventually be able to manage every process and the configuration of said process on a case-by-case basis
+- Crucially the agents not only automate processes / real-world tasks, but they must also be able to manage / automate their own configurations / select protocols
 - etc.
 3. Full History
 - Provenance on everything

@@ -1,6 +1,6 @@
 # Tract Usage Scenarios
 
-10 workflow stories covering every fundamental operation, then compositions that combine them. Each story has 2-3 standalone sub-scenarios that build incrementally within the story. Stories are independent — jump to any one without reading the others.
+13 workflow stories covering every fundamental operation, then compositions that combine them. Each story has 2-3 standalone sub-scenarios that build incrementally within the story. Stories are independent — jump to any one without reading the others.
 
 ## File Tree
 
@@ -22,11 +22,13 @@ cookbook/
 ├── 04_curation/
 │   ├── 01_edit_in_place.py
 │   ├── 02_pin_skip_annotate.py
-│   └── 03_atomic_batch.py
+│   ├── 03_atomic_batch.py
+│   └── 04_important_and_retention.py
 ├── 05_tracing/
 │   ├── 01_log_and_diff.py
 │   ├── 02_time_travel.py
-│   └── 03_config_provenance.py
+│   ├── 03_config_provenance.py
+│   └── 04_tool_provenance.py
 ├── 06_branching/
 │   ├── 01_branch_switch_delete.py
 │   ├── 02_merge_strategies.py
@@ -34,7 +36,8 @@ cookbook/
 ├── 07_compression/
 │   ├── 01_manual_compression.py
 │   ├── 02_llm_compression.py
-│   └── 03_gc.py
+│   ├── 03_gc.py
+│   └── 04_retention_aware_compression.py
 ├── 08_multi_agent/
 │   ├── 01_parent_child.py
 │   └── 02_delegation.py
@@ -46,6 +49,14 @@ cookbook/
 │   ├── 01_toolkit.py
 │   ├── 02_trigger_orchestration.py
 │   └── 03_hitl_orchestration.py
+├── 11_retry/
+│   ├── 01_validate_and_retry.py
+│   ├── 02_chat_with_validation.py
+│   └── 03_custom_retry_pipeline.py
+├── 12_important_priority/
+│   └── 01_important_and_retention.py
+├── 13_tool_tracking/
+│   └── 01_tool_provenance.py
 └── compositions/
     ├── ab_testing.py
     ├── context_forensics.py
@@ -54,7 +65,8 @@ cookbook/
     ├── human_interjection.py
     ├── long_running_session.py
     ├── streaming_integration.py
-    └── undo_redo.py
+    ├── undo_redo.py
+    └── self_correcting_agent.py
 ```
 
 ---
@@ -187,6 +199,14 @@ Wrap multiple commits in `batch()`. If any commit fails or an exception is raise
 
 **Existing example:** batch portion of `atomic_batch.py` (moves here, config/provenance parts split to 03 and 05)
 
+### 04/04 — IMPORTANT Priority and Retention Criteria
+
+**Use case:** Some context is too important to lose in compression, but not important enough to pin forever. You want the LLM to preserve specific details when summarizing.
+
+`annotate(hash, IMPORTANT)` tells compression to be conservative. Add fuzzy guidance with `retain="preserve all dollar amounts and deadlines"` — injected into the summarization prompt. Add deterministic checks with `retain_match=["$50k", "2026-03-01"]` — validated against the output. Both can combine. Shorthand works too: `t.user(..., priority=IMPORTANT, retain="keep the budget figures")`.
+
+> `annotate(hash, IMPORTANT)`, `retain=`, `retain_match=`, `RetentionCriteria`, shorthand with `priority=IMPORTANT`
+
 ---
 
 ## 05 — Tracing and Audit
@@ -216,6 +236,14 @@ Understanding what happened, when, why, and with what settings.
 Every assistant commit stores the fully-resolved `generation_config`. Query it with `query_by_config()` — single-field, multi-field AND, or whole-config matching. Also supports the IN operator for multi-value queries.
 
 > `commit_info.generation_config`, `query_by_config(model="gpt-4o")`, `query_by_config(temperature=0.7, model="gpt-4o")`
+
+### 05/04 — Tool Provenance
+
+**Use case:** "What tools were available when this response was generated? Did the tool set change mid-session?"
+
+`set_tools([...])` registers tool schemas that auto-link to subsequent commits. Each unique schema is content-hashed and stored once — the same tool across 100 commits costs one row. `get_commit_tools(hash)` reconstructs exactly what tools a commit had. `compile()` populates `CompiledContext.tools` with the latest active set. `to_openai_params()` and `to_anthropic_params()` return full API-ready dicts with both messages and tools, while `to_openai()` stays backward-compatible (messages only).
+
+> `set_tools()`, `get_commit_tools()`, `to_openai_params()`, `to_anthropic_params()`, `hash_tool_schema()`
 
 ---
 
@@ -276,6 +304,14 @@ Pass your own text to `compress(content="...")`. The original commits in the ran
 `gc()` removes orphaned commits older than N days. Archived commits can have a separate retention window. Non-destructive to any reachable commit chain.
 
 > `gc(orphan_retention_days=7, archive_retention_days=30)`
+
+### 07/04 — Retention-Aware Compression
+
+**Use case:** Compressing a long conversation that contains critical financial figures. You need to guarantee those figures survive summarization.
+
+IMPORTANT commits with `retain_match=["$50k", "2026-03-01"]` get deterministic validation after summarization. If the summary is missing a required substring or regex, `retry_with_steering()` amends the prompt with the diagnosis and retries. Fuzzy `retain=` instructions are injected into the summarization prompt to guide the LLM. Combines IMPORTANT priority (story 04/04) with the retry protocol (story 11).
+
+> `compress()` with IMPORTANT commits, `retain_match=` validation, `retry_with_steering()`, enriched summarization prompt
 
 ---
 
@@ -361,6 +397,64 @@ Configure a callback. The orchestrator proposes actions with reasoning. The huma
 
 ---
 
+## 11 — Retry and Validation
+
+Validate LLM output and retry with steering when it fails. The retry protocol is operation-agnostic — it works for chat, compression, merge resolution, or any callable.
+
+### 11/01 — Validate and Retry (Core Primitive)
+
+**Use case:** You have a function that produces unreliable output. You want to validate, steer, and retry — without coupling to any specific tract operation.
+
+`retry_with_steering()` takes four callables: `attempt` (produces a result), `validate` (checks it), `steer` (injects correction), and `head_fn`/`reset_fn` (for optional history management). It loops until validation passes or retries are exhausted. Returns `RetryResult` with the value, attempt count, and failure history. Raises `RetryExhaustedError` if all retries fail. No Tract dependency — pure logic + callbacks.
+
+> `retry_with_steering()`, `RetryResult`, `RetryExhaustedError`, `validate`, `steer`
+
+### 11/02 — Chat with Validation
+
+**Use case:** An agent must return valid JSON. If the LLM returns malformed output, steer it and retry automatically.
+
+`chat(validator=my_validator, max_retries=3)` wraps the LLM call in the retry loop. On failure, a steering message with the diagnosis is committed as a user message — the LLM sees its mistake in context. `purify=True` resets HEAD to before the retry chain and re-commits only the clean result. `provenance_note=True` adds a meta-commit recording how many retries it took.
+
+> `chat(validator=, max_retries=, purify=, provenance_note=, retry_prompt=)`
+
+### 11/03 — Custom Retry Pipeline
+
+**Use case:** Wrap any operation — compression, merge resolution, a custom pipeline step — with validate-steer-retry.
+
+Build your own retry pipeline by providing closures to `retry_with_steering()`. Validate compression summaries for key terms, steer by amending the prompt, retry merge resolutions with different strategies. The same primitive handles all cases — only the callables change.
+
+> `retry_with_steering()` with custom `attempt`/`validate`/`steer`, wrapping arbitrary operations
+
+---
+
+## 12 — IMPORTANT Priority
+
+The full priority spectrum: SKIP → NORMAL → IMPORTANT → PINNED. IMPORTANT commits are compressible but get extra care during summarization.
+
+### 12/01 — IMPORTANT and Retention
+
+**Use case:** A requirements document with budget figures should be compressible, but the dollar amounts and deadlines must survive.
+
+Annotate with `priority=IMPORTANT` plus optional retention criteria. Fuzzy: `retain="preserve budget and timeline"` guides the LLM. Deterministic: `retain_match=["$50k", "Q3 2026"]` validates the output with substring/regex checks. Both can combine — fuzzy guides, deterministic verifies. The compression engine gathers retention criteria from IMPORTANT commits, enriches the summarization prompt, and wires deterministic checks through the retry protocol.
+
+> `Priority.IMPORTANT`, `RetentionCriteria`, `retain=`, `retain_match=`, `retain_match_mode=`
+
+---
+
+## 13 — Tool Tracking
+
+Content-addressed provenance for LLM tool schemas — what function-calling tools were available at each point in the conversation.
+
+### 13/01 — Tool Provenance
+
+**Use case:** An agent uses function calling. You need to know exactly which tools were available when each response was generated, and pass them correctly to the API.
+
+`set_tools([...])` registers tool schemas that auto-link to subsequent commits. Schemas are content-hashed: the same tool across 100 commits is stored once. `get_commit_tools(hash)` returns the exact schemas for any commit. `compile()` populates `CompiledContext.tools` from the last commit that had tools. `to_openai_params()` returns `{"messages": [...], "tools": [...]}` — full API-ready output. `to_openai()` remains backward-compatible (messages only).
+
+> `set_tools()`, `get_tools()`, `get_commit_tools()`, `commit(tools=)`, `to_openai_params()`, `to_anthropic_params()`, `hash_tool_schema()`
+
+---
+
 # Part 2: Compositions
 
 Real-world scenarios that combine features across multiple stories. Each references the stories it builds on.
@@ -442,3 +536,9 @@ Three sub-agents research in parallel, compress their findings, supervisor merge
 **Combines:** 09 (policies) + 10 (orchestrator) + 07 (compression) + 06 (branching)
 
 All policies active, orchestrator on triggers, agent self-manages via toolkit, GC runs periodically. Full autopilot.
+
+### X.14 — Self-Correcting Agent
+
+**Combines:** 11 (retry) + 12 (IMPORTANT priority) + 07 (compression) + 13 (tool tracking)
+
+An agent validates its own JSON output via `chat(validator=json_validator)`, retries on failure with steering. Critical decisions are marked IMPORTANT with `retain_match=` for key terms. Tools are tracked per-commit for provenance. When the session compresses, retention criteria guarantee key details survive. Audit the full session later: `get_commit_tools()` and `query_by_config()` reconstruct exactly what the agent had available at each step.
