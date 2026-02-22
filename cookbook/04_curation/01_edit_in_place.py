@@ -6,15 +6,16 @@ edit the system prompt in place and ask again. The LLM now sees the
 corrected context and gives the right answer. Both versions stay in
 history for audit.
 
-Demonstrates: system(edit=hash), chat() before/after edit,
-              compile() serves corrected content, log() preserves both versions
+Demonstrates: system(edit=hash), annotate(SKIP) for stale responses,
+              chat() before/after edit, compile() serves corrected content,
+              log() preserves both versions
 """
 
 import os
 
 from dotenv import load_dotenv
 
-from tract import Tract
+from tract import Priority, Tract
 
 load_dotenv()
 
@@ -34,15 +35,17 @@ def main():
 
         bad_prompt = t.system(
             "You are a customer support agent for Acme Corp.\n"
-            "Return policy: customers may return any item within 60 days."
+            "Return policy: customers may return any item within 60 days.",
+            message="Initial system prompt with incorrect return policy",
         )
         print(f"System prompt committed: {bad_prompt.commit_hash[:8]}\n")
 
         # --- Ask about returns — the LLM will cite the wrong policy ---
 
         print("=== Before edit ===\n")
-        response = t.chat("What's your return policy?")
-        response.pprint()
+        stale_q = t.user("What's your return policy?")
+        stale_a = t.generate()
+        stale_a.pprint()
 
         # --- Fix the system prompt: 60 days -> 30 days ---
         # edit= replaces the target commit in compiled context.
@@ -52,12 +55,19 @@ def main():
             "You are a customer support agent for Acme Corp.\n"
             "Return policy: customers may return any item within 30 days.",
             edit=bad_prompt.commit_hash,
+            message="Fix return policy from 60 days to 30 days",
         )
-        print(f"\nEdited system prompt: {fix.commit_hash[:8]}")
+        fix.pprint()
+
+        # --- Skip the stale Q&A — it was based on the wrong prompt ---
+
+        t.annotate(stale_q.commit_hash, Priority.SKIP, reason="based on wrong prompt")
+        t.annotate(stale_a.commit_info.commit_hash, Priority.SKIP, reason="based on wrong prompt")
+        print("Skipped stale Q&A (based on the old 60-day prompt)\n")
 
         # --- Ask again — the LLM now sees the corrected prompt ---
 
-        print("\n=== After edit ===\n")
+        print("=== After edit ===\n")
         response = t.chat("What's your return policy?")
         response.pprint()
 

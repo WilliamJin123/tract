@@ -41,10 +41,21 @@ _MARKDOWN_THEME = Theme({
 })
 
 
+def _ensure_utf8_stdout() -> None:
+    """Reconfigure stdout to UTF-8 on Windows to avoid cp1252 encoding errors."""
+    import sys
+    if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+
 def _make_console(file: Any = None) -> Console:
     """Create a Console, optionally writing to a file-like object."""
     if file is not None:
         return Console(file=file, force_terminal=True, width=100, theme=_MARKDOWN_THEME)
+    _ensure_utf8_stdout()
     return Console(theme=_MARKDOWN_THEME)
 
 
@@ -112,8 +123,7 @@ def pprint_compiled_context(ctx: Any, *, abbreviate: bool = False, file: Any = N
         content = msg.content
         if abbreviate and len(content) > 80:
             content = content[:77] + "..."
-        # Try to get per-message token info if available
-        table.add_row(str(i + 1), msg.role, content, "")
+        table.add_row(str(i + 1), msg.role, Markdown(content), "")
 
     console.print(table)
 
