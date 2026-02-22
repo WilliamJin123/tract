@@ -25,6 +25,7 @@ class Message:
     role: str
     content: str
     name: str | None = None
+    token_count: int = 0
 
 
 @dataclass(frozen=True)

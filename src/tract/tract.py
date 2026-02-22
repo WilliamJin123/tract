@@ -1448,7 +1448,11 @@ class Tract:
             result = self._cache.to_compiled(cached)
             if self._verify_cache:
                 fresh = self._compiler.compile(self._tract_id, current_head)
-                assert result.messages == fresh.messages, (
+                # Compare messages ignoring per-message token_count (computed
+                # by cache, not compiler — fresh Messages have token_count=0)
+                cached_core = [(m.role, m.content, m.name) for m in result.messages]
+                fresh_core = [(m.role, m.content, m.name) for m in fresh.messages]
+                assert cached_core == fresh_core, (
                     f"Cache message mismatch: cached {len(result.messages)} msgs, "
                     f"fresh {len(fresh.messages)} msgs"
                 )
@@ -1479,7 +1483,12 @@ class Tract:
         result = self._compiler.compile(self._tract_id, current_head)
         snapshot = self._cache.build_snapshot(current_head, result)
         if snapshot is not None:
+            # Restore API-reported token override if it survived cache eviction
+            api_override = self._cache.get_api_override(current_head)
+            if api_override is not None:
+                snapshot = replace(snapshot, token_count=api_override[0], token_source=api_override[1])
             self._cache.put(current_head, snapshot)
+            result = self._cache.to_compiled(snapshot)
         return self._inject_tools(result)
 
     def _reorder_compiled(
@@ -2929,6 +2938,8 @@ class Tract:
             token_source = f"api:{usage.prompt_tokens}+{usage.completion_tokens}"
             updated = replace(snapshot, token_count=usage.prompt_tokens, token_source=token_source)
             self._cache.put(target_hash, updated)
+            # Persist override so it survives cache eviction
+            self._cache.store_api_override(target_hash, usage.prompt_tokens, token_source)
             return self._cache.to_compiled(updated)
 
         # Fallback (custom compiler, no snapshot): return minimal result

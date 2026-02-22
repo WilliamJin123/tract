@@ -55,6 +55,9 @@ class CacheManager:
         self._compiler = compiler
         self._token_counter = token_counter
         self._commit_repo = commit_repo
+        # API-reported token overrides that survive cache eviction.
+        # Keyed by head_hash -> (token_count, token_source).
+        self._api_overrides: dict[str, tuple[int, str]] = {}
 
     # ------------------------------------------------------------------
     # LRU primitives
@@ -80,11 +83,20 @@ class CacheManager:
         logger.debug("Cache put: %s (size=%d)", head_hash[:12], len(self._cache))
 
     def clear(self) -> None:
-        """Clear all cached snapshots."""
+        """Clear all cached snapshots and API overrides."""
         size = len(self._cache)
         self._cache.clear()
+        self._api_overrides.clear()
         if size > 0:
             logger.debug("Cache cleared (%d entries)", size)
+
+    def store_api_override(self, head_hash: str, token_count: int, token_source: str) -> None:
+        """Store an API-reported token override that survives cache eviction."""
+        self._api_overrides[head_hash] = (token_count, token_source)
+
+    def get_api_override(self, head_hash: str) -> tuple[int, str] | None:
+        """Get a stored API override for the given head hash, or None."""
+        return self._api_overrides.get(head_hash)
 
     # ------------------------------------------------------------------
     # Snapshot <-> CompiledContext conversion
@@ -96,9 +108,16 @@ class CacheManager:
 
         Uses copy-on-output for generation_configs to prevent user mutations
         of the returned CompiledContext from corrupting the cached snapshot.
+        Populates per-message token counts from the snapshot.
         """
+        msgs = list(snapshot.messages)
+        if snapshot.message_token_counts and len(snapshot.message_token_counts) == len(msgs):
+            msgs = [
+                Message(role=m.role, content=m.content, name=m.name, token_count=tc)
+                for m, tc in zip(snapshot.messages, snapshot.message_token_counts)
+            ]
         return CompiledContext(
-            messages=list(snapshot.messages),
+            messages=msgs,
             token_count=snapshot.token_count,
             commit_count=snapshot.commit_count,
             token_source=snapshot.token_source,
