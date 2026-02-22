@@ -800,6 +800,10 @@ class Tract:
 
         Shorthand for ``commit(InstructionContent(text=text))``.
 
+        System instructions are **PINNED by default** — they survive
+        compression unchanged.  Pass ``priority=`` to override (e.g.
+        ``Priority.NORMAL`` to allow compression).
+
         Args:
             text: The instruction text.
             edit: If provided, the hash of the commit to replace (EDIT
@@ -807,6 +811,7 @@ class Tract:
             message: Optional commit message.
             metadata: Optional commit metadata.
             priority: Optional priority annotation to set on the commit.
+                Overrides the default PINNED annotation.
             retain: Fuzzy retention instructions (for IMPORTANT priority).
             retain_match: Deterministic retention patterns (for IMPORTANT priority).
 

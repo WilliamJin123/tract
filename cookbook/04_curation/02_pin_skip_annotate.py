@@ -1,13 +1,14 @@
-"""Pin, Skip, and Reset Annotations
+"""Unpin, Skip, and Reset Annotations
 
-Control what the LLM sees without deleting history. Pin a system prompt so
-it survives compression. Skip noisy tool output to slim down context. Reset
-an annotation when you change your mind. All three are non-destructive —
-the commits stay in history.
+Control what the LLM sees without deleting history. System prompts are
+PINNED by default (they survive compression). Here we unpin one for a
+special case, skip noisy tool output, then reset an annotation when we
+change our mind. All operations are non-destructive — commits stay in
+history.
 
-Demonstrates: annotate(hash, PINNED), annotate(hash, SKIP),
-              annotate(hash, NORMAL), compile() reflects annotations,
-              Priority enum values
+Demonstrates: default PINNED on system(), annotate(NORMAL) to unpin,
+              annotate(SKIP), annotate(NORMAL) to reset, compile() reflects
+              annotations, Priority enum values
 """
 
 from tract import Priority, Tract
@@ -19,6 +20,8 @@ def main():
     # --- Build a conversation with a tool output in the middle ---
 
     sys_ci = t.system("You are a research assistant.")
+    print(f"System prompt: {sys_ci.commit_hash[:8]}  (PINNED by default)")
+
     t.user("Find recent papers on transformer efficiency.")
 
     # Simulate a tool output — useful once, noisy after
@@ -38,15 +41,19 @@ def main():
         "3. Mamba replaces attention with selective state spaces."
     )
 
-    # --- Pin the system prompt — it must survive compression ---
+    # --- Unpin the system prompt ---
+    # System instructions (InstructionContent) are PINNED by default,
+    # meaning they survive compression verbatim. In rare cases — e.g. a
+    # temporary persona you plan to replace — you may want the compressor
+    # to summarize it like any other message.
 
-    t.annotate(sys_ci.commit_hash, Priority.PINNED, reason="system prompt")
-    print(f"Pinned:  {sys_ci.commit_hash[:8]}  (system prompt)")
+    t.annotate(sys_ci.commit_hash, Priority.NORMAL, reason="temporary persona, ok to compress")
+    print(f"Unpinned: {sys_ci.commit_hash[:8]}  (now NORMAL — compressor may summarize)")
 
     # --- Skip the tool output — it's been summarized already ---
 
     t.annotate(tool_ci.commit_hash, Priority.SKIP, reason="already summarized")
-    print(f"Skipped: {tool_ci.commit_hash[:8]}  (tool output)")
+    print(f"Skipped:  {tool_ci.commit_hash[:8]}  (tool output hidden from compile)")
 
     # --- Compile: tool output is gone, everything else is visible ---
 
