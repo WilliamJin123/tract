@@ -72,12 +72,16 @@ if TYPE_CHECKING:
 # ------------------------------------------------------------------
 
 
+_MAX_AUTO_MSG_LEN = 500
+
+
 def _auto_message(content_type: str, text: str) -> str:
     """Generate a descriptive commit message from content text.
 
     The content_type is available separately on the commit; the message
-    stores the full text (newlines flattened). Display-time truncation
-    is handled by ``__str__`` and ``pprint(abbreviate=True)``.
+    is a preview of the text (max 500 chars, newlines flattened).
+    Full content is available via ``Tract.show()`` or
+    ``Tract.get_content()``.
 
     Args:
         content_type: The content type discriminator (kept for the
@@ -85,11 +89,14 @@ def _auto_message(content_type: str, text: str) -> str:
         text: The text content of the commit.
 
     Returns:
-        The full flattened text, or the content_type if text is empty.
+        A text preview (max 500 chars), or the content_type if text
+        is empty.
     """
     preview = text.strip().replace("\n", " ")
     if not preview:
         return content_type
+    if len(preview) > _MAX_AUTO_MSG_LEN:
+        preview = preview[: _MAX_AUTO_MSG_LEN - 3] + "..."
     return preview
 
 
@@ -1541,6 +1548,64 @@ class Tract:
             :class:`CommitInfo` if found, *None* otherwise.
         """
         return self._commit_engine.get_commit(commit_hash)
+
+    def get_content(self, commit_or_hash: CommitInfo | str) -> str | None:
+        """Load the full content text for a commit.
+
+        Args:
+            commit_or_hash: A :class:`CommitInfo` or a commit hash string.
+
+        Returns:
+            The content text, or *None* if the commit or blob is not found.
+        """
+        if isinstance(commit_or_hash, str):
+            row = self._commit_repo.get(commit_or_hash)
+            if row is None:
+                return None
+            content_hash = row.content_hash
+        else:
+            content_hash = commit_or_hash.content_hash
+
+        blob = self._blob_repo.get(content_hash)
+        if blob is None:
+            return None
+
+        import json
+        try:
+            data = json.loads(blob.payload_json)
+        except (json.JSONDecodeError, TypeError):
+            return blob.payload_json
+
+        # Extract text from known content shapes
+        for key in ("text", "content"):
+            if key in data:
+                return data[key]
+        if "payload" in data:
+            val = data["payload"]
+            return json.dumps(val) if isinstance(val, dict) else str(val)
+        return blob.payload_json
+
+    def show(self, commit_or_hash: CommitInfo | str) -> None:
+        """Pretty-print a commit with its full content.
+
+        Like ``git show`` — displays commit metadata and the complete
+        content text.  For metadata-only output, use
+        ``info.pprint()`` instead.
+
+        Args:
+            commit_or_hash: A :class:`CommitInfo` or a commit hash string.
+        """
+        from tract.formatting import pprint_commit_info
+
+        if isinstance(commit_or_hash, str):
+            info = self.get_commit(commit_or_hash)
+            if info is None:
+                raise ValueError(f"Commit not found: {commit_or_hash}")
+        else:
+            info = commit_or_hash
+
+        content = self.get_content(info)
+        pprint_commit_info(info, content=content)
 
     def annotate(
         self,

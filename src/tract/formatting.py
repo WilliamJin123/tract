@@ -127,12 +127,20 @@ def pprint_compiled_context(ctx: Any, *, abbreviate: bool = False, file: Any = N
     console.print(summary)
 
 
-def pprint_commit_info(info: Any, *, abbreviate: bool = False, file: Any = None) -> None:
+def pprint_commit_info(
+    info: Any,
+    *,
+    abbreviate: bool = False,
+    content: str | None = None,
+    file: Any = None,
+) -> None:
     """Pretty-print a CommitInfo.
 
     Args:
         info: A CommitInfo instance.
-        abbreviate: If True, truncate long messages. Default False (show full).
+        abbreviate: If True, truncate long messages/content. Default False.
+        content: Full content text to display (loaded via ``Tract.get_content()``
+            or passed by ``Tract.show()``).
         file: Optional file-like object for output (used in tests).
     """
     console = _make_console(file)
@@ -148,7 +156,7 @@ def pprint_commit_info(info: Any, *, abbreviate: bool = False, file: Any = None)
     # Content type
     body_parts.append(f"[bold]Type:[/bold]      {info.content_type}")
 
-    # Message/content
+    # Message
     if info.message:
         msg = info.message
         if abbreviate and len(msg) > 120:
@@ -165,6 +173,15 @@ def pprint_commit_info(info: Any, *, abbreviate: bool = False, file: Any = None)
         if fields:
             parts = [f"{k}={v}" for k, v in fields.items()]
             body_parts.append(f"[bold]Config:[/bold]    {', '.join(parts)}")
+
+    # Content (when provided via Tract.show())
+    if content is not None:
+        display_content = content
+        if abbreviate and len(display_content) > 200:
+            display_content = display_content[:197] + "..."
+        body_parts.append("")
+        body_parts.append(f"[bold]Content:[/bold]")
+        body_parts.append(display_content)
 
     short_hash = info.commit_hash[:8]
     panel = Panel(
