@@ -196,6 +196,7 @@ class Tract:
         default_config: LLMConfig | None = None,
         operations: OperationConfigs | None = None,
         operation_configs: dict[str, LLMConfig] | None = None,  # deprecated: use operations=
+        tokenizer_encoding: str | None = None,
     ) -> Tract:
         """Open (or create) a Trace repository.
 
@@ -239,6 +240,10 @@ class Tract:
                 :class:`OperationConfigs` instance.
             operation_configs: *Deprecated:* Per-operation LLM configuration
                 defaults as a dict.  Use *operations=* instead.
+            tokenizer_encoding: Tiktoken encoding name for token counting.
+                Common values: ``"o200k_base"`` (GPT-4o/o1/o3, default),
+                ``"cl100k_base"`` (GPT-4/3.5-turbo).  Overrides
+                ``config.tokenizer_encoding`` when both are provided.
 
         Returns:
             A ready-to-use ``Tract`` instance.
@@ -286,9 +291,10 @@ class Tract:
         compile_record_repo = SqliteCompileRecordRepository(session)
         tool_schema_repo = SqliteToolSchemaRepository(session)
 
-        # Token counter
+        # Token counter (tokenizer_encoding= overrides config when both provided)
+        encoding = tokenizer_encoding or config.tokenizer_encoding
         token_counter = tokenizer or TiktokenCounter(
-            encoding_name=config.tokenizer_encoding,
+            encoding_name=encoding,
         )
 
         # Commit engine
