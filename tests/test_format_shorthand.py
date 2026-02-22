@@ -353,8 +353,8 @@ class TestAutoMessage:
         finally:
             t.close()
 
-    def test_long_text_truncated(self):
-        """Long text is truncated with '...' to stay within 72 chars."""
+    def test_long_text_stored_in_full(self):
+        """Long text is stored in full — display truncation is at render time."""
         from tract import Tract
 
         t = Tract.open()
@@ -363,8 +363,7 @@ class TestAutoMessage:
             info = t.system(long_text)
             commit = t.get_commit(info.commit_hash)
             assert commit is not None
-            assert len(commit.message) <= 72
-            assert commit.message.endswith("...")
+            assert commit.message == long_text
         finally:
             t.close()
 

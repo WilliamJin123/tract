@@ -71,14 +71,13 @@ if TYPE_CHECKING:
 # Auto-message generation helper
 # ------------------------------------------------------------------
 
-_MAX_AUTO_MSG_LEN = 72
-
 
 def _auto_message(content_type: str, text: str) -> str:
     """Generate a descriptive commit message from content text.
 
     The content_type is available separately on the commit; the message
-    is just a human-readable preview of the text (max 72 chars).
+    stores the full text (newlines flattened). Display-time truncation
+    is handled by ``__str__`` and ``pprint(abbreviate=True)``.
 
     Args:
         content_type: The content type discriminator (kept for the
@@ -86,14 +85,11 @@ def _auto_message(content_type: str, text: str) -> str:
         text: The text content of the commit.
 
     Returns:
-        A message like "Be helpful" (max 72 chars), or the content_type
-        if text is empty.
+        The full flattened text, or the content_type if text is empty.
     """
     preview = text.strip().replace("\n", " ")
     if not preview:
         return content_type
-    if len(preview) > _MAX_AUTO_MSG_LEN:
-        preview = preview[: _MAX_AUTO_MSG_LEN - 3] + "..."
     return preview
 
 
