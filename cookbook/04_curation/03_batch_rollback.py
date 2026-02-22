@@ -1,11 +1,11 @@
-"""Atomic Batch
+"""Batch Rollback
 
 Group multiple commits into a single atomic unit — they all land or none do.
 Useful for RAG pipelines where retrieval + question + setup must arrive
 together, or any multi-step operation where partial state is worse than
 no state.
 
-Demonstrates: batch() context manager, atomic success, rollback on failure,
+Demonstrates: batch() context manager, success path, rollback on failure,
               compile() before/after batch
 """
 
