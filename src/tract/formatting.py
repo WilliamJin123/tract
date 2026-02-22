@@ -117,13 +117,12 @@ def pprint_compiled_context(ctx: Any, *, abbreviate: bool = False, file: Any = N
     table.add_column("#", style="dim", width=4, justify="right")
     table.add_column("Role", style="bold", width=10)
     table.add_column("Content", no_wrap=False)
-    table.add_column("Tokens", justify="right", width=8)
 
     for i, msg in enumerate(ctx.messages):
         content = msg.content
         if abbreviate and len(content) > 80:
             content = content[:77] + "..."
-        table.add_row(str(i + 1), msg.role, Markdown(content), "")
+        table.add_row(str(i + 1), msg.role, Markdown(content))
 
     console.print(table)
 
