@@ -28,6 +28,7 @@ def build_summarize_prompt(
     *,
     target_tokens: int | None = None,
     instructions: str | None = None,
+    retention_instructions: list[str] | None = None,
 ) -> str:
     """Build the user prompt for summarization.
 
@@ -35,6 +36,9 @@ def build_summarize_prompt(
         messages_text: The conversation text to summarize.
         target_tokens: Optional target token count for the summary.
         instructions: Optional additional instructions to append.
+        retention_instructions: Optional list of retention instructions from
+            IMPORTANT-annotated commits. Each entry is injected as a
+            bullet point under a dedicated section.
 
     Returns:
         The formatted user prompt string.
@@ -43,6 +47,14 @@ def build_summarize_prompt(
 
     if target_tokens is not None:
         prompt += f"\nTarget approximately {target_tokens} tokens."
+
+    if retention_instructions:
+        prompt += (
+            "\n\nIMPORTANT: The following content was marked as important. "
+            "You MUST preserve these specific details in your summary:"
+        )
+        for ri in retention_instructions:
+            prompt += f"\n- {ri}"
 
     if instructions is not None:
         prompt += f"\nAdditional instructions: {instructions}"

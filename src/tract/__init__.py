@@ -26,7 +26,7 @@ from tract.models.content import (
 
 # Commit and annotation types
 from tract.models.commit import CommitInfo, CommitOperation
-from tract.models.annotations import Priority, PriorityAnnotation
+from tract.models.annotations import Priority, PriorityAnnotation, RetentionCriteria
 
 # Configuration
 from tract.models.config import TractConfig, TokenBudgetConfig, BudgetAction, LLMConfig, OperationConfigs, OperationClients
@@ -97,6 +97,9 @@ from tract.orchestrator import (
     reject_all,
 )
 
+# Tool tracking
+from tract.models.tools import hash_tool_schema
+
 # Retry protocol
 from tract.retry import RetryResult, retry_with_steering
 
@@ -151,6 +154,7 @@ __all__ = [
     # Annotations
     "Priority",
     "PriorityAnnotation",
+    "RetentionCriteria",
     # Config
     "TractConfig",
     "TokenBudgetConfig",
@@ -207,6 +211,8 @@ __all__ = [
     "PolicyConfigError",
     "OrchestratorError",
     "RetryExhaustedError",
+    # Tool tracking
+    "hash_tool_schema",
     # Retry protocol
     "RetryResult",
     "retry_with_steering",

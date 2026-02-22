@@ -14,18 +14,53 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from tract.exceptions import CompressionError
-from tract.models.annotations import Priority
+from tract.models.annotations import Priority, RetentionCriteria
 from tract.models.commit import CommitOperation
 from tract.models.compression import CompressResult, GCResult, PendingCompression
 from tract.models.content import DialogueContent
 from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM, build_summarize_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_retention(
+    summary: str,
+    criteria: list[RetentionCriteria],
+) -> tuple[bool, str | None]:
+    """Check summary against deterministic retention criteria.
+
+    Iterates over all ``RetentionCriteria`` objects and checks that every
+    ``match_patterns`` entry is present in the summary (as substring or
+    regex depending on ``match_mode``).
+
+    Args:
+        summary: The LLM-generated summary text.
+        criteria: List of RetentionCriteria from IMPORTANT commits.
+
+    Returns:
+        ``(True, None)`` if all patterns are satisfied, otherwise
+        ``(False, "Summary missing: ...")`` with details.
+    """
+    failures: list[str] = []
+    for c in criteria:
+        if c.match_patterns:
+            for pattern in c.match_patterns:
+                if c.match_mode == "regex":
+                    if not re.search(pattern, summary):
+                        failures.append(f"regex not found: {pattern}")
+                else:
+                    if pattern not in summary:
+                        failures.append(f"substring not found: {pattern}")
+    if failures:
+        return (False, "Summary missing: " + "; ".join(failures))
+    return (True, None)
+
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -137,7 +172,7 @@ def _classify_by_priority(
     range_commits: list[CommitRow],
     annotation_repo: AnnotationRepository,
     preserve: list[str] | None = None,
-) -> tuple[list[CommitRow], list[CommitRow], list[CommitRow]]:
+) -> tuple[list[CommitRow], list[CommitRow], list[CommitRow], list[CommitRow]]:
     """Classify commits by their priority annotation.
 
     Args:
@@ -146,13 +181,14 @@ def _classify_by_priority(
         preserve: Additional hashes to treat as PINNED for this invocation.
 
     Returns:
-        (pinned_commits, normal_commits, skip_commits)
+        (pinned_commits, important_commits, normal_commits, skip_commits)
     """
     preserve_set = set(preserve) if preserve else set()
     target_hashes = [r.commit_hash for r in range_commits]
     latest_annotations = annotation_repo.batch_get_latest(target_hashes)
 
     pinned: list[CommitRow] = []
+    important: list[CommitRow] = []
     normal: list[CommitRow] = []
     skip: list[CommitRow] = []
 
@@ -168,6 +204,8 @@ def _classify_by_priority(
         if annotation is not None:
             if annotation.priority == Priority.PINNED:
                 pinned.append(row)
+            elif annotation.priority == Priority.IMPORTANT:
+                important.append(row)
             elif annotation.priority == Priority.SKIP:
                 skip.append(row)
             else:
@@ -175,7 +213,7 @@ def _classify_by_priority(
         else:
             normal.append(row)
 
-    return pinned, normal, skip
+    return pinned, important, normal, skip
 
 
 def _partition_around_pinned(
@@ -322,6 +360,7 @@ def _summarize_group(
     instructions: str | None = None,
     system_prompt: str | None = None,
     llm_kwargs: dict | None = None,
+    retention_instructions: list[str] | None = None,
 ) -> str:
     """Summarize a group of messages using the LLM client.
 
@@ -332,6 +371,9 @@ def _summarize_group(
         target_tokens: Optional target token count.
         instructions: Optional additional instructions.
         system_prompt: Optional custom system prompt.
+        retention_instructions: Optional list of retention instructions from
+            IMPORTANT commits. Injected into the prompt so the LLM preserves
+            the specified details.
 
     Returns:
         Summary text string.
@@ -344,6 +386,7 @@ def _summarize_group(
         messages_text,
         target_tokens=target_tokens,
         instructions=instructions,
+        retention_instructions=retention_instructions,
     )
 
     messages = [
@@ -442,21 +485,48 @@ def compress_range(
         commits=commits, from_commit=from_commit, to_commit=to_commit,
     )
 
-    # c. Classify by priority
-    pinned_commits, normal_commits, skip_commits = _classify_by_priority(
-        range_commits, annotation_repo, preserve=preserve,
+    # c. Classify by priority (4 groups: pinned, important, normal, skip)
+    pinned_commits, important_commits, normal_commits, skip_commits = (
+        _classify_by_priority(range_commits, annotation_repo, preserve=preserve)
     )
 
+    # IMPORTANT commits are compressed alongside NORMAL commits --
+    # merge them into a single "compressible" list for token counting
+    # while tracking which ones are IMPORTANT for retention enrichment.
+    compressible_commits = normal_commits + important_commits
+
     # d. Nothing to compress?
-    if not normal_commits:
+    if not compressible_commits:
         raise CompressionError(
             "Nothing to compress -- all commits are pinned or skipped"
         )
 
-    # e. Partition around pinned
+    # e. Partition around pinned (IMPORTANT treated as compressible, not boundary)
     pinned_hashes = {r.commit_hash for r in pinned_commits}
     skip_hashes = {r.commit_hash for r in skip_commits}
     groups = _partition_around_pinned(range_commits, pinned_hashes, skip_hashes)
+
+    # e2. Gather retention criteria from IMPORTANT commits
+    important_hashes = {r.commit_hash for r in important_commits}
+    important_annotations = annotation_repo.batch_get_latest(
+        list(important_hashes)
+    ) if important_hashes else {}
+    # Build per-group retention criteria and instructions
+    group_retention: list[list[RetentionCriteria]] = []
+    group_retention_instructions: list[list[str]] = []
+    for group in groups:
+        criteria: list[RetentionCriteria] = []
+        ret_instructions: list[str] = []
+        for row in group:
+            if row.commit_hash in important_hashes:
+                ann = important_annotations.get(row.commit_hash)
+                if ann is not None and ann.retention_json:
+                    rc = RetentionCriteria(**ann.retention_json)
+                    criteria.append(rc)
+                    if rc.instructions:
+                        ret_instructions.append(rc.instructions)
+        group_retention.append(criteria)
+        group_retention_instructions.append(ret_instructions)
 
     # f. Generate summaries
     if content is not None:
@@ -472,17 +542,47 @@ def compress_range(
     elif llm_client is not None:
         # LLM mode: one summary per group
         summaries = []
-        for group in groups:
+        for gidx, group in enumerate(groups):
             text = _build_messages_text(group, blob_repo)
-            if validator is not None:
-                # Retry-guarded summarization
+            g_retention = group_retention[gidx]
+            g_ret_instructions = group_retention_instructions[gidx]
+
+            # Check if this group has deterministic retention criteria
+            has_deterministic = any(
+                rc.match_patterns for rc in g_retention
+            )
+
+            # Build a combined validator: user-supplied + retention
+            def _make_combined_validator(
+                user_validator, retention_criteria,
+            ):
+                """Build a validator that checks both user + retention criteria."""
+                def _combined(result: str) -> tuple[bool, str | None]:
+                    # Check retention criteria first
+                    ok, diag = _validate_retention(result, retention_criteria)
+                    if not ok:
+                        return (False, diag)
+                    # Then check user-supplied validator
+                    if user_validator is not None:
+                        return user_validator(result)
+                    return (True, None)
+                return _combined
+
+            needs_retry = validator is not None or has_deterministic
+
+            if needs_retry:
                 from tract.retry import retry_with_steering
 
-                # Mutable instructions for steering (amend, don't commit)
+                combined_validator = _make_combined_validator(
+                    validator, g_retention,
+                )
+
+                # Mutable instructions for steering
                 current_instructions = instructions
 
                 def _attempt_summarize(
                     _text=text,
+                    _ret_inst=g_ret_instructions,
                 ) -> str:
                     return _summarize_group(
                         _text, llm_client, token_counter,
@@ -490,10 +590,11 @@ def compress_range(
                         instructions=current_instructions,
                         system_prompt=system_prompt,
                         llm_kwargs=llm_kwargs,
+                        retention_instructions=_ret_inst or None,
                     )
 
                 def _validate_summary(result: str) -> tuple[bool, str | None]:
-                    return validator(result)
+                    return combined_validator(result)
 
                 def _steer_summary(diagnosis: str) -> None:
                     nonlocal current_instructions
@@ -518,6 +619,7 @@ def compress_range(
                     instructions=instructions,
                     system_prompt=system_prompt,
                     llm_kwargs=llm_kwargs,
+                    retention_instructions=g_ret_instructions or None,
                 )
                 summaries.append(summary)
     else:
@@ -526,15 +628,15 @@ def compress_range(
             "Call configure_llm() first or pass content='...'."
         )
 
-    # g. Calculate token counts
-    original_tokens = sum(c.token_count for c in normal_commits)
+    # g. Calculate token counts (both normal + important are "source" commits)
+    original_tokens = sum(c.token_count for c in compressible_commits)
     estimated_tokens = sum(token_counter.count_text(s) for s in summaries)
 
     # h. Collaborative mode: return PendingCompression
     if not auto_commit:
         pending = PendingCompression(
             summaries=summaries,
-            source_commits=[c.commit_hash for c in normal_commits],
+            source_commits=[c.commit_hash for c in compressible_commits],
             preserved_commits=[c.commit_hash for c in pinned_commits],
             original_tokens=original_tokens,
             estimated_tokens=estimated_tokens,
@@ -542,7 +644,7 @@ def compress_range(
         # Store context needed for later commit
         pending._range_commits = range_commits
         pending._pinned_commits = pinned_commits
-        pending._normal_commits = normal_commits
+        pending._normal_commits = compressible_commits
         pending._pinned_hashes = pinned_hashes
         pending._skip_hashes = skip_hashes
         pending._groups = groups
@@ -565,7 +667,7 @@ def compress_range(
         summaries=summaries,
         range_commits=range_commits,
         pinned_commits=pinned_commits,
-        normal_commits=normal_commits,
+        normal_commits=compressible_commits,
         pinned_hashes=pinned_hashes,
         skip_hashes=skip_hashes,
         groups=groups,

@@ -21,7 +21,7 @@ from tract.engine.cache import CacheManager
 from tract.engine.commit import CommitEngine
 from tract.engine.compiler import DefaultContextCompiler
 from tract.engine.tokens import TiktokenCounter
-from tract.models.annotations import Priority, PriorityAnnotation
+from tract.models.annotations import Priority, PriorityAnnotation, RetentionCriteria
 from tract.models.commit import CommitInfo, CommitOperation
 from tract.models.config import LLMConfig, OperationClients, OperationConfigs, TractConfig
 from tract.models.content import validate_content
@@ -43,6 +43,7 @@ from tract.storage.sqlite import (
     SqliteOperationEventRepository,
     SqliteRefRepository,
     SqliteSpawnPointerRepository,
+    SqliteToolSchemaRepository,
 )
 
 if TYPE_CHECKING:
@@ -129,6 +130,7 @@ class Tract:
         parent_repo: SqliteCommitParentRepository | None = None,
         event_repo: SqliteOperationEventRepository | None = None,
         compile_record_repo: SqliteCompileRecordRepository | None = None,
+        tool_schema_repo: object | None = None,
         verify_cache: bool = False,
     ) -> None:
         self._engine = engine
@@ -145,6 +147,7 @@ class Tract:
         self._parent_repo = parent_repo
         self._event_repo = event_repo
         self._compile_record_repo = compile_record_repo
+        self._tool_schema_repo = tool_schema_repo
         self._spawn_repo: SqliteSpawnPointerRepository | None = None
         self._custom_type_registry: dict[str, type[BaseModel]] = {}
         self._cache = CacheManager(
@@ -166,6 +169,7 @@ class Tract:
         self._default_config: LLMConfig | None = None
         self._operation_configs: OperationConfigs = OperationConfigs()
         self._operation_clients: OperationClients = OperationClients()
+        self._active_tools: list[dict] | None = None
 
     @classmethod
     def open(
@@ -274,6 +278,7 @@ class Tract:
         parent_repo = SqliteCommitParentRepository(session)
         event_repo = SqliteOperationEventRepository(session)
         compile_record_repo = SqliteCompileRecordRepository(session)
+        tool_schema_repo = SqliteToolSchemaRepository(session)
 
         # Token counter
         token_counter = tokenizer or TiktokenCounter(
@@ -329,6 +334,7 @@ class Tract:
             parent_repo=parent_repo,
             event_repo=event_repo,
             compile_record_repo=compile_record_repo,
+            tool_schema_repo=tool_schema_repo,
             verify_cache=verify_cache,
         )
         tract._spawn_repo = spawn_repo
@@ -425,6 +431,7 @@ class Tract:
         llm_client: object | None = None,
         event_repo: SqliteOperationEventRepository | None = None,
         compile_record_repo: SqliteCompileRecordRepository | None = None,
+        tool_schema_repo: object | None = None,
     ) -> Tract:
         """Create a ``Tract`` from pre-built components.
 
@@ -433,6 +440,7 @@ class Tract:
         Args:
             llm_client: Optional custom LLM client.  Caller owns lifecycle.
             compile_record_repo: Optional compile record repository.
+            tool_schema_repo: Optional tool schema repository.
         """
         if config is None:
             config = TractConfig()
@@ -462,6 +470,7 @@ class Tract:
             verify_cache=verify_cache,
             event_repo=event_repo,
             compile_record_repo=compile_record_repo,
+            tool_schema_repo=tool_schema_repo,
         )
         if llm_client is not None:
             tract.configure_llm(llm_client)
@@ -540,6 +549,127 @@ class Tract:
         return [_row_to_spawn_info(row) for row in rows]
 
     # ------------------------------------------------------------------
+    # Tool tracking
+    # ------------------------------------------------------------------
+
+    def set_tools(self, tools: list[dict] | None) -> None:
+        """Set active tool definitions for subsequent commits.
+
+        When set, every subsequent ``commit()`` (including ``system()``,
+        ``user()``, ``assistant()``, etc.) will automatically link these
+        tool definitions unless overridden by passing ``tools=`` to
+        ``commit()`` explicitly.
+
+        Pass ``None`` to clear.
+
+        Args:
+            tools: List of tool definition dicts, or None to clear.
+        """
+        self._active_tools = tools
+
+    def get_tools(self) -> list[dict] | None:
+        """Get the currently active tool definitions.
+
+        Returns:
+            The list set via ``set_tools()``, or None if not set.
+        """
+        return self._active_tools
+
+    def get_commit_tools(self, commit_hash: str) -> list[dict]:
+        """Get tool definitions linked to a specific commit.
+
+        Args:
+            commit_hash: The commit to query.
+
+        Returns:
+            List of tool definition dicts in position order, or empty
+            list if no tools are linked or repo is not available.
+        """
+        if self._tool_schema_repo is None:
+            return []
+        rows = self._tool_schema_repo.get_for_commit(commit_hash)
+        return [row.schema_json for row in rows]
+
+    def _store_and_link_tools(
+        self, commit_hash: str, tools: list[dict]
+    ) -> None:
+        """Store tool schemas (content-addressed) and link to a commit.
+
+        Args:
+            commit_hash: The commit to link tools to.
+            tools: List of tool definition dicts.
+        """
+        from datetime import datetime as _dt, timezone as _tz
+        from tract.models.tools import hash_tool_schema
+
+        now = _dt.now(_tz.utc)
+        for position, tool in enumerate(tools):
+            content_hash = hash_tool_schema(tool)
+            name = ""
+            # Extract name from common tool definition formats
+            if isinstance(tool, dict):
+                # OpenAI format: {"type": "function", "function": {"name": ...}}
+                func = tool.get("function", {})
+                if isinstance(func, dict):
+                    name = func.get("name", "")
+                # Anthropic format: {"name": ..., "input_schema": ...}
+                if not name:
+                    name = tool.get("name", "")
+            self._tool_schema_repo.store(content_hash, name, tool, now)
+            self._tool_schema_repo.link_to_commit(commit_hash, content_hash, position)
+
+    def _gather_tools_for_compile(self) -> list[dict]:
+        """Gather tools from the last commit that has tools linked.
+
+        Walks the commit chain from HEAD backwards to find the most recent
+        commit with tool definitions, and returns those tools.
+
+        Returns:
+            List of tool definition dicts, or empty list if none found.
+        """
+        if self._tool_schema_repo is None:
+            return []
+
+        current_head = self.head
+        if current_head is None:
+            return []
+
+        # Walk ancestor chain looking for commits with tools
+        ancestors = self._commit_repo.get_ancestors(current_head)
+        for commit_row in ancestors:
+            tool_hashes = self._tool_schema_repo.get_commit_tool_hashes(
+                commit_row.commit_hash
+            )
+            if tool_hashes:
+                rows = self._tool_schema_repo.get_for_commit(
+                    commit_row.commit_hash
+                )
+                return [row.schema_json for row in rows]
+
+        return []
+
+    def _inject_tools(self, result: CompiledContext) -> CompiledContext:
+        """Inject tool definitions into a compiled context.
+
+        Gathers tools from the last commit with tools linked and creates
+        a new CompiledContext with the tools field populated. Returns the
+        original result unchanged if no tools are found.
+        """
+        tools = self._gather_tools_for_compile()
+        if not tools:
+            return result
+        # CompiledContext is frozen, so create new instance with tools
+        return CompiledContext(
+            messages=result.messages,
+            token_count=result.token_count,
+            commit_count=result.commit_count,
+            token_source=result.token_source,
+            generation_configs=result.generation_configs,
+            commit_hashes=result.commit_hashes,
+            tools=tools,
+        )
+
+    # ------------------------------------------------------------------
     # Public methods
     # ------------------------------------------------------------------
 
@@ -552,6 +682,7 @@ class Tract:
         response_to: str | None = None,
         metadata: dict | None = None,
         generation_config: dict | None = None,
+        tools: list[dict] | None = None,
     ) -> CommitInfo:
         """Create a new commit.
 
@@ -563,6 +694,10 @@ class Tract:
             metadata: Optional arbitrary metadata.
             generation_config: Optional LLM generation config (temperature,
                 model, top_p, etc.).  Immutable once committed.
+            tools: Optional list of tool definitions (JSON schema dicts) to
+                associate with this commit.  When ``set_tools()`` has been
+                called, those tools are auto-linked to every subsequent commit
+                unless overridden by passing ``tools=`` explicitly.
 
         Returns:
             :class:`CommitInfo` for the new commit.
@@ -593,6 +728,11 @@ class Tract:
             metadata=metadata,
             generation_config=generation_config,
         )
+
+        # Link tool schemas to this commit
+        effective_tools = tools if tools is not None else self._active_tools
+        if effective_tools is not None and self._tool_schema_repo is not None:
+            self._store_and_link_tools(info.commit_hash, effective_tools)
 
         # Persist to database
         self._session.commit()
@@ -639,6 +779,9 @@ class Tract:
         *,
         message: str | None = None,
         metadata: dict | None = None,
+        priority: Priority | None = None,
+        retain: str | None = None,
+        retain_match: list[str] | None = None,
     ) -> CommitInfo:
         """Commit a system instruction.
 
@@ -648,17 +791,26 @@ class Tract:
             text: The instruction text.
             message: Optional commit message.
             metadata: Optional commit metadata.
+            priority: Optional priority annotation to set on the commit.
+            retain: Fuzzy retention instructions (for IMPORTANT priority).
+            retain_match: Deterministic retention patterns (for IMPORTANT priority).
 
         Returns:
             :class:`CommitInfo` for the new commit.
         """
         from tract.models.content import InstructionContent
 
-        return self.commit(
+        info = self.commit(
             InstructionContent(text=text),
             message=message,
             metadata=metadata,
         )
+        if priority is not None:
+            self.annotate(
+                info.commit_hash, priority,
+                retain=retain, retain_match=retain_match,
+            )
+        return info
 
     def user(
         self,
@@ -667,6 +819,9 @@ class Tract:
         message: str | None = None,
         name: str | None = None,
         metadata: dict | None = None,
+        priority: Priority | None = None,
+        retain: str | None = None,
+        retain_match: list[str] | None = None,
     ) -> CommitInfo:
         """Commit a user message.
 
@@ -677,17 +832,26 @@ class Tract:
             message: Optional commit message.
             name: Optional speaker name.
             metadata: Optional commit metadata.
+            priority: Optional priority annotation to set on the commit.
+            retain: Fuzzy retention instructions (for IMPORTANT priority).
+            retain_match: Deterministic retention patterns (for IMPORTANT priority).
 
         Returns:
             :class:`CommitInfo` for the new commit.
         """
         from tract.models.content import DialogueContent
 
-        return self.commit(
+        info = self.commit(
             DialogueContent(role="user", text=text, name=name),
             message=message,
             metadata=metadata,
         )
+        if priority is not None:
+            self.annotate(
+                info.commit_hash, priority,
+                retain=retain, retain_match=retain_match,
+            )
+        return info
 
     def assistant(
         self,
@@ -697,6 +861,9 @@ class Tract:
         name: str | None = None,
         metadata: dict | None = None,
         generation_config: dict | None = None,
+        priority: Priority | None = None,
+        retain: str | None = None,
+        retain_match: list[str] | None = None,
     ) -> CommitInfo:
         """Commit an assistant response.
 
@@ -708,18 +875,27 @@ class Tract:
             name: Optional speaker name.
             metadata: Optional commit metadata.
             generation_config: Optional LLM generation config.
+            priority: Optional priority annotation to set on the commit.
+            retain: Fuzzy retention instructions (for IMPORTANT priority).
+            retain_match: Deterministic retention patterns (for IMPORTANT priority).
 
         Returns:
             :class:`CommitInfo` for the new commit.
         """
         from tract.models.content import DialogueContent
 
-        return self.commit(
+        info = self.commit(
             DialogueContent(role="assistant", text=text, name=name),
             message=message,
             metadata=metadata,
             generation_config=generation_config,
         )
+        if priority is not None:
+            self.annotate(
+                info.commit_hash, priority,
+                retain=retain, retain_match=retain_match,
+            )
+        return info
 
     # ------------------------------------------------------------------
     # Conversation layer (chat/generate)
@@ -1231,17 +1407,19 @@ class Tract:
                 from tract.operations.compression import check_reorder_safety
                 warnings = check_reorder_safety(order, self._commit_repo, self._blob_repo)
             reordered = self._reorder_compiled(result, order)
+            reordered = self._inject_tools(reordered)
             return reordered, warnings
 
         # Time-travel and edit annotations: always full compile, don't touch snapshot
         if at_time is not None or at_commit is not None or include_edit_annotations:
-            return self._compiler.compile(
+            result = self._compiler.compile(
                 self._tract_id,
                 current_head,
                 at_time=at_time,
                 at_commit=at_commit,
                 include_edit_annotations=include_edit_annotations,
             )
+            return self._inject_tools(result)
 
         # Cache hit: snapshot exists for current head in LRU cache
         cached = self._cache.get(current_head)
@@ -1274,14 +1452,14 @@ class Tract:
                     f"cached {len(result.commit_hashes)}, "
                     f"fresh {len(fresh.commit_hashes)}"
                 )
-            return result
+            return self._inject_tools(result)
 
         # Cache miss: full compile and build snapshot
         result = self._compiler.compile(self._tract_id, current_head)
         snapshot = self._cache.build_snapshot(current_head, result)
         if snapshot is not None:
             self._cache.put(current_head, snapshot)
-        return result
+        return self._inject_tools(result)
 
     def _reorder_compiled(
         self, result: CompiledContext, order: list[str]
@@ -1356,18 +1534,36 @@ class Tract:
         priority: Priority,
         *,
         reason: str | None = None,
+        retain: str | None = None,
+        retain_match: list[str] | None = None,
+        retain_match_mode: str = "substring",
     ) -> PriorityAnnotation:
         """Create a priority annotation on a commit.
 
         Args:
             target_hash: Hash of the commit to annotate.
-            priority: Priority level (``SKIP``, ``NORMAL``, ``PINNED``).
+            priority: Priority level (``SKIP``, ``NORMAL``, ``IMPORTANT``, ``PINNED``).
             reason: Optional reason for the annotation.
+            retain: Fuzzy retention instructions (NL guidance for the LLM
+                summarizer). Only meaningful for ``IMPORTANT`` priority.
+            retain_match: Deterministic retention patterns -- substrings or
+                regexes that MUST appear in compression summaries.
+            retain_match_mode: How ``retain_match`` patterns are checked:
+                ``"substring"`` (default) or ``"regex"``.
 
         Returns:
             :class:`PriorityAnnotation` model.
         """
-        annotation = self._commit_engine.annotate(target_hash, priority, reason)
+        retention = None
+        if retain is not None or retain_match is not None:
+            retention = RetentionCriteria(
+                instructions=retain,
+                match_patterns=retain_match,
+                match_mode=retain_match_mode,
+            )
+        annotation = self._commit_engine.annotate(
+            target_hash, priority, reason, retention=retention
+        )
         self._session.commit()
 
         # Annotations affect ALL cached snapshots that include the target commit.
@@ -1409,6 +1605,8 @@ class Tract:
                 target_hash=row.target_hash,
                 priority=row.priority,
                 reason=row.reason,
+                retention=RetentionCriteria(**row.retention_json)
+                if row.retention_json else None,
                 created_at=row.created_at,
             )
             for row in rows

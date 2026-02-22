@@ -122,6 +122,7 @@ class AnnotationRow(Base):
     )
     priority: Mapped[Priority] = mapped_column(nullable=False)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retention_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     __table_args__ = (
@@ -343,6 +344,43 @@ class PolicyLogRow(Base):
 
     __table_args__ = (
         Index("ix_policy_log_tract_time", "tract_id", "created_at"),
+    )
+
+
+class ToolSchemaRow(Base):
+    """Content-addressed storage for tool JSON schemas.
+
+    Each unique tool definition (identified by SHA-256 of its canonical JSON)
+    is stored once. Multiple commits can reference the same tool schema.
+    """
+
+    __tablename__ = "tool_definitions"
+
+    content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    schema_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class CommitToolRow(Base):
+    """Associates a commit with the tool definitions active at that point.
+
+    Each commit can have zero or more tool definitions linked to it.
+    The position column preserves the tool ordering (important for API calls).
+    """
+
+    __tablename__ = "commit_tools"
+
+    commit_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey("commits.commit_hash"), primary_key=True,
+    )
+    tool_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey("tool_definitions.content_hash"), primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        Index("ix_commit_tools_commit", "commit_hash"),
     )
 
 

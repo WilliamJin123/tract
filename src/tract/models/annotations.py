@@ -8,17 +8,38 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
 
 class Priority(str, enum.Enum):
-    """Priority levels for commit annotations."""
+    """Priority levels for commit annotations.
+
+    Ordering: SKIP < NORMAL < IMPORTANT < PINNED.
+    """
 
     SKIP = "skip"
     NORMAL = "normal"
+    IMPORTANT = "important"
     PINNED = "pinned"
+
+
+class RetentionCriteria(BaseModel):
+    """Retention criteria for IMPORTANT commits.
+
+    Controls how the compression summarizer treats commits marked IMPORTANT:
+    - ``instructions``: Natural-language guidance injected into the summarization
+      prompt (fuzzy / LLM-interpreted).
+    - ``match_patterns``: Substrings or regexes that MUST appear in the
+      compression summary (deterministic validation after summarization).
+    - ``match_mode``: How ``match_patterns`` are checked -- ``"substring"``
+      (default) or ``"regex"``.
+    """
+
+    instructions: str | None = None
+    match_patterns: list[str] | None = None
+    match_mode: Literal["substring", "regex"] = "substring"
 
 
 class PriorityAnnotation(BaseModel):
@@ -29,6 +50,7 @@ class PriorityAnnotation(BaseModel):
     target_hash: str
     priority: Priority
     reason: Optional[str] = None
+    retention: RetentionCriteria | None = None
     created_at: datetime
 
 

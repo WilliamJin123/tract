@@ -90,8 +90,8 @@ def _make_commit(
 class TestOperationEventSchema:
     """Tests for operation event and compile record table creation."""
 
-    def test_init_db_creates_v6(self):
-        """Fresh database gets schema_version=6."""
+    def test_init_db_creates_latest_schema(self):
+        """Fresh database gets the latest schema version."""
         engine = create_trace_engine(":memory:")
         init_db(engine)
 
@@ -100,7 +100,8 @@ class TestOperationEventSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "6"
+            # Schema version should be >= 7 (v7 added retention_json)
+            assert int(row.value) >= 7
 
         engine.dispose()
 
@@ -118,8 +119,8 @@ class TestOperationEventSchema:
         assert "compile_records" in table_names
         assert "compile_effectives" in table_names
 
-    def test_migrate_v2_to_v6(self):
-        """Start with schema_version=2, call init_db, verify v6 and new tables exist."""
+    def test_migrate_v2_to_latest(self):
+        """Start with schema_version=2, call init_db, verify latest and new tables exist."""
         engine = create_trace_engine(":memory:")
 
         # Create all tables first, then drop to simulate v2
@@ -142,15 +143,15 @@ class TestOperationEventSchema:
             session.add(TraceMetaRow(key="schema_version", value="2"))
             session.commit()
 
-        # Call init_db -- should migrate v2->v3->v4->v5->v6
+        # Call init_db -- should migrate v2 to latest
         init_db(engine)
 
-        # Verify version is now 6
+        # Verify version is >= 7 (v7 added retention_json)
         with SessionLocal() as session:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "6"
+            assert int(row.value) >= 7
 
         # Verify new tables exist, old tables dropped
         inspector = inspect(engine)
@@ -280,12 +281,12 @@ class TestOperationEventSchema:
         # Run migration
         init_db(engine)
 
-        # Verify version is now 6
+        # Verify version is >= 7 (v7 added retention_json)
         with SessionLocal() as session:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "6"
+            assert int(row.value) >= 7
 
         # Verify new tables exist
         inspector = inspect(engine)

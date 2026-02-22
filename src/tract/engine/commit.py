@@ -20,7 +20,7 @@ from tract.exceptions import (
     CommitNotFoundError,
     EditTargetError,
 )
-from tract.models.annotations import DEFAULT_TYPE_PRIORITIES, Priority, PriorityAnnotation
+from tract.models.annotations import DEFAULT_TYPE_PRIORITIES, Priority, PriorityAnnotation, RetentionCriteria
 from tract.models.commit import CommitInfo, CommitOperation
 from tract.models.config import BudgetAction, TokenBudgetConfig
 from tract.storage.schema import AnnotationRow, BlobRow, CommitRow
@@ -363,6 +363,7 @@ class CommitEngine:
         target_hash: str,
         priority: Priority,
         reason: str | None = None,
+        retention: RetentionCriteria | None = None,
     ) -> PriorityAnnotation:
         """Create a priority annotation on a commit.
 
@@ -370,6 +371,7 @@ class CommitEngine:
             target_hash: Hash of the commit to annotate.
             priority: Priority level to set.
             reason: Optional reason for the annotation.
+            retention: Optional retention criteria (for IMPORTANT commits).
 
         Returns:
             PriorityAnnotation model.
@@ -382,11 +384,13 @@ class CommitEngine:
             raise CommitNotFoundError(target_hash)
 
         now = datetime.now(timezone.utc)
+        retention_json = retention.model_dump() if retention is not None else None
         annotation = AnnotationRow(
             tract_id=self._tract_id,
             target_hash=target_hash,
             priority=priority,
             reason=reason,
+            retention_json=retention_json,
             created_at=now,
         )
         self._annotation_repo.save(annotation)
@@ -397,6 +401,7 @@ class CommitEngine:
             target_hash=target_hash,
             priority=priority,
             reason=reason,
+            retention=retention,
             created_at=now,
         )
 

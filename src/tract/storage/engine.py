@@ -167,12 +167,13 @@ def init_db(engine: Engine) -> None:
     """Initialize the database: create all tables and set schema version.
 
     Creates all tables defined in Base.metadata, then sets schema_version.
-    For new databases, schema_version is set to "6".
-    For existing v1 databases, migrates v1->v2->v3->v4->v5->v6.
-    For existing v2 databases, migrates v2->v3->v4->v5->v6.
-    For existing v3 databases, migrates v3->v4->v5->v6.
-    For existing v4 databases, migrates v4->v5->v6 (policy tables).
-    For existing v5 databases, migrates v5->v6 (unified operation events).
+    For new databases, schema_version is set to "7".
+    For existing v1 databases, migrates v1->v2->v3->v4->v5->v6->v7.
+    For existing v2 databases, migrates v2->v3->v4->v5->v6->v7.
+    For existing v3 databases, migrates v3->v4->v5->v6->v7.
+    For existing v4 databases, migrates v4->v5->v6->v7 (policy tables).
+    For existing v5 databases, migrates v5->v6->v7 (unified operation events).
+    For existing v6 databases, migrates v6->v7 (retention_json on annotations).
     """
     from sqlalchemy import text
 
@@ -185,8 +186,8 @@ def init_db(engine: Engine) -> None:
         ).scalar_one_or_none()
 
         if existing is None:
-            # New database: set schema version to 6
-            session.add(TraceMetaRow(key="schema_version", value="6"))
+            # New database: set schema version to 8
+            session.add(TraceMetaRow(key="schema_version", value="8"))
             session.commit()
         elif existing.value == "1":
             # Migrate v1 -> v2: create commit_parents table
@@ -266,4 +267,27 @@ def init_db(engine: Engine) -> None:
                 conn.execute(text("DROP TABLE IF EXISTS compressions"))
                 conn.commit()
             existing.value = "6"
+            session.commit()
+        if existing is not None and existing.value == "6":
+            # Migrate v6 -> v7: add retention_json column to annotations
+            with engine.connect() as conn:
+                # Check if column already exists (idempotent)
+                columns = [
+                    r[1]
+                    for r in conn.execute(
+                        text("PRAGMA table_info(annotations)")
+                    ).fetchall()
+                ]
+                if "retention_json" not in columns:
+                    conn.execute(
+                        text("ALTER TABLE annotations ADD COLUMN retention_json TEXT")
+                    )
+                    conn.commit()
+            existing.value = "7"
+            session.commit()
+        if existing is not None and existing.value == "7":
+            # Migrate v7 -> v8: add tool tracking tables
+            for table_name in ["tool_definitions", "commit_tools"]:
+                Base.metadata.tables[table_name].create(engine, checkfirst=True)
+            existing.value = "8"
             session.commit()

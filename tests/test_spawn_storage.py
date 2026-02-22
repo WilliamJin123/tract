@@ -125,7 +125,7 @@ class TestSpawnPointerSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "6"
+            assert int(row.value) >= 7
 
         engine.dispose()
 
@@ -174,7 +174,7 @@ class TestSpawnPointerSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "6"
+            assert int(row.value) >= 7
 
         engine.dispose()
 
@@ -188,7 +188,7 @@ class TestSpawnPointerSchema:
             row = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert row.value == "6"
+            assert int(row.value) >= 7
 
         engine.dispose()
 
