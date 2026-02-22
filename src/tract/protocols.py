@@ -41,6 +41,7 @@ class CompiledContext:
     token_source: str = ""
     generation_configs: list[LLMConfig | None] = field(default_factory=list)
     commit_hashes: list[str] = field(default_factory=list)
+    tools: list[dict] = field(default_factory=list)
 
     def to_dicts(self) -> list[dict[str, str]]:
         """Convert messages to a list of dicts with role/content keys.
@@ -96,6 +97,34 @@ class CompiledContext:
             "messages": messages,
         }
 
+    def to_openai_params(self) -> dict[str, object]:
+        """Full OpenAI API params dict with messages and tools.
+
+        Returns a dict with ``"messages"`` and optionally ``"tools"``
+        keys, suitable for passing to the OpenAI chat completions API.
+
+        Returns:
+            Dict with messages and tools (if any).
+        """
+        params: dict[str, object] = {"messages": self.to_dicts()}
+        if self.tools:
+            params["tools"] = list(self.tools)
+        return params
+
+    def to_anthropic_params(self) -> dict[str, object]:
+        """Full Anthropic API params dict with system, messages, and tools.
+
+        Returns a dict with ``"system"``, ``"messages"``, and optionally
+        ``"tools"`` keys, suitable for passing to the Anthropic messages API.
+
+        Returns:
+            Dict with system, messages, and tools (if any).
+        """
+        result = self.to_anthropic()
+        if self.tools:
+            result["tools"] = list(self.tools)
+        return result
+
     def __str__(self) -> str:
         return (
             f"CompiledContext(messages={self.commit_count},"
@@ -130,6 +159,7 @@ class CompileSnapshot:
     generation_configs: tuple[dict, ...] = ()
     commit_hashes: tuple[str, ...] = ()
     message_token_counts: tuple[int, ...] = ()
+    tool_hashes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

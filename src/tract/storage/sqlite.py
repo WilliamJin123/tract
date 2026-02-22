@@ -22,12 +22,14 @@ from tract.storage.repositories import (
     PolicyRepository,
     RefRepository,
     SpawnPointerRepository,
+    ToolSchemaRepository,
 )
 from tract.storage.schema import (
     AnnotationRow,
     BlobRow,
     CommitParentRow,
     CommitRow,
+    CommitToolRow,
     CompileEffectiveRow,
     CompileRecordRow,
     OperationCommitRow,
@@ -36,6 +38,7 @@ from tract.storage.schema import (
     PolicyProposalRow,
     RefRow,
     SpawnPointerRow,
+    ToolSchemaRow,
 )
 
 
@@ -942,3 +945,77 @@ class SqlitePolicyRepository(PolicyRepository):
             self._session.delete(row)
         self._session.flush()
         return count
+
+
+class SqliteToolSchemaRepository(ToolSchemaRepository):
+    """SQLite implementation of tool schema storage.
+
+    Content-addressed: store() checks existence before insert.
+    get_for_commit() joins through CommitToolRow ordered by position.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def store(
+        self, content_hash: str, name: str, schema: dict, created_at: datetime
+    ) -> ToolSchemaRow:
+        """Store a tool schema (idempotent)."""
+        existing = self.get(content_hash)
+        if existing is not None:
+            return existing
+        row = ToolSchemaRow(
+            content_hash=content_hash,
+            name=name,
+            schema_json=schema,
+            created_at=created_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return row
+
+    def get(self, content_hash: str) -> ToolSchemaRow | None:
+        stmt = select(ToolSchemaRow).where(
+            ToolSchemaRow.content_hash == content_hash
+        )
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def get_by_name(self, name: str) -> Sequence[ToolSchemaRow]:
+        stmt = (
+            select(ToolSchemaRow)
+            .where(ToolSchemaRow.name == name)
+            .order_by(ToolSchemaRow.created_at)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def get_for_commit(self, commit_hash: str) -> Sequence[ToolSchemaRow]:
+        """Get tool schemas for a commit, ordered by position."""
+        stmt = (
+            select(ToolSchemaRow)
+            .join(
+                CommitToolRow,
+                ToolSchemaRow.content_hash == CommitToolRow.tool_hash,
+            )
+            .where(CommitToolRow.commit_hash == commit_hash)
+            .order_by(CommitToolRow.position)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def link_to_commit(
+        self, commit_hash: str, tool_hash: str, position: int
+    ) -> None:
+        row = CommitToolRow(
+            commit_hash=commit_hash,
+            tool_hash=tool_hash,
+            position=position,
+        )
+        self._session.add(row)
+        self._session.flush()
+
+    def get_commit_tool_hashes(self, commit_hash: str) -> Sequence[str]:
+        stmt = (
+            select(CommitToolRow.tool_hash)
+            .where(CommitToolRow.commit_hash == commit_hash)
+            .order_by(CommitToolRow.position)
+        )
+        return list(self._session.execute(stmt).scalars().all())

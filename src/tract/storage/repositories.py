@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         PolicyLogRow,
         PolicyProposalRow,
         SpawnPointerRow,
+        ToolSchemaRow,
     )
 
 
@@ -507,4 +508,57 @@ class PolicyRepository(ABC):
 
         Returns the number of entries deleted. Used for audit log GC.
         """
+        ...
+
+
+class ToolSchemaRepository(ABC):
+    """Abstract interface for tool schema storage.
+
+    Content-addressed storage for tool JSON schemas (function definitions
+    passed to LLM APIs). Each unique schema is stored once; commits
+    reference schemas through the CommitToolRow join table.
+    """
+
+    @abstractmethod
+    def store(
+        self, content_hash: str, name: str, schema: dict, created_at: datetime
+    ) -> ToolSchemaRow:
+        """Store a tool schema (idempotent -- returns existing if hash matches).
+
+        Args:
+            content_hash: SHA-256 of the canonical JSON.
+            name: Tool function name.
+            schema: Full tool definition dict.
+            created_at: Creation timestamp.
+
+        Returns:
+            The stored or existing ToolSchemaRow.
+        """
+        ...
+
+    @abstractmethod
+    def get(self, content_hash: str) -> ToolSchemaRow | None:
+        """Get a tool schema by its content hash. Returns None if not found."""
+        ...
+
+    @abstractmethod
+    def get_by_name(self, name: str) -> Sequence[ToolSchemaRow]:
+        """Get all tool schema versions with the given name."""
+        ...
+
+    @abstractmethod
+    def get_for_commit(self, commit_hash: str) -> Sequence[ToolSchemaRow]:
+        """Get tool schemas linked to a commit, ordered by position."""
+        ...
+
+    @abstractmethod
+    def link_to_commit(
+        self, commit_hash: str, tool_hash: str, position: int
+    ) -> None:
+        """Link a tool schema to a commit at a given position."""
+        ...
+
+    @abstractmethod
+    def get_commit_tool_hashes(self, commit_hash: str) -> Sequence[str]:
+        """Get content hashes of tools linked to a commit, ordered by position."""
         ...
