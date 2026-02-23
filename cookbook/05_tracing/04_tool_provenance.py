@@ -24,7 +24,7 @@ load_dotenv()
 
 CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
 CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-CEREBRAS_MODEL = "llama-4-scout-17b-16e-instruct"
+CEREBRAS_MODEL = "gpt-oss-120b"
 
 # --- Tool definitions (OpenAI function calling format) ---
 
