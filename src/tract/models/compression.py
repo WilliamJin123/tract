@@ -62,6 +62,7 @@ class PendingCompression:
     _branch_name: str | None = field(default=None, repr=False)
     _target_tokens: int | None = field(default=None, repr=False)
     _instructions: str | None = field(default=None, repr=False)
+    _system_prompt: str | None = field(default=None, repr=False)
     _head_hash: str | None = field(default=None, repr=False)
     _generation_config: dict | None = field(default=None, repr=False)
 

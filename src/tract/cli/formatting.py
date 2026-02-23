@@ -15,6 +15,7 @@ from rich.table import Table
 if TYPE_CHECKING:
     from tract.models.branch import BranchInfo
     from tract.models.commit import CommitInfo
+    from tract.models.compression import CompressResult
     from tract.models.merge import MergeResult
     from tract.operations.diff import DiffResult
 
@@ -215,6 +216,23 @@ def format_merge_result(result: MergeResult, console: Console) -> None:
                 f"  [red]-[/red] {conflict.conflict_type}: target "
                 f"[yellow]{target[:8]}[/yellow]"
             )
+
+
+def format_compress_result(result: CompressResult, console: Console) -> None:
+    """Display compression result summary."""
+    ratio_pct = f"{result.compression_ratio:.0%}"
+    console.print(
+        f"[green]Compressed:[/green] "
+        f"{result.original_tokens} -> {result.compressed_tokens} tokens ({ratio_pct})"
+    )
+    console.print(
+        f"  {len(result.source_commits)} commits archived, "
+        f"{len(result.preserved_commits)} preserved (PINNED)"
+    )
+    console.print(
+        f"  {len(result.summary_commits)} summary commit(s) created"
+    )
+    console.print(f"  HEAD now at [yellow]{result.new_head[:8]}[/yellow]")
 
 
 def format_error(message: str, console: Console) -> None:

@@ -35,7 +35,9 @@ def build_summarize_prompt(
     Args:
         messages_text: The conversation text to summarize.
         target_tokens: Optional target token count for the summary.
-        instructions: Optional additional instructions to append.
+        instructions: Extra guidance appended to the default user prompt.
+            The base summarization prompt is preserved; this is added as
+            "Additional instructions: ..." at the end.
         retention_instructions: Optional list of retention instructions from
             IMPORTANT-annotated commits. Each entry is injected as a
             bullet point under a dedicated section.
@@ -95,7 +97,8 @@ def build_collapse_prompt(
         messages_text: The child tract's conversation text to summarize.
         purpose: The purpose/task that was delegated to the child.
         target_tokens: Optional target token count for the summary.
-        instructions: Optional additional instructions to append.
+        instructions: Extra guidance appended to the default collapse prompt.
+            The base prompt is preserved; this is added at the end.
 
     Returns:
         The formatted user prompt string.

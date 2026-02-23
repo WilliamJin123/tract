@@ -369,8 +369,13 @@ def _summarize_group(
         llm_client: LLM client implementing the LLMClient protocol.
         token_counter: For token counting.
         target_tokens: Optional target token count.
-        instructions: Optional additional instructions.
-        system_prompt: Optional custom system prompt.
+        instructions: Extra guidance appended to the **user message** of the
+            summarization LLM call. The default prompt is preserved; this
+            text is added as "Additional instructions: ..." at the end.
+        system_prompt: Completely replaces the **system message** of the
+            summarization LLM call (DEFAULT_SUMMARIZE_SYSTEM). Controls the
+            LLM's persona and behavioral guidelines. When None, the built-in
+            system prompt is used.
         retention_instructions: Optional list of retention instructions from
             IMPORTANT commits. Injected into the prompt so the LLM preserves
             the specified details.
@@ -651,6 +656,7 @@ def compress_range(
         pending._branch_name = branch_name
         pending._target_tokens = target_tokens
         pending._instructions = instructions
+        pending._system_prompt = system_prompt
         pending._head_hash = head_hash
         pending._generation_config = generation_config
         return pending
@@ -674,6 +680,7 @@ def compress_range(
         original_tokens=original_tokens,
         target_tokens=target_tokens,
         instructions=instructions,
+        system_prompt=system_prompt,
         branch_name=branch_name,
         type_registry=type_registry,
         generation_config=generation_config,
@@ -699,6 +706,7 @@ def _commit_compression(
     original_tokens: int,
     target_tokens: int | None,
     instructions: str | None,
+    system_prompt: str | None,
     branch_name: str | None,
     type_registry: dict[str, type] | None = None,
     expected_head: str | None = None,
@@ -840,7 +848,11 @@ def _commit_compression(
         created_at=datetime.now(timezone.utc),
         original_tokens=original_tokens,
         compressed_tokens=compressed_tokens,
-        params_json={"target_tokens": target_tokens, "instructions": instructions},
+        params_json={
+            "target_tokens": target_tokens,
+            "instructions": instructions,
+            "system_prompt": system_prompt,
+        },
     )
 
     # Record sources (normal commits that were compressed)

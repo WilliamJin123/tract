@@ -141,6 +141,7 @@ from tract.cli.commands.checkout import checkout  # noqa: E402
 from tract.cli.commands.branch import branch  # noqa: E402
 from tract.cli.commands.switch import switch  # noqa: E402
 from tract.cli.commands.merge import merge  # noqa: E402
+from tract.cli.commands.compress import compress  # noqa: E402
 
 cli.add_command(log)
 cli.add_command(status)
@@ -150,3 +151,4 @@ cli.add_command(checkout)
 cli.add_command(branch)
 cli.add_command(switch)
 cli.add_command(merge)
+cli.add_command(compress)

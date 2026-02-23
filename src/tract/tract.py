@@ -2801,8 +2801,21 @@ class Tract:
             preserve: Hashes to treat as temporarily PINNED.
             auto_commit: If True, commit immediately.
             content: Manual summary text (bypasses LLM).
-            instructions: Additional LLM instructions.
-            system_prompt: Custom system prompt for LLM.
+            instructions: Extra guidance appended to the **user message** of the
+                summarization LLM call (the default prompt is preserved). This
+                is added as "Additional instructions: ..." at the end of the
+                task prompt. Use this to steer what the summary focuses on.
+                Stored in provenance for auditability.
+            system_prompt: Completely replaces the **system message** of the
+                summarization LLM call (``DEFAULT_SUMMARIZE_SYSTEM``). This
+                controls the LLM's persona and behavioral guidelines. When
+                ``None``, the built-in system prompt is used. To extend rather
+                than replace, import the default and concatenate::
+
+                    from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM
+                    t.compress(..., system_prompt=DEFAULT_SUMMARIZE_SYSTEM + "\\nAlso use bullet points.")
+
+                Stored in provenance for auditability.
             model: Override model for LLM summarization.
             temperature: Override temperature for LLM summarization.
             max_tokens: Override max_tokens for LLM summarization.
@@ -2946,6 +2959,7 @@ class Tract:
                 original_tokens=pending.original_tokens,
                 target_tokens=pending._target_tokens,
                 instructions=pending._instructions,
+                system_prompt=pending._system_prompt,
                 branch_name=pending._branch_name,
                 type_registry=self._custom_type_registry,
                 expected_head=pending._head_hash,

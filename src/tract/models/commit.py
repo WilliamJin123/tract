@@ -59,8 +59,13 @@ class CommitInfo(BaseModel):
             msg = msg[:57] + "..."
         return f"{short_hash} {msg}"
 
-    def pprint(self, *, abbreviate: bool = False) -> None:
-        """Pretty-print this commit using rich formatting."""
+    def pprint(self, *, max_chars: int | None = None) -> None:
+        """Pretty-print this commit using rich formatting.
+
+        Args:
+            max_chars: Max display characters before truncation.
+                None (default) means no limit.
+        """
         from tract.formatting import pprint_commit_info
 
-        pprint_commit_info(self, abbreviate=abbreviate)
+        pprint_commit_info(self, max_chars=max_chars)

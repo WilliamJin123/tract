@@ -21,9 +21,9 @@ from tract import Priority, Tract
 
 load_dotenv()
 
-CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
-CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-CEREBRAS_MODEL = "gpt-oss-120b"
+TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
+TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
+MODEL_ID = "llama3.1-8b"
 
 
 def main():
@@ -39,18 +39,18 @@ def main():
     print("  your text. PINNED commits survive verbatim.")
 
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
         # Pin the system prompt so it survives compression
-        sys_ci = t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise astronomy guide.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        t.chat("What are decorators?")
-        t.chat("What about context managers?")
-        t.chat("And generators?")
+        t.chat("How do stars form?")
+        t.chat("What are black holes?")
+        t.chat("Explain neutron stars.")
 
         print("\n  BEFORE compression:\n")
         ctx_before = t.compile()
@@ -60,10 +60,10 @@ def main():
         # Compress everything -- PINNED system prompt survives
         result = t.compress(
             content=(
-                "User learned about three Python features: "
-                "decorators (@syntax wrapping functions), "
-                "context managers (with statements for setup/teardown), "
-                "and generators (yield keyword for lazy iteration)."
+                "User learned about three stellar phenomena: "
+                "star formation (nebulae collapsing under gravity), "
+                "black holes (collapsed massive stars with event horizons), "
+                "and neutron stars (ultra-dense remnants of supernovae)."
             ),
         )
 
@@ -97,36 +97,37 @@ def main():
     print("  verbatim while everything else gets summarized.")
 
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
-        sys_ci = t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise history tutor.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        t.chat("What are decorators?")
-        t.chat("What about context managers?")
+        t.chat("What caused the fall of Rome?")
+        t.chat("Explain the Renaissance.")
 
         # This Q&A is the one we want to keep
-        r3 = t.chat("What's the GIL and how does it affect threading?")
+        r3 = t.chat("What was the Space Race and who won?")
 
         print("\n  BEFORE compression:\n")
         t.compile().pprint(style="compact")
 
-        # Get the user + assistant hashes for the GIL Q&A (last pair)
+        # Get the user + assistant hashes for the Space Race Q&A (last pair)
         all_entries = list(t.log(limit=20))
         all_entries.reverse()
         # [0]=system, [1,2]=r1, [3,4]=r2, [5]=r3_user, [6]=r3_asst
         r3_hashes = [all_entries[5].commit_hash, all_entries[6].commit_hash]
 
-        print(f"\n  Preserving the GIL Q&A (last pair): "
+        print(f"\n  Preserving the Space Race Q&A (last pair): "
               f"[{r3_hashes[0][:8]}, {r3_hashes[1][:8]}]")
 
         result = t.compress(
             content=(
-                "User learned about decorators (@syntax wrapping) "
-                "and context managers (with statements for setup/teardown)."
+                "User learned about the fall of Rome (economic decline, "
+                "military overreach, barbarian invasions) and the "
+                "Renaissance (cultural rebirth in 14th-17th century Europe)."
             ),
             preserve=r3_hashes,
         )
@@ -137,7 +138,7 @@ def main():
         print("\n  AFTER compression:\n")
         t.compile().pprint(style="compact")
 
-        print("\n  GIL Q&A passed through verbatim. No permanent annotation needed.")
+        print("\n  Space Race Q&A passed through verbatim. No permanent annotation needed.")
 
     # =================================================================
     # Part 3: Continue after compression
@@ -151,17 +152,17 @@ def main():
     print("  New messages build on top of the compressed summary.")
 
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
-        sys_ci = t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise fitness coach.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        t.chat("What are decorators?")
-        t.chat("What about context managers?")
-        t.chat("And generators?")
+        t.chat("What is progressive overload?")
+        t.chat("Explain compound vs isolation exercises.")
+        t.chat("What are the best recovery strategies?")
 
         print("\n  BEFORE compression:\n")
         ctx_before = t.compile()
@@ -169,7 +170,7 @@ def main():
 
         # Compress
         t.compress(
-            content="User learned about decorators, context managers, and generators.",
+            content="User learned about progressive overload, compound vs isolation exercises, and recovery strategies.",
         )
 
         print("\n  AFTER compression (before new messages):\n")
@@ -177,7 +178,7 @@ def main():
 
         # Continue chatting -- the LLM sees the compressed summary as context
         print("\n  Continuing the conversation...\n")
-        r = t.chat("Based on what we discussed, which concept is most useful for file handling?")
+        r = t.chat("Based on what we discussed, what's the single best exercise for a beginner?")
         r.pprint()
 
         print("\n  FINAL context:\n")

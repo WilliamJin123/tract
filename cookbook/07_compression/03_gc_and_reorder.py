@@ -18,9 +18,9 @@ from tract import Priority, Tract
 
 load_dotenv()
 
-CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
-CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-CEREBRAS_MODEL = "gpt-oss-120b"
+TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
+TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
+MODEL_ID = "llama3.1-8b"
 
 
 def main():
@@ -36,39 +36,56 @@ def main():
     print("  in the database. gc() removes them to reclaim storage.")
 
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
         # Build a conversation and compress it
-        sys_ci = t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise travel advisor.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        t.chat("What are decorators?")
-        t.chat("What about context managers?")
-        t.chat("Explain generators and yield.")
-        t.chat("What's the difference between args and kwargs?")
+        t.chat("Best time to visit Japan?")
+        t.chat("What about Iceland?")
+        t.chat("Tips for visiting Morocco.")
+        t.chat("Best way to travel through Southeast Asia?")
 
         ctx_before = t.compile()
         print(f"\n  Built conversation: {len(ctx_before.messages)} messages, "
               f"{ctx_before.token_count} tokens")
 
-        # Compress to create archived commits
-        compress_result = t.compress(
-            content=(
-                "User asked about decorators (@syntax wrapping), context "
-                "managers (with statements), generators (yield keyword), "
-                "and args/kwargs (*args for positional, **kwargs for keyword)."
-            ),
-        )
+        # Collaborative compression: LLM drafts, user reviews & edits
+        pending = t.compress(target_tokens=100, auto_commit=False)
 
-        print(f"  Compressed: {len(compress_result.source_commits)} commits archived")
+        print(f"\n  PendingCompression (NOT yet committed):")
+        print(f"    summaries:        {len(pending.summaries)} draft(s)")
+        print(f"    source_commits:   {len(pending.source_commits)}")
+        print(f"    original_tokens:  {pending.original_tokens}")
+        print(f"    estimated_tokens: {pending.estimated_tokens}")
+
+        # Interactive review: open each draft in $EDITOR for real editing
+        import click as _click
+
+        for i, summary in enumerate(pending.summaries):
+            print(f"\n  Opening summary [{i}] in your editor...")
+            edited = _click.edit(summary)
+            if edited is not None and edited.strip() != summary.strip():
+                pending.edit_summary(i, edited.strip())
+                print(f"  Summary [{i}] updated with your edits.")
+            else:
+                print(f"  Summary [{i}] kept as-is.")
+
+        # Approve -- NOW it commits
+        compress_result = pending.approve()
+
+        print(f"\n  Approved! CompressResult:")
+        print(f"    {len(compress_result.source_commits)} commits archived")
         print(f"    {compress_result.original_tokens} -> {compress_result.compressed_tokens} tokens")
+        print(f"    compression_ratio: {compress_result.compression_ratio:.1%}")
 
         ctx_after = t.compile()
         print(f"\n  Post-compression context:")
-        ctx_after.pprint(style="compact")
+        ctx_after.pprint(style="chat")
 
         # GC with 0-day archive retention (immediate cleanup for demo)
         print(f"\n  Running gc(archive_retention_days=0)...\n")
@@ -84,7 +101,7 @@ def main():
 
         # Context is unchanged -- GC only removes unreachable data
         print(f"\n  Context unchanged after GC:")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="chat")
         print(f"\n  Archived source commits are gone. Reachable data is safe.")
 
     # =================================================================
@@ -100,21 +117,18 @@ def main():
     print("  None (default) = archives kept forever.")
 
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
-        sys_ci = t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise chess coach.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        t.chat("What's a closure?")
-        t.chat("What's a lambda?")
+        t.chat("What's the Sicilian Defense?")
+        t.chat("Explain the Queen's Gambit.")
 
-        t.compress(
-            content="User asked about closures (functions capturing scope) "
-                    "and lambdas (anonymous functions).",
-        )
+        t.compress(target_tokens=80)
 
         # Conservative: keep archives forever
         print(f"\n  gc(archive_retention_days=None)  -- keep archives forever")
@@ -144,36 +158,36 @@ def main():
     print("  appearing before their targets.")
 
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
-        t.system("You are a concise Python tutor.")
-        r1 = t.chat("What are decorators?")
-        r2 = t.chat("What about generators?")
-        r3 = t.chat("Explain the GIL.")
+        t.system("You are a concise nutrition expert.")
+        r1 = t.chat("What are macronutrients?")
+        r2 = t.chat("Explain intermittent fasting.")
+        r3 = t.chat("What's the role of gut bacteria in digestion?")
 
         print("\n  Original order:\n")
         ctx = t.compile()
-        ctx.pprint(style="compact")
+        ctx.pprint(style="chat")
 
         # Get commit hashes (parallel to messages)
         hashes = ctx.commit_hashes
         # [0]=system, [1]=r1_user, [2]=r1_asst, [3]=r2_user, [4]=r2_asst, [5]=r3_user, [6]=r3_asst
 
-        # Reorder: GIL first, then decorators, then generators
+        # Reorder: gut bacteria first, then macros, then fasting
         new_order = [
             hashes[0],              # system stays first
-            hashes[5], hashes[6],   # r3: GIL
-            hashes[1], hashes[2],   # r1: decorators
-            hashes[3], hashes[4],   # r2: generators
+            hashes[5], hashes[6],   # r3: gut bacteria
+            hashes[1], hashes[2],   # r1: macronutrients
+            hashes[3], hashes[4],   # r2: fasting
         ]
 
         reordered, warnings = t.compile(order=new_order)
 
-        print(f"\n  Reordered (GIL first):\n")
-        reordered.pprint(style="compact")
+        print(f"\n  Reordered (gut bacteria first):\n")
+        reordered.pprint(style="chat")
 
         print(f"\n  Warnings: {len(warnings)}")
         for w in warnings:

@@ -24,9 +24,9 @@ from tract import Priority, Tract
 
 load_dotenv()
 
-CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
-CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-CEREBRAS_MODEL = "gpt-oss-120b"
+TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
+TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
+MODEL_ID = "gpt-oss-120b"
 
 
 def main():
@@ -42,23 +42,23 @@ def main():
     print("  PINNED commits survive verbatim. SKIP commits are excluded.")
 
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
-        sys_ci = t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise economics tutor.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        t.chat("What are decorators?")
-        t.chat("What about context managers?")
+        t.chat("What is inflation and what causes it?")
+        t.chat("Explain supply and demand.")
         noise = t.user("[debug] latency=342ms | cache=miss")
         t.annotate(noise.commit_hash, Priority.SKIP)
-        t.chat("What's the difference between a module and a package?")
+        t.chat("What causes a recession?")
 
         print("\n  BEFORE compression:\n")
         ctx_before = t.compile()
-        ctx_before.pprint(style="compact")
+        ctx_before.pprint(style="chat")
         print(f"\n  {ctx_before.token_count} tokens, {len(ctx_before.messages)} messages")
         print(f"  (system is PINNED, debug noise is SKIP)")
 
@@ -74,7 +74,7 @@ def main():
 
         print("\n  AFTER compression:\n")
         ctx_after = t.compile()
-        ctx_after.pprint(style="compact")
+        ctx_after.pprint(style="table")
         print(f"\n  {ctx_after.token_count} tokens, {len(ctx_after.messages)} messages")
         print(f"\n  PINNED system survived. SKIP noise excluded. Rest summarized by LLM.")
 
@@ -91,38 +91,43 @@ def main():
     print("  the entire prompt.")
 
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
-        sys_ci = t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise philosophy tutor.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        t.chat("What are decorators? Give me a practical example.")
-        t.chat("What about context managers? Show me a database example.")
-        t.chat("Explain generators. When should I use them over lists?")
+        t.chat("What is Stoicism? Give me a practical example.")
+        t.chat("What about existentialism? Show me a real-life scenario.")
+        t.chat("Explain utilitarianism. When does it fail?")
 
         print("\n  BEFORE compression:\n")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="chat")
 
-        # Focus the summary on code examples
-        result = t.compress(
-            target_tokens=150,
-            instructions=(
-                "Focus on the practical code examples. "
-                "Preserve any Python code snippets verbatim. "
-                "Omit theoretical explanations."
-            ),
+        # Focus the summary on practical examples
+        guidance = (
+            "Focus on the practical examples and real-life scenarios. "
+            "Preserve any specific thought experiments verbatim. "
+            "Omit historical background."
         )
+        result = t.compress(target_tokens=150, instructions=guidance)
 
-        print(f"\n  Compressed with instructions (code-focused):")
+        print(f"\n  instructions= passed to compress():")
+        print(f"    \"{guidance}\"")
+        print(f"\n  How instructions= vs system_prompt= work:")
+        print(f"    instructions=  -> appended to the USER MESSAGE (task prompt)")
+        print(f"    system_prompt= -> replaces the SYSTEM MESSAGE (LLM persona)")
+        print(f"    They target different parts of the LLM call, so both can")
+        print(f"    be used together. Both are stored in provenance.")
+        print(f"\n  Compressed with instructions (example-focused):")
         print(f"    {result.original_tokens} -> {result.compressed_tokens} tokens")
 
         print("\n  AFTER compression:\n")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="table")
 
-        print("\n  The summary should emphasize code examples per our instructions.")
+        print("\n  The summary should emphasize practical examples per our instructions.")
 
     # =================================================================
     # Part 3: Collaborative compression (auto_commit=False)
@@ -137,22 +142,22 @@ def main():
     print("  Nothing is committed until you say so.")
 
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
-        sys_ci = t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise biology explainer.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        t.chat("What are decorators?")
-        t.chat("What about context managers?")
-        t.chat("Explain the GIL and its implications for threading.")
+        t.chat("What is CRISPR and how does it work?")
+        t.chat("How does mRNA deliver instructions to cells?")
+        t.chat("Explain epigenetics and why it matters.")
 
         print("\n  BEFORE compression:\n")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="chat")
 
-        # Collaborative: LLM drafts, we review
+        # Collaborative: LLM drafts, user reviews interactively
         pending = t.compress(target_tokens=150, auto_commit=False)
 
         print(f"\n  PendingCompression (NOT yet committed):")
@@ -162,22 +167,23 @@ def main():
         print(f"    original_tokens:  {pending.original_tokens}")
         print(f"    estimated_tokens: {pending.estimated_tokens}")
 
-        # Show the LLM's draft
+        # Interactive review: open each draft in $EDITOR for real editing
+        import click as _click
+
         for i, summary in enumerate(pending.summaries):
-            display = summary[:300] + "..." if len(summary) > 300 else summary
-            print(f"\n  Draft summary [{i}]:")
-            print(f"    {display}")
-
-        # Edit before approving
-        edited = pending.summaries[0].rstrip()
-        if not edited.endswith("."):
-            edited += "."
-        edited += " Note: GIL limits true parallelism in CPython."
-        pending.edit_summary(0, edited)
-
-        print(f"\n  Edited summary [0] -- appended GIL note")
+            print(f"\n  Opening summary [{i}] in your editor...")
+            edited = _click.edit(summary)
+            if edited is not None and edited.strip() != summary.strip():
+                pending.edit_summary(i, edited.strip())
+                print(f"  Summary [{i}] updated with your edits.")
+            else:
+                print(f"  Summary [{i}] kept as-is.")
 
         # Approve -- NOW it commits
+        if not _click.confirm("\n  Approve and commit?", default=True):
+            print("  Cancelled. Nothing was committed.")
+            return
+
         result = pending.approve()
 
         print(f"\n  Approved! CompressResult:")
@@ -185,7 +191,7 @@ def main():
         print(f"    new_head:          {result.new_head[:8]}")
 
         print("\n  AFTER compression:\n")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="table")
 
         print("\n  You reviewed and edited before it landed.")
 

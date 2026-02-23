@@ -219,20 +219,22 @@ class CompiledContext:
     def pprint(
         self,
         *,
-        abbreviate: bool = False,
+        max_chars: int | None = None,
         style: Literal["table", "chat", "compact"] = "table",
     ) -> None:
         """Pretty-print this compiled context using rich formatting.
 
         Args:
-            abbreviate: If True, truncate long content.
+            max_chars: Max display characters before truncation. None (default)
+                means no limit for ``"table"``/``"chat"``, and 500 for
+                ``"compact"``. Pass an explicit int to override.
             style: ``"table"`` for a data table, ``"chat"`` for a chat
                 transcript with panels per message, ``"compact"`` for a
                 one-line-per-message summary.
         """
         from tract.formatting import pprint_compiled_context
 
-        pprint_compiled_context(self, abbreviate=abbreviate, style=style)
+        pprint_compiled_context(self, max_chars=max_chars, style=style)
 
 
 @dataclass(frozen=True)
@@ -292,11 +294,16 @@ class ChatResponse:
     def __str__(self) -> str:
         return self.text
 
-    def pprint(self, *, abbreviate: bool = False) -> None:
-        """Pretty-print this response using rich formatting."""
+    def pprint(self, *, max_chars: int | None = None) -> None:
+        """Pretty-print this response using rich formatting.
+
+        Args:
+            max_chars: Max display characters before truncation.
+                None (default) means no limit.
+        """
         from tract.formatting import pprint_chat_response
 
-        pprint_chat_response(self, abbreviate=abbreviate)
+        pprint_chat_response(self, max_chars=max_chars)
 
 
 @runtime_checkable

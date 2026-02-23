@@ -41,8 +41,13 @@ class StatusInfo:
             budget_str = f"/{self.token_budget_max} ({pct:.0f}%)"
         return f"{branch} @ {head} | {self.commit_count} commits | {self.token_count}{budget_str} tokens"
 
-    def pprint(self, *, abbreviate: bool = False) -> None:
-        """Pretty-print this status using rich formatting."""
+    def pprint(self, *, max_chars: int | None = None) -> None:
+        """Pretty-print this status using rich formatting.
+
+        Args:
+            max_chars: Max display characters before truncation.
+                None (default) means no limit.
+        """
         from tract.formatting import pprint_status_info
 
-        pprint_status_info(self, abbreviate=abbreviate)
+        pprint_status_info(self, max_chars=max_chars)

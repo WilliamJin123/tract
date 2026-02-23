@@ -33,7 +33,7 @@ def main():
     print("=" * 60)
     print()
     print("  Scenario: deep-dive branch has a great Q&A pair about")
-    print("  @staticmethod vs @classmethod. We want BOTH the question")
+    print("  baking soda vs baking powder. We want BOTH the question")
     print("  and the answer on main, without merging the whole branch.")
 
     with Tract.open(
@@ -45,8 +45,8 @@ def main():
         # Step 1: Build a shared base conversation
         print("\n  Step 1: Build shared base on main\n")
 
-        t.system("You are a concise Python tutor. One paragraph max.")
-        t.chat("What's a decorator?")
+        t.system("You are a concise cooking instructor. One paragraph max.")
+        t.chat("What's the difference between braising and roasting?")
 
         print("  main (shared base):")
         t.compile().pprint(style="compact")
@@ -57,7 +57,7 @@ def main():
         t.branch("deep-dive")
 
         # Use user() + generate() separately to capture both commit hashes
-        user_ci = t.user("Explain the difference between @staticmethod and @classmethod.")
+        user_ci = t.user("Explain when to use baking soda vs baking powder.")
         r_deep = t.generate()
 
         deep_user_hash = user_ci.commit_hash
@@ -70,7 +70,7 @@ def main():
         print("\n  Step 3: Switch to main -- it advances on its own\n")
 
         t.switch("main")
-        t.chat("Show me a simple decorator example.")
+        t.chat("Give me a quick tip for caramelizing onions.")
 
         print("  main (diverged -- no deep-dive content):")
         t.compile().pprint(style="compact")
@@ -124,8 +124,8 @@ def main():
         # Step 1: Build shared base
         print("\n  Step 1: Build shared base on main\n")
 
-        t.system("You are a concise Python tutor. One paragraph max.")
-        t.chat("What are list comprehensions?")
+        t.system("You are a concise music theory tutor. One paragraph max.")
+        t.chat("What are major and minor scales?")
 
         print("  main (shared base):")
         t.compile().pprint(style="compact")
@@ -134,8 +134,8 @@ def main():
         print("\n  Step 2: Branch 'examples' and add 2 LLM exchanges\n")
 
         t.branch("examples")
-        r1 = t.chat("Give me 3 list comprehension examples, from simple to complex.")
-        r2 = t.chat("Now show the equivalent for-loop for each one.")
+        r1 = t.chat("Give me 3 chord progression examples, from simple to complex.")
+        r2 = t.chat("Now explain the emotional feel of each progression.")
 
         print("  examples (2 extra exchanges beyond shared base):")
         t.compile().pprint(style="compact")
@@ -144,9 +144,9 @@ def main():
         print("\n  Step 3: Main advances -- examples is now stale\n")
 
         t.switch("main")
-        t.chat("What are generator expressions? How do they differ from list comprehensions?")
+        t.chat("What are modes? How do they differ from standard scales?")
 
-        print("  main (has generator content examples branch doesn't):")
+        print("  main (has modes content examples branch doesn't):")
         t.compile().pprint(style="compact")
 
         # Step 4: Show the stale examples branch
@@ -157,7 +157,7 @@ def main():
 
         print(f"  examples BEFORE rebase ({len(ctx_before.messages)} messages):")
         ctx_before.pprint(style="compact")
-        print("\n  (notice: no generator expressions content)")
+        print("\n  (notice: no modes content)")
 
         # Step 5: Rebase
         print("\n  Step 5: Rebase examples onto main\n")
@@ -180,8 +180,8 @@ def main():
         print(f"\n  examples AFTER rebase ({len(ctx_after.messages)} messages):")
         ctx_after.pprint(style="chat")
 
-        print("\n  The examples branch now includes main's generator")
-        print("  expressions content PLUS its own list comprehension work.")
+        print("\n  The examples branch now includes main's modes")
+        print("  content PLUS its own chord progression work.")
         print("  Commits got new hashes (new parents) but same content.")
 
 

@@ -11,6 +11,9 @@ from __future__ import annotations
 from io import StringIO
 from typing import Any, Literal
 
+_COMPACT_DEFAULT_MAX_CHARS = 1000
+"""Default max_chars for compact style when None is passed."""
+
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -64,12 +67,12 @@ def _is_estimate(token_source: str) -> bool:
     return not token_source or token_source.startswith("tiktoken:")
 
 
-def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any = None) -> None:
+def pprint_chat_response(response: Any, *, max_chars: int | None = None, file: Any = None) -> None:
     """Pretty-print a ChatResponse.
 
     Args:
         response: A ChatResponse instance.
-        abbreviate: If True, truncate long text. Default False (show full).
+        max_chars: Max display characters before truncation. None = no limit.
         file: Optional file-like object for output (used in tests).
     """
     console = _make_console(file)
@@ -78,8 +81,8 @@ def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any =
     prompt = getattr(response, "prompt", None)
     if prompt:
         prompt_text = prompt
-        if abbreviate and len(prompt_text) > 200:
-            prompt_text = prompt_text[:197] + "..."
+        if max_chars is not None and len(prompt_text) > max_chars:
+            prompt_text = prompt_text[:max_chars - 3] + "..."
         console.print(Panel(
             prompt_text,
             title="[bold]User[/bold]",
@@ -88,8 +91,8 @@ def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any =
 
     # Main text — rendered as Markdown (LLM responses are almost always markdown)
     text = response.text
-    if abbreviate and len(text) > 200:
-        text = text[:197] + "..."
+    if max_chars is not None and len(text) > max_chars:
+        text = text[:max_chars - 3] + "..."
 
     # Tool-calling responses: show function calls in magenta
     tool_calls = getattr(response, "tool_calls", None)
@@ -147,7 +150,7 @@ def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any =
 def pprint_compiled_context(
     ctx: Any,
     *,
-    abbreviate: bool = False,
+    max_chars: int | None = None,
     style: Literal["table", "chat", "compact"] = "table",
     file: Any = None,
 ) -> None:
@@ -155,17 +158,21 @@ def pprint_compiled_context(
 
     Args:
         ctx: A CompiledContext instance.
-        abbreviate: If True, truncate long content. Default False (show full).
+        max_chars: Max display characters before truncation. None (default)
+            means no limit for ``"table"``/``"chat"`` styles, and 500 for
+            ``"compact"`` style. Pass an explicit int to override.
         style: Display style — ``"table"`` (default) for a data table,
             ``"chat"`` for a chat transcript with panels per message,
             ``"compact"`` for a one-line-per-message summary.
         file: Optional file-like object for output (used in tests).
     """
     if style == "chat":
-        _pprint_compiled_chat(ctx, abbreviate=abbreviate, file=file)
+        _pprint_compiled_chat(ctx, max_chars=max_chars, file=file)
         return
     if style == "compact":
-        _pprint_compiled_compact(ctx, abbreviate=abbreviate, file=file)
+        # Compact defaults to 2000 when max_chars is not explicitly set
+        effective = max_chars if max_chars is not None else _COMPACT_DEFAULT_MAX_CHARS
+        _pprint_compiled_compact(ctx, max_chars=effective, file=file)
         return
 
     console = _make_console(file)
@@ -187,14 +194,14 @@ def pprint_compiled_context(
                 args = ", ".join(f"{k}={v!r}" for k, v in tc.arguments.items())
                 call_parts.append(f"{tc.name}({args})")
             display_text = "; ".join(call_parts)
-            if abbreviate and len(display_text) > 80:
-                display_text = display_text[:77] + "..."
+            if max_chars is not None and len(display_text) > max_chars:
+                display_text = display_text[:max_chars - 3] + "..."
             role_label = Text("tool call", style="bold magenta")
             cell: Any = Text(display_text, style="bold magenta")
         else:
             content = msg.content
-            if abbreviate and len(content) > 80:
-                content = content[:77] + "..."
+            if max_chars is not None and len(content) > max_chars:
+                content = content[:max_chars - 3] + "..."
             color = _ROLE_COLORS.get(msg.role, "white")
             role_label = Text(msg.role, style=f"bold {color}")
             # Role-appropriate content rendering:
@@ -234,6 +241,31 @@ _ROLE_STYLES: dict[str, tuple[str, str]] = {
     "tool": ("Tool Result", "magenta"),
 }
 
+def _inline_markdown(text: str) -> str:
+    """Convert common markdown to Rich markup for inline display.
+
+    Handles ``**bold**``, ``*italic*``, `` `code` ``, and ``# headers``.
+    Input must already have newlines collapsed to spaces.
+    """
+    import re
+
+    # Escape Rich markup brackets that might appear in content
+    text = text.replace("[", r"\[")
+
+    # ```code blocks``` (already collapsed to single line)
+    text = re.sub(r"```[a-z]*\s*(.*?)\s*```", r"[bold white on grey11]\1[/bold white on grey11]", text)
+    # `inline code`
+    text = re.sub(r"`([^`]+)`", r"[bold white on grey11]\1[/bold white on grey11]", text)
+    # **bold** (before *italic* since ** contains *)
+    text = re.sub(r"\*\*(.+?)\*\*", r"[bold]\1[/bold]", text)
+    # *italic*
+    text = re.sub(r"\*(.+?)\*", r"[italic]\1[/italic]", text)
+    # # Headers → bold (strip leading #s)
+    text = re.sub(r"(?:^|\s)#{1,6}\s+(\S[^#]*?)(?=\s#|\s*$)", r" [bold]\1[/bold]", text)
+
+    return text
+
+
 _ROLE_COLORS: dict[str, str] = {
     "system": "yellow",
     "user": "blue",
@@ -242,11 +274,9 @@ _ROLE_COLORS: dict[str, str] = {
 }
 
 
-def _pprint_compiled_compact(ctx: Any, *, abbreviate: bool = False, file: Any = None) -> None:
+def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: Any = None) -> None:
     """Render a CompiledContext as a compact one-line-per-message summary."""
     console = _make_console(file)
-
-    max_width = 60 if abbreviate else 80
 
     for msg in ctx.messages:
         content = (msg.content or "").replace("\n", " ").strip()
@@ -263,18 +293,31 @@ def _pprint_compiled_compact(ctx: Any, *, abbreviate: bool = False, file: Any = 
                 args = ", ".join(f"{k}={v!r}" for k, v in tc.arguments.items())
                 call_parts.append(f"{tc.name}({args})")
             preview = "; ".join(call_parts)
-            if len(preview) > max_width:
-                preview = preview[:max_width - 3] + "..."
+            if max_chars is not None and len(preview) > max_chars:
+                preview = preview[:max_chars - 3] + "..."
         else:
             color = _ROLE_COLORS.get(msg.role, "white")
             role_label = msg.role
-            preview = content[:max_width - 3] + "..." if len(content) > max_width else content
+            if max_chars is not None and len(content) > max_chars:
+                preview = content[:max_chars - 3] + "..."
+            else:
+                preview = content
 
-        line = Text()
-        line.append(f"  {role_label:10s}", style=f"bold {color}")
-        line.append(" | ", style="dim")
-        line.append(preview)
-        console.print(line)
+        # Build the role prefix as plain Text
+        prefix = Text()
+        prefix.append(f"  {role_label:10s}", style=f"bold {color}")
+        prefix.append(" | ", style="dim")
+
+        # Assistant messages get inline markdown rendering
+        if msg.role == "assistant" and not getattr(msg, "tool_calls", None):
+            markup = _inline_markdown(preview)
+            line = prefix.copy()
+            line.append_text(Text.from_markup(markup))
+            console.print(line)
+        else:
+            line = prefix.copy()
+            line.append(preview)
+            console.print(line)
 
     # Footer
     estimate = _is_estimate(ctx.token_source)
@@ -285,14 +328,14 @@ def _pprint_compiled_compact(ctx: Any, *, abbreviate: bool = False, file: Any = 
     console.print(footer)
 
 
-def _pprint_compiled_chat(ctx: Any, *, abbreviate: bool = False, file: Any = None) -> None:
+def _pprint_compiled_chat(ctx: Any, *, max_chars: int | None = None, file: Any = None) -> None:
     """Render a CompiledContext as a chat transcript with panels per message."""
     console = _make_console(file)
 
     for msg in ctx.messages:
         content = msg.content
-        if abbreviate and len(content) > 200:
-            content = content[:197] + "..."
+        if max_chars is not None and len(content) > max_chars:
+            content = content[:max_chars - 3] + "..."
 
         title, border = _ROLE_STYLES.get(msg.role, (msg.role.title(), "white"))
 
@@ -336,7 +379,7 @@ def _pprint_compiled_chat(ctx: Any, *, abbreviate: bool = False, file: Any = Non
 def pprint_commit_info(
     info: Any,
     *,
-    abbreviate: bool = False,
+    max_chars: int | None = None,
     content: str | None = None,
     file: Any = None,
 ) -> None:
@@ -344,7 +387,7 @@ def pprint_commit_info(
 
     Args:
         info: A CommitInfo instance.
-        abbreviate: If True, truncate long messages/content. Default False.
+        max_chars: Max display characters before truncation. None = no limit.
         content: Full content text to display (loaded via ``Tract.get_content()``
             or passed by ``Tract.show()``).
         file: Optional file-like object for output (used in tests).
@@ -365,8 +408,8 @@ def pprint_commit_info(
     # Message
     if info.message:
         msg = info.message
-        if abbreviate and len(msg) > 120:
-            msg = msg[:117] + "..."
+        if max_chars is not None and len(msg) > max_chars:
+            msg = msg[:max_chars - 3] + "..."
         body_parts.append(f"[bold]Message:[/bold]   {msg}")
 
     # Token count and timestamp
@@ -383,8 +426,8 @@ def pprint_commit_info(
     # Content (when provided via Tract.show())
     if content is not None:
         display_content = content
-        if abbreviate and len(display_content) > 200:
-            display_content = display_content[:197] + "..."
+        if max_chars is not None and len(display_content) > max_chars:
+            display_content = display_content[:max_chars - 3] + "..."
         body_parts.append("")
         body_parts.append(f"[bold]Content:[/bold]")
         body_parts.append(display_content)
@@ -555,12 +598,12 @@ def _pprint_diff_stat(stat: Any, config_changes: dict, console: Console) -> None
     console.print("  ".join(parts) if parts else "[dim]No changes[/dim]")
 
 
-def pprint_status_info(status: Any, *, abbreviate: bool = False, file: Any = None) -> None:
+def pprint_status_info(status: Any, *, max_chars: int | None = None, file: Any = None) -> None:
     """Pretty-print a StatusInfo.
 
     Args:
         status: A StatusInfo instance.
-        abbreviate: If True, truncate long content. Default False (show full).
+        max_chars: Max display characters before truncation. None = no limit.
         file: Optional file-like object for output (used in tests).
     """
     console = _make_console(file)

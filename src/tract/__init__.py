@@ -59,6 +59,9 @@ from tract.models.merge import (
 # Compression models
 from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning
 
+# Compression prompts (for extending the default system prompt)
+from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM
+
 # Policy engine
 from tract.policy import Policy, PolicyEvaluator
 from tract.policy.builtin import ArchivePolicy, CompressPolicy, PinPolicy, BranchPolicy, RebasePolicy
@@ -235,6 +238,7 @@ __all__ = [
     "GCResult",
     "PendingCompression",
     "ReorderWarning",
+    "DEFAULT_SUMMARIZE_SYSTEM",
     # Multi-agent / session
     "Session",
     "SessionContent",
