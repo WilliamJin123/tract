@@ -49,18 +49,19 @@ PYTHON_EVAL_TOOL = {
     },
 }
 
-BASH_TOOL = {
+SHELL_TOOL = {
     "type": "function",
     "function": {
-        "name": "run_bash",
-        "description": "Run a bash command and return stdout. "
-                       "Use for file listing, date/time, system info, etc.",
+        "name": "run_shell",
+        "description": "Run a shell command and return stdout. "
+                       "Use for echo, file listing, system info, etc. "
+                       "Commands must be cross-platform (avoid OS-specific syntax).",
         "parameters": {
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The bash command to execute (e.g. 'date', 'ls', 'echo hello')",
+                    "description": "A shell command to execute (e.g. 'echo hello', 'python --version')",
                 },
             },
             "required": ["command"],
@@ -74,13 +75,25 @@ BASH_TOOL = {
 def execute_tool(name: str, args: dict) -> str:
     """Execute a tool by name and return the result string."""
     if name == "python_eval":
+        expr = args["expression"]
         try:
-            result = eval(args["expression"])  # noqa: S307
-            return str(result)
+            # Try eval first (handles expressions like '2**10 + 3**7')
+            return str(eval(expr))  # noqa: S307
+        except SyntaxError:
+            # Fallback: exec statements, eval the last part.
+            # Handles 'import math; math.factorial(7)' by splitting on ';'
+            try:
+                parts = [p.strip() for p in expr.split(";")]
+                ns: dict = {}
+                for part in parts[:-1]:
+                    exec(part, ns)  # noqa: S102
+                return str(eval(parts[-1], ns))  # noqa: S307
+            except Exception as e:
+                return f"Error: {e}"
         except Exception as e:
             return f"Error: {e}"
 
-    elif name == "run_bash":
+    elif name == "run_shell":
         try:
             result = subprocess.run(
                 args["command"],
@@ -88,6 +101,7 @@ def execute_tool(name: str, args: dict) -> str:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                stdin=subprocess.DEVNULL,  # prevent interactive prompts
             )
             return result.stdout.strip() or result.stderr.strip() or "(no output)"
         except subprocess.TimeoutExpired:
@@ -114,10 +128,10 @@ def main():
 
         print("=== Phase 1: chat() with typed tool calls ===\n")
 
-        t.set_tools([PYTHON_EVAL_TOOL, BASH_TOOL])
+        t.set_tools([PYTHON_EVAL_TOOL, SHELL_TOOL])
         t.system(
             "You are a helpful assistant with access to tools. "
-            "Use python_eval for math and run_bash for system commands. "
+            "Use python_eval for math and run_shell for system commands. "
             "Always use tools when appropriate -- don't compute in your head."
         )
 
@@ -157,7 +171,7 @@ def main():
 
         print("\n=== Phase 2: manual tool loop ===\n")
 
-        t.user("Now use run_bash to show today's date, and python_eval to compute 7! (factorial of 7).")
+        t.user("Use run_shell to run 'echo hello world', and python_eval to compute 7! (factorial of 7).")
 
         # Loop until the LLM stops requesting tool calls (cap at 5 iterations)
         max_iterations = 5
