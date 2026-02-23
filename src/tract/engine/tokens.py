@@ -52,12 +52,15 @@ class TiktokenCounter:
 
         Uses the OpenAI cookbook formula:
         - 3 tokens per message (role/content/separator overhead)
-        - 1 token per name field (if present)
+        - 1 token per name field (if present, at the message level)
         - 3 tokens for the response primer (after all messages)
+
+        Also counts tokens in nested structures like tool_calls
+        (lists of dicts with function name, arguments, call ID).
 
         Args:
             messages: List of message dicts with "role", "content", and
-                optional "name" keys.
+                optional "name", "tool_calls", "tool_call_id" keys.
 
         Returns:
             Total token count including overhead.
@@ -71,9 +74,24 @@ class TiktokenCounter:
             for key, value in message.items():
                 if isinstance(value, str):
                     total += len(self._enc.encode(value))
+                elif isinstance(value, (list, dict)):
+                    total += self._count_nested_tokens(value)
                 if key == "name":
                     total += 1  # name field costs an extra token
         total += 3  # response primer
+        return total
+
+    def _count_nested_tokens(self, obj: object) -> int:
+        """Count tokens in nested structures (tool_calls lists, etc.)."""
+        total = 0
+        if isinstance(obj, str):
+            total += len(self._enc.encode(obj))
+        elif isinstance(obj, dict):
+            for value in obj.values():
+                total += self._count_nested_tokens(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                total += self._count_nested_tokens(item)
         return total
 
 

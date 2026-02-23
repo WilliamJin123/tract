@@ -168,9 +168,14 @@ class CacheManager:
     @staticmethod
     def _message_to_dict(m: Message) -> dict:
         """Convert a Message to the dict format expected by TokenCounter."""
-        if m.name is None:
-            return {"role": m.role, "content": m.content}
-        return {"role": m.role, "content": m.content, "name": m.name}
+        d: dict = {"role": m.role, "content": m.content or ""}
+        if m.name is not None:
+            d["name"] = m.name
+        if m.tool_call_id is not None:
+            d["tool_call_id"] = m.tool_call_id
+        if m.tool_calls:
+            d["tool_calls"] = [tc.to_openai() for tc in m.tool_calls]
+        return d
 
     def _count_single_message_tokens(self, message: Message) -> int:
         """Count tokens for a single message including per-message overhead.
