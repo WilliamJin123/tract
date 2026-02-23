@@ -19,9 +19,9 @@ from tract import Tract, TractConfig
 
 load_dotenv()
 
-CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
-CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-CEREBRAS_MODEL = "gpt-oss-120b"
+TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
+TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
+MODEL_ID = "gpt-oss-120b"
 
 
 def main():
@@ -36,9 +36,9 @@ def main():
     with Tract.open(
         db_path,
         tract_id="coding-assistant",
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
         # System prompt
         t.system("You are a helpful coding assistant. Be concise.")
@@ -58,9 +58,9 @@ def main():
     with Tract.open(
         db_path,
         tract_id="coding-assistant",
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
         # Everything is restored — print(status) gives a compact one-liner
         status = t.status()

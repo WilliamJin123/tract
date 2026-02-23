@@ -20,18 +20,18 @@ from tract import Priority, Tract
 
 load_dotenv()
 
-CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
-CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-CEREBRAS_MODEL = "qwen-3-235b-a22b-instruct-2507"
+TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
+TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
+MODEL_ID = "qwen-3-235b-a22b-instruct-2507"
 
 CONTRACT_PATH = Path(__file__).parent / "sample_contract.md"
 
 
 def main():
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
         # --- Load the contract into context ---

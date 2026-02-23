@@ -23,9 +23,9 @@ from tract import FreeformContent, LLMConfig, Tract
 
 load_dotenv()
 
-CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
-CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-CEREBRAS_MODEL = "gpt-oss-120b"
+TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
+TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
+MODEL_ID = "gpt-oss-120b"
 
 
 def fake_retrieval(query: str) -> str:
@@ -42,9 +42,9 @@ def fake_retrieval(query: str) -> str:
 
 def main():
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
         # System prompt
         t.system(
@@ -107,8 +107,8 @@ def main():
             )
 
         # --- Query by generation config ---
-        print(f"\n=== Commits using model {CEREBRAS_MODEL} ===\n")
-        model_commits = t.query_by_config("model", "=", CEREBRAS_MODEL)
+        print(f"\n=== Commits using model {MODEL_ID} ===\n")
+        model_commits = t.query_by_config("model", "=", MODEL_ID)
         for entry in model_commits:
             print(f"  {entry.commit_hash[:8]} | {entry.message} | model={entry.generation_config.model if entry.generation_config else None}")
 

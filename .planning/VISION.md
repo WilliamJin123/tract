@@ -28,7 +28,7 @@ Every example writes its own `call_llm()` function from scratch:
 def call_llm(messages: list[dict]) -> dict:
     with httpx.Client(timeout=30.0) as client:
         response = client.post(
-            f"{CEREBRAS_BASE_URL}/chat/completions",
+            f"{TRACT_OPENAI_BASE_URL}/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", ...},
             json={"model": MODEL, "messages": messages},
         )

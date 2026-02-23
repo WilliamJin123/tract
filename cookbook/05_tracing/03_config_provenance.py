@@ -17,16 +17,16 @@ from tract import Tract
 
 load_dotenv()
 
-CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
-CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-CEREBRAS_MODEL = "gpt-oss-120b"
+TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
+TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
+MODEL_ID = "gpt-oss-120b"
 
 
 def main():
     with Tract.open(
-        api_key=CEREBRAS_API_KEY,
-        base_url=CEREBRAS_BASE_URL,
-        model=CEREBRAS_MODEL,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
     ) as t:
 
         t.system("You are a creative writing assistant. Keep responses under 2 sentences.")
@@ -93,9 +93,9 @@ def main():
         # --- Query: multi-field AND ---
         # "Which calls used THIS model AND temperature=0.0?"
 
-        print(f"\n=== Query: model={CEREBRAS_MODEL} AND temperature=0.0 ===\n")
+        print(f"\n=== Query: model={MODEL_ID} AND temperature=0.0 ===\n")
         specific = t.query_by_config(conditions=[
-            ("model", "=", CEREBRAS_MODEL),
+            ("model", "=", MODEL_ID),
             ("temperature", "=", 0.0),
         ])
         print(f"  {len(specific)} commit(s) match:")
