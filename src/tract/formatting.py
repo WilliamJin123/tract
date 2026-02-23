@@ -69,6 +69,18 @@ def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any =
     """
     console = _make_console(file)
 
+    # User prompt (when available — set by chat(), not generate())
+    prompt = getattr(response, "prompt", None)
+    if prompt:
+        prompt_text = prompt
+        if abbreviate and len(prompt_text) > 200:
+            prompt_text = prompt_text[:197] + "..."
+        console.print(Panel(
+            prompt_text,
+            title="[bold]User[/bold]",
+            border_style="blue",
+        ))
+
     # Main text — rendered as Markdown (LLM responses are almost always markdown)
     text = response.text
     if abbreviate and len(text) > 200:
@@ -103,14 +115,22 @@ def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any =
     console.print(panel)
 
 
-def pprint_compiled_context(ctx: Any, *, abbreviate: bool = False, file: Any = None) -> None:
+def pprint_compiled_context(
+    ctx: Any, *, abbreviate: bool = False, style: str = "table", file: Any = None,
+) -> None:
     """Pretty-print a CompiledContext.
 
     Args:
         ctx: A CompiledContext instance.
         abbreviate: If True, truncate long content. Default False (show full).
+        style: Display style — ``"table"`` (default) for a data table,
+            ``"chat"`` for a chat transcript with panels per message.
         file: Optional file-like object for output (used in tests).
     """
+    if style == "chat":
+        _pprint_compiled_chat(ctx, abbreviate=abbreviate, file=file)
+        return
+
     console = _make_console(file)
 
     table = Table(title="Compiled Context", show_lines=False)
@@ -135,6 +155,40 @@ def pprint_compiled_context(ctx: Any, *, abbreviate: bool = False, file: Any = N
     summary.append(f"{ctx.commit_count}", style="bold")
     summary.append(f" commits | ", style="dim")
     summary.append(f"source: {ctx.token_source}", style="dim")
+    console.print(summary)
+
+
+_ROLE_STYLES: dict[str, tuple[str, str]] = {
+    "system": ("System", "yellow"),
+    "user": ("User", "blue"),
+    "assistant": ("Assistant", "green"),
+}
+
+
+def _pprint_compiled_chat(ctx: Any, *, abbreviate: bool = False, file: Any = None) -> None:
+    """Render a CompiledContext as a chat transcript with panels per message."""
+    console = _make_console(file)
+
+    for msg in ctx.messages:
+        content = msg.content
+        if abbreviate and len(content) > 200:
+            content = content[:197] + "..."
+
+        title, border = _ROLE_STYLES.get(msg.role, (msg.role.title(), "white"))
+
+        # Render assistant messages as Markdown, others as plain text
+        if msg.role == "assistant":
+            body: Any = Markdown(content) if content else Text("(empty)")
+        else:
+            body = content
+
+        console.print(Panel(body, title=f"[bold]{title}[/bold]", border_style=border))
+
+    # Footer
+    summary = Text()
+    summary.append(f"  {len(ctx.messages)} messages", style="bold")
+    summary.append(f" | ", style="dim")
+    summary.append(f"{ctx.token_count} tokens", style="bold")
     console.print(summary)
 
 

@@ -132,11 +132,17 @@ class CompiledContext:
             f" tokens={self.token_count}, source={self.token_source})"
         )
 
-    def pprint(self, *, abbreviate: bool = False) -> None:
-        """Pretty-print this compiled context using rich formatting."""
+    def pprint(self, *, abbreviate: bool = False, style: str = "table") -> None:
+        """Pretty-print this compiled context using rich formatting.
+
+        Args:
+            abbreviate: If True, truncate long content.
+            style: ``"table"`` for a data table, ``"chat"`` for a chat
+                transcript with panels per message.
+        """
         from tract.formatting import pprint_compiled_context
 
-        pprint_compiled_context(self, abbreviate=abbreviate)
+        pprint_compiled_context(self, abbreviate=abbreviate, style=style)
 
 
 @dataclass(frozen=True)
@@ -181,12 +187,15 @@ class ChatResponse:
         usage: Token usage from the API, or None if not reported.
         commit_info: CommitInfo for the assistant's commit.
         generation_config: The generation config captured from the request/response.
+        prompt: The user message that triggered this response, or None when
+            created via generate() (where the user committed separately).
     """
 
     text: str
     usage: TokenUsage | None
     commit_info: CommitInfo
     generation_config: LLMConfig
+    prompt: str | None = None
 
     def __str__(self) -> str:
         return self.text

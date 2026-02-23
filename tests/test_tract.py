@@ -671,8 +671,8 @@ class TestRecordUsage:
     """Tests for tract.record_usage() -- post-call API token recording."""
 
     @pytest.mark.parametrize("usage_input,expected_count,expected_source", [
-        ({"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}, 100, "api:100+50"),
-        ({"input_tokens": 200, "output_tokens": 80}, 200, "api:200+80"),
+        ({"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}, 150, "api:100+50"),
+        ({"input_tokens": 200, "output_tokens": 80}, 280, "api:200+80"),
     ])
     def test_record_usage_formats(self, usage_input, expected_count, expected_source):
         with Tract.open() as t:
@@ -695,7 +695,7 @@ class TestRecordUsage:
                 completion_tokens=100,
                 total_tokens=400,
             ))
-            assert result.token_count == 300
+            assert result.token_count == 400
             assert result.token_source == "api:300+100"
 
     def test_record_usage_updates_snapshot(self):
@@ -712,7 +712,7 @@ class TestRecordUsage:
 
             # Compile again without new commits -- should return cached API counts
             cached = t.compile()
-            assert cached.token_count == 500
+            assert cached.token_count == 700
             assert cached.token_source == "api:500+200"
 
     def test_record_usage_no_commits_raises(self):
@@ -749,7 +749,7 @@ class TestRecordUsage:
                 "completion_tokens": 50,
                 "total_tokens": 150,
             })
-            assert result.token_count == 100
+            assert result.token_count == 150
             assert result.token_source == "api:100+50"
 
     def test_record_usage_with_head_hash(self):
@@ -766,7 +766,7 @@ class TestRecordUsage:
                 {"prompt_tokens": 500, "completion_tokens": 200, "total_tokens": 700},
                 head_hash=c3.commit_hash,
             )
-            assert result.token_count == 500
+            assert result.token_count == 700
 
             with pytest.raises(TraceError, match="does not match current HEAD"):
                 t.record_usage(
@@ -807,7 +807,7 @@ class TestTwoTierTokenTracking:
             }
             updated = t.record_usage(api_usage)
             assert updated.token_source == f"api:{tiktoken_count + 5}+42"
-            assert updated.token_count == tiktoken_count + 5
+            assert updated.token_count == tiktoken_count + 47  # prompt + completion
 
             # Cached compile returns API counts
             cached = t.compile()
@@ -1142,12 +1142,12 @@ class TestLRUCompileCacheAndPatching:
             t.compile()
 
             updated = t.record_usage({"prompt_tokens": 42, "completion_tokens": 10, "total_tokens": 52})
-            assert updated.token_count == 42
+            assert updated.token_count == 52
             assert "api:" in updated.token_source
 
             cached = t._cache.get(t.head)
             assert cached is not None
-            assert cached.token_count == 42
+            assert cached.token_count == 52
 
     def test_commit_hashes_parallel_to_messages(self):
         """commit_hashes and messages have same length after all operations."""
@@ -1281,9 +1281,9 @@ class TestAPITokenPersistence:
             t.commit(InstructionContent(text="System"))
             t.compile()
 
-            # Calibrate with API-reported tokens
-            api_total = 150
-            t.record_usage({"prompt_tokens": api_total, "completion_tokens": 20, "total_tokens": 170})
+            # Calibrate with API-reported tokens (prompt + completion)
+            t.record_usage({"prompt_tokens": 150, "completion_tokens": 20, "total_tokens": 170})
+            api_total = 170  # context token count = prompt + completion
             cached = t._cache.get(t.head)
             assert cached.token_count == api_total
             assert cached.token_source.startswith("api:")
@@ -1303,8 +1303,8 @@ class TestAPITokenPersistence:
             c1 = t.commit(InstructionContent(text="Short text"))
             t.compile()
 
-            api_total = 100
-            t.record_usage({"prompt_tokens": api_total, "completion_tokens": 10, "total_tokens": 110})
+            t.record_usage({"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110})
+            api_total = 110  # context token count = prompt + completion
 
             # Edit with slightly different text -- delta should be small
             t.commit(
@@ -1326,8 +1326,8 @@ class TestAPITokenPersistence:
             c2 = t.commit(DialogueContent(role="user", text="Hello world"))
             t.compile()
 
-            api_total = 200
-            t.record_usage({"prompt_tokens": api_total, "completion_tokens": 30, "total_tokens": 230})
+            t.record_usage({"prompt_tokens": 200, "completion_tokens": 30, "total_tokens": 230})
+            api_total = 230  # context token count = prompt + completion
 
             t.annotate(c2.commit_hash, Priority.SKIP)
             cached = t._cache.get(t.head)
@@ -1414,7 +1414,7 @@ class TestVerifyCacheAllFields:
             t.record_usage({"prompt_tokens": 999, "completion_tokens": 10, "total_tokens": 1009})
             # This compile should not raise even though token_count differs
             result = t.compile()
-            assert result.token_count == 999
+            assert result.token_count == 1009
 
 
 class TestCompileAtCaching:

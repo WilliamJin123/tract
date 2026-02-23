@@ -1346,7 +1346,8 @@ class Tract:
         # Commit user message
         self.user(text, message=message, name=name, metadata=metadata)
         # Delegate to generate
-        return self.generate(
+        import dataclasses as _dc
+        response = self.generate(
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -1357,6 +1358,7 @@ class Tract:
             provenance_note=provenance_note,
             retry_prompt=retry_prompt,
         )
+        return _dc.replace(response, prompt=text)
 
     # ------------------------------------------------------------------
     # Compile record accessors
@@ -1451,6 +1453,13 @@ class Tract:
                 at_commit=at_commit,
                 include_edit_annotations=include_edit_annotations,
             )
+            # Apply API-reported token override if available for the
+            # resolved head commit (tiktoken is temporary; API is truth).
+            if result.commit_hashes:
+                resolved_head = result.commit_hashes[-1]
+                api_override = self._cache.get_api_override(resolved_head)
+                if api_override is not None:
+                    result = replace(result, token_count=api_override[0], token_source=api_override[1])
             return self._inject_tools(result)
 
         # Cache hit: snapshot exists for current head in LRU cache
@@ -2944,20 +2953,24 @@ class Tract:
             self.compile()
             snapshot = self._cache.get(target_hash)
 
-        # Update snapshot with API-reported counts
+        # Update snapshot with API-reported counts.
+        # Use prompt + completion because the compiled context at HEAD
+        # includes the assistant response (committed before record_usage).
         if snapshot is not None:
+            context_tokens = usage.prompt_tokens + usage.completion_tokens
             token_source = f"api:{usage.prompt_tokens}+{usage.completion_tokens}"
-            updated = replace(snapshot, token_count=usage.prompt_tokens, token_source=token_source)
+            updated = replace(snapshot, token_count=context_tokens, token_source=token_source)
             self._cache.put(target_hash, updated)
             # Persist override so it survives cache eviction
-            self._cache.store_api_override(target_hash, usage.prompt_tokens, token_source)
+            self._cache.store_api_override(target_hash, context_tokens, token_source)
             return self._cache.to_compiled(updated)
 
         # Fallback (custom compiler, no snapshot): return minimal result
+        context_tokens = usage.prompt_tokens + usage.completion_tokens
         token_source = f"api:{usage.prompt_tokens}+{usage.completion_tokens}"
         return CompiledContext(
             messages=[],
-            token_count=usage.prompt_tokens,
+            token_count=context_tokens,
             commit_count=0,
             token_source=token_source,
         )
