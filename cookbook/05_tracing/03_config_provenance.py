@@ -36,71 +36,86 @@ def main():
         print("=== Turn 1: default config ===\n")
         r1 = t.chat("Write a one-sentence opening for a mystery novel.")
         r1.pprint()
-        cfg1 = r1.commit_info.generation_config
-        print(f"  Config: model={cfg1.model}, temperature={cfg1.temperature}\n")
 
         # --- Turn 2: high temperature for more creativity ---
 
-        print("=== Turn 2: temperature=1.5 ===\n")
+        print("\n=== Turn 2: temperature=1.5 ===\n")
         r2 = t.chat(
             "Now write a wilder, more surreal version.",
             temperature=1.5,
         )
         r2.pprint()
-        cfg2 = r2.commit_info.generation_config
-        print(f"  Config: model={cfg2.model}, temperature={cfg2.temperature}\n")
 
         # --- Turn 3: low temperature + limited tokens ---
 
-        print("=== Turn 3: temperature=0.0, max_tokens=200 ===\n")
+        print("\n=== Turn 3: temperature=0.0, max_tokens=200 ===\n")
         r3 = t.chat(
             "Write a final version — precise, clinical, no embellishment.",
             temperature=0.0,
             max_tokens=200,
         )
         r3.pprint()
-        cfg3 = r3.commit_info.generation_config
-        print(f"  Config: model={cfg3.model}, temperature={cfg3.temperature}, "
-              f"max_tokens={cfg3.max_tokens}\n")
 
-        # --- Query by single field: find the high-creativity call ---
+        # --- Full session view ---
 
-        print("=== Query: temperature > 1.0 ===\n")
+        print("\n=== Full session ===\n")
+        t.compile().pprint(style="chat")
+
+        # --- Query: single field with comparison operator ---
+        # "Which calls used a high temperature?"
+
+        print("\n=== Query: temperature > 1.0 ===\n")
         hot = t.query_by_config("temperature", ">", 1.0)
-        print(f"  {len(hot)} commits with temperature > 1.0:")
+        print(f"  {len(hot)} commit(s) with temperature > 1.0:")
         for c in hot:
-            print(f"    {c}  (temp={c.generation_config.temperature})")
+            cfg = c.generation_config
+            print(f"    {c.commit_hash[:8]}  temp={cfg.temperature}")
 
-        # --- Query: find the constrained call ---
+        # --- Query: equality match ---
 
-        print("\n=== Query: max_tokens = 50 ===\n")
-        limited = t.query_by_config("max_tokens", "=", 50)
-        print(f"  {len(limited)} commits with max_tokens=50:")
+        print("\n=== Query: max_tokens = 200 ===\n")
+        limited = t.query_by_config("max_tokens", "=", 200)
+        print(f"  {len(limited)} commit(s) with max_tokens=200:")
         for c in limited:
-            print(f"    {c}")
+            cfg = c.generation_config
+            print(f"    {c.commit_hash[:8]}  max_tokens={cfg.max_tokens}")
 
-        # --- Multi-field AND query ---
+        # --- Query: inclusive range with "between" ---
+        # "Which calls used a temperature between 0.0 and 1.0 (inclusive)?"
+
+        print("\n=== Query: temperature between [0.0, 1.0] ===\n")
+        moderate = t.query_by_config("temperature", "between", [0.0, 1.0])
+        print(f"  {len(moderate)} commit(s) with temperature in [0.0, 1.0]:")
+        for c in moderate:
+            cfg = c.generation_config
+            print(f"    {c.commit_hash[:8]}  temp={cfg.temperature}")
+
+        # --- Query: multi-field AND ---
+        # "Which calls used THIS model AND temperature=0.0?"
 
         print(f"\n=== Query: model={CEREBRAS_MODEL} AND temperature=0.0 ===\n")
         specific = t.query_by_config(conditions=[
             ("model", "=", CEREBRAS_MODEL),
             ("temperature", "=", 0.0),
         ])
-        print(f"  {len(specific)} commits match:")
+        print(f"  {len(specific)} commit(s) match:")
         for c in specific:
-            print(f"    {c}")
+            cfg = c.generation_config
+            print(f"    {c.commit_hash[:8]}  model={cfg.model}, temp={cfg.temperature}")
 
-        # --- IN operator: find multiple temperatures ---
+        # --- Query: IN operator (set membership) ---
+        # "Which calls used temperature 0.0 or 1.5?"
 
-        print("\n=== Query: temperature IN [0.0, 1.5] ===\n")
-        extremes = t.query_by_config("temperature", "IN", [0.0, 1.5])
-        print(f"  {len(extremes)} commits at extreme temperatures:")
+        print("\n=== Query: temperature in [0.0, 1.5] ===\n")
+        extremes = t.query_by_config("temperature", "in", [0.0, 1.5])
+        print(f"  {len(extremes)} commit(s) at extreme temperatures:")
         for c in extremes:
-            print(f"    {c}  (temp={c.generation_config.temperature})")
+            cfg = c.generation_config
+            print(f"    {c.commit_hash[:8]}  temp={cfg.temperature}")
 
-        # --- All commits: show config variation ---
+        # --- All commits: config provenance summary ---
 
-        print("\n=== All assistant commits with configs ===\n")
+        print("\n=== All assistant commits — config provenance ===\n")
         for entry in reversed(t.log()):
             if entry.generation_config:
                 fields = entry.generation_config.non_none_fields()

@@ -29,7 +29,7 @@ from tract.models.commit import CommitInfo, CommitOperation
 from tract.models.annotations import Priority, PriorityAnnotation, RetentionCriteria
 
 # Configuration
-from tract.models.config import TractConfig, TokenBudgetConfig, BudgetAction, LLMConfig, OperationConfigs, OperationClients
+from tract.models.config import TractConfig, TokenBudgetConfig, BudgetAction, LLMConfig, Operator, OperationConfigs, OperationClients
 
 # Protocols and output types
 from tract.protocols import (
@@ -160,6 +160,7 @@ __all__ = [
     "TokenBudgetConfig",
     "BudgetAction",
     "LLMConfig",
+    "Operator",
     "OperationConfigs",
     "OperationClients",
     # Protocols

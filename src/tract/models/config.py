@@ -11,7 +11,12 @@ from __future__ import annotations
 import enum
 import types
 from dataclasses import dataclass, fields as dc_fields
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
+
+# Supported comparison operators for query_by_config.
+# "between" / "not between" take a 2-element [low, high] value for inclusive range.
+# "in" / "not in" take a list of values for set membership.
+Operator = Literal["=", "!=", ">", "<", ">=", "<=", "in", "not in", "between", "not between"]
 
 from pydantic import BaseModel
 

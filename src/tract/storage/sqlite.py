@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import func, select, and_
+from sqlalchemy import func, select, and_, or_
 from sqlalchemy.orm import Session
 
 from tract.storage.repositories import (
@@ -198,6 +198,9 @@ class SqliteCommitRepository(CommitRepository):
             ">=": lambda e, v: e >= v,
             "<=": lambda e, v: e <= v,
             "in": lambda e, v: e.in_(v),
+            "not in": lambda e, v: e.not_in(v),
+            "between": lambda e, v: and_(e >= v[0], e <= v[1]),
+            "not between": lambda e, v: or_(e < v[0], e > v[1]),
         }
         for json_path, operator, value in conditions:
             if operator not in ops:
@@ -209,6 +212,8 @@ class SqliteCommitRepository(CommitRepository):
             # Cast to the appropriate scalar type for cross-dialect comparison.
             # Without this, the JSON-typed result causes type mismatches on
             # some backends (e.g. SQLite wraps bind values in JSON()).
+            # For list-valued operators (in, not in, between, not between),
+            # sample the first element to determine the type.
             _sample = value[0] if isinstance(value, (list, tuple)) and value else value
             if isinstance(_sample, bool):
                 extracted = extracted.as_boolean()

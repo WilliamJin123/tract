@@ -23,7 +23,7 @@ from tract.engine.compiler import DefaultContextCompiler
 from tract.engine.tokens import TiktokenCounter
 from tract.models.annotations import Priority, PriorityAnnotation, RetentionCriteria
 from tract.models.commit import CommitInfo, CommitOperation
-from tract.models.config import LLMConfig, OperationClients, OperationConfigs, TractConfig
+from tract.models.config import LLMConfig, Operator, OperationClients, OperationConfigs, TractConfig
 from tract.models.content import validate_content
 from tract.exceptions import (
     BranchNotFoundError,
@@ -1900,42 +1900,71 @@ class Tract:
     def query_by_config(
         self,
         field_or_config: str | LLMConfig | None = None,
-        operator: str | None = None,
+        operator: Operator | None = None,
         value: object = None,
         *,
-        conditions: list[tuple[str, str, object]] | None = None,
+        conditions: list[tuple[str, Operator, object]] | None = None,
     ) -> list[CommitInfo]:
         """Query commits by generation config values.
 
         Supports three calling patterns:
 
-        1. **Single field** (backward compatible)::
+        1. **Single field**::
 
             t.query_by_config("model", "=", "gpt-4o")
             t.query_by_config("temperature", ">", 0.5)
 
-        2. **Multi-field AND** (new)::
+        2. **Multi-field AND** — all conditions must match::
 
             t.query_by_config(conditions=[
                 ("model", "=", "gpt-4o"),
                 ("temperature", ">", 0.5),
             ])
 
-        3. **Whole-config match** (new)::
+        3. **Whole-config match**::
 
             t.query_by_config(LLMConfig(model="gpt-4o", temperature=0.7))
             # Finds commits matching ALL non-None fields with "=" semantics
 
-        The IN operator is supported for set membership::
+        Supported operators:
 
-            t.query_by_config(conditions=[("model", "in", ["gpt-4o", "gpt-4o-mini"])])
+        - ``"="``  — equal
+        - ``"!="`` — not equal
+        - ``">"``  — greater than
+        - ``"<"``  — less than
+        - ``">="`` — greater than or equal
+        - ``"<="`` — less than or equal
+        - ``"in"`` — set membership (value is a list)
+        - ``"not in"`` — negated set membership (value is a list)
+        - ``"between"`` — inclusive range (value is ``[low, high]``)
+        - ``"not between"`` — outside inclusive range (value is ``[low, high]``)
+
+        Examples::
+
+            # Set membership and its negation
+            t.query_by_config("model", "in", ["gpt-4o", "gpt-4o-mini"])
+            t.query_by_config("model", "not in", ["gpt-4o", "gpt-4o-mini"])
+
+            # Inclusive range and its negation
+            t.query_by_config("temperature", "between", [0.3, 0.8])
+            t.query_by_config("temperature", "not between", [0.3, 0.8])
+
+            # Compose multiple conditions (AND)
+            t.query_by_config(conditions=[
+                ("temperature", "between", [0.3, 0.8]),
+                ("model", "!=", "gpt-3.5-turbo"),
+            ])
 
         Args:
             field_or_config: A field name (str) for single-field query, or
                 an LLMConfig object for whole-config matching.
             operator: Comparison operator (single-field mode only).
+                One of ``=``, ``!=``, ``>``, ``<``, ``>=``, ``<=``,
+                ``in``, ``not in``, ``between``, ``not between``.
             value: Value to compare against (single-field mode only).
-            conditions: List of (field, operator, value) tuples for
+                For ``in``, pass a list. For ``between``, pass
+                ``[low, high]`` (inclusive).
+            conditions: List of ``(field, operator, value)`` tuples for
                 multi-field AND queries.
 
         Returns:

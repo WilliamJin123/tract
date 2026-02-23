@@ -928,6 +928,13 @@ class TestGenerationConfig:
         ("model", "=", "gpt-4o", 2),
         ("temperature", ">", 0.5, 2),
         ("temperature", ">", 0.9, 0),
+        ("temperature", "between", [0.5, 0.7], 2),  # 0.5 and 0.7 inclusive
+        ("temperature", "between", [0.6, 0.8], 1),  # only 0.7
+        ("temperature", "between", [0.0, 0.4], 0),  # none
+        ("temperature", "not between", [0.5, 0.7], 1),  # only 0.9 (outside range)
+        ("temperature", "not between", [0.0, 1.0], 0),  # all inside range
+        ("model", "not in", ["gpt-4o"], 1),  # only claude-3
+        ("model", "not in", ["gpt-4o", "claude-3"], 0),  # none left
     ])
     def test_query_by_config_operators(self, tract: Tract, key, op, value, expected_count):
         tract.commit(
