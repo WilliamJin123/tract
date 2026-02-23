@@ -8,6 +8,7 @@ No SQLAlchemy imports allowed in this module -- pure domain protocols.
 
 from __future__ import annotations
 
+import json as _json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -19,6 +20,77 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    """A tool/function invocation requested by the LLM.
+
+    Provider-agnostic canonical representation. Arguments are always
+    a parsed dict — OpenAI's JSON string is parsed at ingestion time.
+    """
+
+    id: str
+    name: str
+    arguments: dict
+    type: str = "function"
+
+    @classmethod
+    def from_openai(cls, tc: dict) -> ToolCall:
+        """Parse from OpenAI/compatible format.
+
+        OpenAI sends arguments as a JSON string; this parses it to a dict.
+        """
+        raw_args = tc["function"]["arguments"]
+        try:
+            arguments = _json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+        except (_json.JSONDecodeError, TypeError):
+            arguments = {"_raw": raw_args}
+        return cls(
+            id=tc["id"],
+            name=tc["function"]["name"],
+            arguments=arguments,
+            type=tc.get("type", "function"),
+        )
+
+    @classmethod
+    def from_anthropic(cls, block: dict) -> ToolCall:
+        """Parse from Anthropic tool_use content block."""
+        return cls(
+            id=block["id"],
+            name=block["name"],
+            arguments=block.get("input", {}),
+        )
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ToolCall:
+        """Reconstruct from a stored dict (e.g. metadata_json)."""
+        return cls(
+            id=d["id"],
+            name=d["name"],
+            arguments=d.get("arguments", {}),
+            type=d.get("type", "function"),
+        )
+
+    def to_openai(self) -> dict:
+        """Serialize to OpenAI wire format."""
+        return {
+            "id": self.id,
+            "type": self.type,
+            "function": {
+                "name": self.name,
+                "arguments": _json.dumps(self.arguments),
+            },
+        }
+
+    def to_dict(self) -> dict:
+        """Serialize for storage in metadata_json."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "arguments": self.arguments,
+            "type": self.type,
+        }
+
+
+@dataclass(frozen=True)
 class Message:
     """A single message in a compiled context."""
 
@@ -26,6 +98,8 @@ class Message:
     content: str
     name: str | None = None
     token_count: int = 0
+    tool_calls: list[ToolCall] | None = None
+    tool_call_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -44,24 +118,30 @@ class CompiledContext:
     commit_hashes: list[str] = field(default_factory=list)
     tools: list[dict] = field(default_factory=list)
 
-    def to_dicts(self) -> list[dict[str, str]]:
+    def to_dicts(self) -> list[dict]:
         """Convert messages to a list of dicts with role/content keys.
 
         Returns a list suitable for most LLM APIs. Each dict has
         ``"role"`` and ``"content"`` keys, plus ``"name"`` when present.
+        For tool-calling assistant messages, ``"tool_calls"`` is included.
+        For tool result messages, ``"tool_call_id"`` is included.
 
         Returns:
             List of message dicts.
         """
-        result: list[dict[str, str]] = []
+        result: list[dict] = []
         for m in self.messages:
-            d: dict[str, str] = {"role": m.role, "content": m.content}
+            d: dict = {"role": m.role, "content": m.content}
             if m.name is not None:
                 d["name"] = m.name
+            if m.tool_calls:
+                d["tool_calls"] = [tc.to_openai() for tc in m.tool_calls]
+            if m.tool_call_id is not None:
+                d["tool_call_id"] = m.tool_call_id
             result.append(d)
         return result
 
-    def to_openai(self) -> list[dict[str, str]]:
+    def to_openai(self) -> list[dict]:
         """Convert messages to OpenAI chat completion format.
 
         OpenAI uses inline system messages, so this is identical
@@ -84,14 +164,18 @@ class CompiledContext:
             (list of non-system message dicts).
         """
         system_parts: list[str] = []
-        messages: list[dict[str, str]] = []
+        messages: list[dict] = []
         for m in self.messages:
             if m.role == "system":
                 system_parts.append(m.content)
             else:
-                d: dict[str, str] = {"role": m.role, "content": m.content}
+                d: dict = {"role": m.role, "content": m.content}
                 if m.name is not None:
                     d["name"] = m.name
+                if m.tool_calls:
+                    d["tool_calls"] = [tc.to_openai() for tc in m.tool_calls]
+                if m.tool_call_id is not None:
+                    d["tool_call_id"] = m.tool_call_id
                 messages.append(d)
         return {
             "system": "\n\n".join(system_parts) if system_parts else None,
@@ -196,6 +280,8 @@ class ChatResponse:
     commit_info: CommitInfo
     generation_config: LLMConfig
     prompt: str | None = None
+    tool_calls: list[ToolCall] | None = None
+    raw_response: dict | None = None
 
     def __str__(self) -> str:
         return self.text

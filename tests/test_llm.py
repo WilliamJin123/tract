@@ -279,8 +279,8 @@ class TestOpenAIClientExtractors:
         with pytest.raises(LLMResponseError):
             OpenAIClient.extract_content({"choices": []})
 
-        with pytest.raises(LLMResponseError):
-            OpenAIClient.extract_content({"choices": [{"message": {}}]})
+        # A message with no content key returns "" (e.g. tool_calls response)
+        assert OpenAIClient.extract_content({"choices": [{"message": {}}]}) == ""
 
     def test_extract_usage(self):
         """extract_usage returns usage dict."""

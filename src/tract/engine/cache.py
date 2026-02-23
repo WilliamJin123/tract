@@ -113,7 +113,10 @@ class CacheManager:
         msgs = list(snapshot.messages)
         if snapshot.message_token_counts and len(snapshot.message_token_counts) == len(msgs):
             msgs = [
-                Message(role=m.role, content=m.content, name=m.name, token_count=tc)
+                Message(
+                    role=m.role, content=m.content, name=m.name, token_count=tc,
+                    tool_calls=m.tool_calls, tool_call_id=m.tool_call_id,
+                )
                 for m, tc in zip(snapshot.messages, snapshot.message_token_counts)
             ]
         return CompiledContext(

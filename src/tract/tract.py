@@ -929,6 +929,41 @@ class Tract:
             )
         return info
 
+    def tool_result(
+        self,
+        tool_call_id: str,
+        name: str,
+        content: str,
+        *,
+        message: str | None = None,
+        metadata: dict | None = None,
+    ) -> CommitInfo:
+        """Commit a tool execution result.
+
+        Shorthand for committing a tool result message in OpenAI-compatible
+        format.  The ``tool_call_id`` links this result back to the
+        :class:`ToolCall` that requested it.
+
+        Args:
+            tool_call_id: The ID from the originating ToolCall.
+            name: The function/tool name.
+            content: The result text.
+            message: Optional commit message (auto-generated if omitted).
+            metadata: Optional extra metadata (tool_call_id and name are
+                added automatically).
+
+        Returns:
+            :class:`CommitInfo` for the new commit.
+        """
+        from tract.models.content import DialogueContent
+
+        meta = {**(metadata or {}), "tool_call_id": tool_call_id, "name": name}
+        return self.commit(
+            DialogueContent(role="tool", text=content),
+            message=message or f"tool result: {name}",
+            metadata=meta,
+        )
+
     # ------------------------------------------------------------------
     # Conversation layer (chat/generate)
     # ------------------------------------------------------------------
@@ -1271,12 +1306,29 @@ class Tract:
         text = self._extract_content(response, client=chat_client)
         usage_dict = self._extract_usage(response, client=chat_client)
 
+        # 3b. Parse tool_calls from the raw response (if any)
+        from tract.protocols import ToolCall as _ToolCall
+
+        raw_tool_calls = None
+        try:
+            raw_tool_calls = response["choices"][0]["message"].get("tool_calls")
+        except (KeyError, IndexError, TypeError):
+            pass
+        tool_calls = (
+            [_ToolCall.from_openai(tc) for tc in raw_tool_calls]
+            if raw_tool_calls
+            else None
+        )
+
         # 4. Build generation_config (use resolved kwargs for accurate tracking)
         gen_config = self._build_generation_config(response, resolved=llm_kwargs)
 
-        # 5. Commit assistant response
+        # 5. Commit assistant response (include tool_calls in metadata for provenance)
+        commit_meta = metadata
+        if tool_calls:
+            commit_meta = {**(metadata or {}), "tool_calls": [tc.to_dict() for tc in tool_calls]}
         commit_info = self.assistant(
-            text, message=message, metadata=metadata, generation_config=gen_config
+            text, message=message, metadata=commit_meta, generation_config=gen_config
         )
 
         # 6. Record usage
@@ -1290,6 +1342,8 @@ class Tract:
             usage=usage,
             commit_info=commit_info,
             generation_config=LLMConfig.from_dict(gen_config) or LLMConfig(),
+            tool_calls=tool_calls,
+            raw_response=response,
         )
 
     def chat(
@@ -1472,8 +1526,8 @@ class Tract:
                 fresh = self._compiler.compile(self._tract_id, current_head)
                 # Compare messages ignoring per-message token_count (computed
                 # by cache, not compiler — fresh Messages have token_count=0)
-                cached_core = [(m.role, m.content, m.name) for m in result.messages]
-                fresh_core = [(m.role, m.content, m.name) for m in fresh.messages]
+                cached_core = [(m.role, m.content, m.name, m.tool_calls, m.tool_call_id) for m in result.messages]
+                fresh_core = [(m.role, m.content, m.name, m.tool_calls, m.tool_call_id) for m in fresh.messages]
                 assert cached_core == fresh_core, (
                     f"Cache message mismatch: cached {len(result.messages)} msgs, "
                     f"fresh {len(fresh.messages)} msgs"

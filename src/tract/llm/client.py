@@ -226,7 +226,7 @@ class OpenAIClient:
             LLMResponseError: If the response format is unexpected.
         """
         try:
-            return response["choices"][0]["message"]["content"]
+            return response["choices"][0]["message"].get("content") or ""
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMResponseError(
                 f"Cannot extract content from response: {exc}. "

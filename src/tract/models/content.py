@@ -35,7 +35,7 @@ class DialogueContent(BaseModel):
     """A dialogue message (user, assistant, or system)."""
 
     content_type: Literal["dialogue"] = "dialogue"
-    role: Literal["user", "assistant", "system"]
+    role: Literal["user", "assistant", "system", "tool"]
     text: str
     name: str | None = None
 

@@ -342,7 +342,26 @@ class DefaultContextCompiler:
         role = self._map_role(content_type, content_data)
         text = self._extract_message_text(content_type, content_data)
         name = content_data.get("name") if content_type == "dialogue" else None
-        return Message(role=role, content=text, name=name)
+
+        # Extract tool data from commit metadata (if any)
+        from tract.protocols import ToolCall as _ToolCall
+
+        meta = commit_row.metadata_json or {}
+        tool_calls = None
+        tool_call_id = None
+
+        if "tool_calls" in meta:
+            tool_calls = [_ToolCall.from_dict(tc) for tc in meta["tool_calls"]]
+        if "tool_call_id" in meta:
+            tool_call_id = meta["tool_call_id"]
+        # For tool result messages, prefer the function name from metadata
+        if role == "tool" and "name" in meta:
+            name = meta["name"]
+
+        return Message(
+            role=role, content=text, name=name,
+            tool_calls=tool_calls, tool_call_id=tool_call_id,
+        )
 
     def _build_messages(
         self,
@@ -361,7 +380,10 @@ class DefaultContextCompiler:
 
             # Add edit annotation if requested
             if include_edit_annotations and c.commit_hash in edit_map:
-                msg = Message(role=msg.role, content=msg.content + " [edited]", name=msg.name)
+                msg = Message(
+                    role=msg.role, content=msg.content + " [edited]", name=msg.name,
+                    tool_calls=msg.tool_calls, tool_call_id=msg.tool_call_id,
+                )
 
             messages.append(msg)
 

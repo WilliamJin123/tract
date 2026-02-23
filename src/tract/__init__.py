@@ -40,6 +40,7 @@ from tract.protocols import (
     CompileSnapshot,
     TokenUsage,
     ChatResponse,
+    ToolCall,
 )
 
 # Branch model
@@ -90,7 +91,6 @@ from tract.orchestrator import (
     ProposalResponse,
     StepResult,
     OrchestratorResult,
-    ToolCall,
     auto_approve,
     log_and_approve,
     cli_prompt,
@@ -171,6 +171,7 @@ __all__ = [
     "CompileSnapshot",
     "TokenUsage",
     "ChatResponse",
+    "ToolCall",
     # Branch model
     "BranchInfo",
     # Merge models
@@ -258,7 +259,6 @@ __all__ = [
     "ProposalResponse",
     "StepResult",
     "OrchestratorResult",
-    "ToolCall",
     "auto_approve",
     "log_and_approve",
     "cli_prompt",
