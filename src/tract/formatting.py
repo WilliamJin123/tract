@@ -174,7 +174,7 @@ _ROLE_STYLES: dict[str, tuple[str, str]] = {
     "system": ("System", "yellow"),
     "user": ("User", "blue"),
     "assistant": ("Assistant", "green"),
-    "tool": ("Tool", "magenta"),
+    "tool": ("Tool Result", "magenta"),
 }
 
 
@@ -206,7 +206,7 @@ def _pprint_compiled_chat(ctx: Any, *, abbreviate: bool = False, file: Any = Non
                 parts.append(call_text)
             body: Any = Group(*parts) if len(parts) > 1 else parts[0]
             title = "Tool Call"
-            border = "cyan"
+            border = "magenta"
         elif msg.role == "assistant":
             body = Markdown(content) if content else Text("(empty)")
         else:
