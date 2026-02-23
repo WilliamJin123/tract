@@ -198,7 +198,7 @@ def pprint_compiled_context(
             # - assistant: Markdown (preserves code blocks, headers, lists)
             # - user/tool/other: plain white text
             if msg.role == "system":
-                cell = Text(content, style="dim")
+                cell = Text(content, style="italic white")
             elif msg.role == "assistant":
                 cell = Markdown(content)
             else:
