@@ -664,16 +664,23 @@ class Tract:
         """Inject tool definitions into a compiled context.
 
         Gathers tools from the last commit with tools linked and creates
-        a new CompiledContext with the tools field populated. Returns the
-        original result unchanged if no tools are found.
+        a new CompiledContext with the tools field populated.  Also adds
+        the estimated token cost of the tool schemas to ``token_count``
+        so pre-call budget checks account for them.
+
+        Returns the original result unchanged if no tools are found.
         """
         tools = self._gather_tools_for_compile()
         if not tools:
             return result
+        # Estimate tokens for tool definitions (serialized JSON is what the API sees)
+        import json as _json
+        tools_text = _json.dumps(tools)
+        tools_tokens = self._token_counter.count_text(tools_text)
         # CompiledContext is frozen, so create new instance with tools
         return CompiledContext(
             messages=result.messages,
-            token_count=result.token_count,
+            token_count=result.token_count + tools_tokens,
             commit_count=result.commit_count,
             token_source=result.token_source,
             generation_configs=result.generation_configs,
