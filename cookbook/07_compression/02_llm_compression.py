@@ -1,14 +1,19 @@
 """LLM and Collaborative Compression
 
-Let the LLM summarize your conversation automatically, with optional
-human review before committing. Guide the summary with instructions=
-and system_prompt=. Use auto_commit=False for a collaborative workflow
-where you inspect, edit, and approve.
+Let the LLM summarize your conversation automatically, guide it with
+instructions=, or use a collaborative workflow where you inspect, edit,
+and approve before committing. PINNED and SKIP annotations control what
+enters the summary.
+
+When PINNED commits interleave with normal ones, the compressor splits
+them into separate groups, each getting its own LLM-generated summary.
+Manual mode (content=) only handles a single group -- LLM mode handles
+any number.
 
 Demonstrates: compress(target_tokens=), instructions=, system_prompt=,
               auto_commit=False, PendingCompression, edit_summary(),
-              approve(), approve_compression(), CompressResult,
-              PINNED/SKIP interaction, before/after visualization
+              approve(), PINNED/SKIP interaction, multi-group compression,
+              before/after visualization
 """
 
 import os
@@ -33,9 +38,8 @@ def main():
     print("Part 1: AUTO-COMMIT LLM COMPRESSION")
     print("=" * 60)
     print()
-    print("  compress(target_tokens=) uses the configured LLM to")
-    print("  summarize commits. PINNED commits survive verbatim.")
-    print("  SKIP commits are excluded from the summary.")
+    print("  compress(target_tokens=) uses the configured LLM to summarize.")
+    print("  PINNED commits survive verbatim. SKIP commits are excluded.")
 
     with Tract.open(
         api_key=CEREBRAS_API_KEY,
@@ -43,16 +47,14 @@ def main():
         model=CEREBRAS_MODEL,
     ) as t:
 
-        # Build a conversation with varying importance
         sys_ci = t.system("You are a concise Python tutor.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        r1 = t.chat("What are decorators?")
-        r2 = t.chat("What about context managers?")
-        r3 = t.chat("Explain list comprehensions.")
+        t.chat("What are decorators?")
+        t.chat("What about context managers?")
         noise = t.user("[debug] latency=342ms | cache=miss")
         t.annotate(noise.commit_hash, Priority.SKIP)
-        r4 = t.chat("What's the difference between a module and a package?")
+        t.chat("What's the difference between a module and a package?")
 
         print("\n  BEFORE compression:\n")
         ctx_before = t.compile()
@@ -60,33 +62,33 @@ def main():
         print(f"\n  {ctx_before.token_count} tokens, {len(ctx_before.messages)} messages")
         print(f"  (system is PINNED, debug noise is SKIP)")
 
-        # Compress -- LLM generates the summary
+        # LLM generates the summary automatically
         result = t.compress(target_tokens=200)
 
         print(f"\n  CompressResult:")
         print(f"    original_tokens:   {result.original_tokens}")
         print(f"    compressed_tokens: {result.compressed_tokens}")
         print(f"    compression_ratio: {result.compression_ratio:.1%}")
-        print(f"    preserved:         {len(result.preserved_commits)} (PINNED system prompt)")
+        print(f"    preserved:         {len(result.preserved_commits)} (PINNED)")
         print(f"    source_commits:    {len(result.source_commits)} archived")
 
         print("\n  AFTER compression:\n")
         ctx_after = t.compile()
         ctx_after.pprint(style="compact")
         print(f"\n  {ctx_after.token_count} tokens, {len(ctx_after.messages)} messages")
-        print(f"\n  PINNED system prompt survived. SKIP noise excluded. Rest summarized.")
+        print(f"\n  PINNED system survived. SKIP noise excluded. Rest summarized by LLM.")
 
     # =================================================================
-    # Part 2: Guided summarization (instructions= / system_prompt=)
+    # Part 2: Guided summarization (instructions=)
     # =================================================================
 
     print(f"\n{'=' * 60}")
-    print("Part 2: GUIDED SUMMARIZATION")
+    print("Part 2: GUIDED SUMMARIZATION (instructions=)")
     print("=" * 60)
     print()
-    print("  instructions= adds guidance to the default summarization prompt.")
-    print("  system_prompt= replaces the entire summarization prompt.")
-    print("  Both let you control what the summary focuses on.")
+    print("  instructions= adds guidance to the summarization prompt.")
+    print("  Control what the summary focuses on without replacing")
+    print("  the entire prompt.")
 
     with Tract.open(
         api_key=CEREBRAS_API_KEY,
@@ -94,7 +96,9 @@ def main():
         model=CEREBRAS_MODEL,
     ) as t:
 
-        t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise Python tutor.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
+
         t.chat("What are decorators? Give me a practical example.")
         t.chat("What about context managers? Show me a database example.")
         t.chat("Explain generators. When should I use them over lists?")
@@ -102,7 +106,7 @@ def main():
         print("\n  BEFORE compression:\n")
         t.compile().pprint(style="compact")
 
-        # Compress with instructions that focus the summary on code examples
+        # Focus the summary on code examples
         result = t.compress(
             target_tokens=150,
             instructions=(
@@ -118,6 +122,8 @@ def main():
         print("\n  AFTER compression:\n")
         t.compile().pprint(style="compact")
 
+        print("\n  The summary should emphasize code examples per our instructions.")
+
     # =================================================================
     # Part 3: Collaborative compression (auto_commit=False)
     # =================================================================
@@ -126,9 +132,9 @@ def main():
     print("Part 3: COLLABORATIVE COMPRESSION")
     print("=" * 60)
     print()
-    print("  auto_commit=False returns a PendingCompression instead of")
-    print("  committing immediately. You can inspect the LLM's draft,")
-    print("  edit it with edit_summary(), then approve() to finalize.")
+    print("  auto_commit=False returns a PendingCompression. You inspect")
+    print("  the LLM's draft, edit with edit_summary(), then approve().")
+    print("  Nothing is committed until you say so.")
 
     with Tract.open(
         api_key=CEREBRAS_API_KEY,
@@ -136,7 +142,9 @@ def main():
         model=CEREBRAS_MODEL,
     ) as t:
 
-        t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise Python tutor.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
+
         t.chat("What are decorators?")
         t.chat("What about context managers?")
         t.chat("Explain the GIL and its implications for threading.")
@@ -144,7 +152,7 @@ def main():
         print("\n  BEFORE compression:\n")
         t.compile().pprint(style="compact")
 
-        # Request collaborative compression -- nothing committed yet
+        # Collaborative: LLM drafts, we review
         pending = t.compress(target_tokens=150, auto_commit=False)
 
         print(f"\n  PendingCompression (NOT yet committed):")
@@ -154,24 +162,22 @@ def main():
         print(f"    original_tokens:  {pending.original_tokens}")
         print(f"    estimated_tokens: {pending.estimated_tokens}")
 
-        # Show the LLM's draft summary
+        # Show the LLM's draft
         for i, summary in enumerate(pending.summaries):
-            print(f"\n  Draft summary [{i}]:")
-            # Truncate for display
             display = summary[:300] + "..." if len(summary) > 300 else summary
+            print(f"\n  Draft summary [{i}]:")
             print(f"    {display}")
 
-        # Edit the summary before approving
-        # (In a real app, this could be user input or programmatic refinement)
+        # Edit before approving
         edited = pending.summaries[0].rstrip()
         if not edited.endswith("."):
             edited += "."
-        edited += " Note: GIL discussion covered threading limitations."
+        edited += " Note: GIL limits true parallelism in CPython."
         pending.edit_summary(0, edited)
 
-        print(f"\n  Edited summary [{0}] (appended GIL note)")
+        print(f"\n  Edited summary [0] -- appended GIL note")
 
-        # Approve -- now it commits
+        # Approve -- NOW it commits
         result = pending.approve()
 
         print(f"\n  Approved! CompressResult:")
@@ -181,7 +187,7 @@ def main():
         print("\n  AFTER compression:\n")
         t.compile().pprint(style="compact")
 
-        print("\n  The edited summary is now committed. You reviewed before it landed.")
+        print("\n  You reviewed and edited before it landed.")
 
 
 if __name__ == "__main__":

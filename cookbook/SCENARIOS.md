@@ -36,8 +36,7 @@ cookbook/
 ├── 07_compression/
 │   ├── 01_manual_compression.py
 │   ├── 02_llm_compression.py
-│   ├── 03_gc.py
-│   └── 04_retention_aware_compression.py
+│   └── 03_gc_and_reorder.py
 ├── 08_multi_agent/
 │   ├── 01_parent_child.py
 │   └── 02_delegation.py
@@ -283,33 +282,27 @@ Keeping conversations alive past the context window limit.
 
 **Use case:** You know exactly what the summary should say. No LLM needed.
 
-Pass your own text to `compress(content="...")`. The original commits in the range are archived and replaced with a single summary commit. Deterministic — same input always produces same output.
+Compress with `compress(content="...")` — your text replaces archived commits. PINNED commits (including system prompts) survive verbatim. Use `preserve=[hash1, hash2]` to temporarily pin specific messages for one compression only, without permanent annotation. After compression, continue chatting normally — the LLM sees the compressed summary as context.
 
-> `compress(from_commit=a, to_commit=b, content="...")`
+> `compress(content=)`, `compress(preserve=)`, `Priority.PINNED`, `CompressResult` fields (compression_id, original_tokens, compressed_tokens, compression_ratio, source_commits, summary_commits, preserved_commits, new_head)
 
 ### 07/02 — LLM and Collaborative Compression
 
 **Use case:** Let the LLM summarize, with optional human review.
 
-`compress(target_tokens=2000)` auto-summarizes using the configured LLM. PINNED commits pass through untouched; SKIP commits are excluded. For human review, use `auto_commit=False` — the LLM drafts a summary, you inspect and `approve_compression()`.
+`compress(target_tokens=200)` auto-summarizes using the configured LLM. PINNED commits pass through untouched; SKIP commits are excluded. Guide the summary with `instructions=` (additional prompt guidance) or `system_prompt=` (replace the entire summarization prompt). For human review, use `auto_commit=False` — returns a `PendingCompression` with the LLM's draft. Inspect, edit with `edit_summary()`, then `approve()` to finalize.
 
-> `compress(target_tokens=)`, `compress(auto_commit=False)`, `approve_compression()`, pinned survives
+> `compress(target_tokens=)`, `instructions=`, `auto_commit=False`, `PendingCompression`, `edit_summary()`, `approve()`, PINNED/SKIP interaction
 
-### 07/03 — Garbage Collection
+### 07/03 — GC and Reorder
 
-**Use case:** Archived pre-compression commits are piling up. Reclaim storage.
+**Use case:** Reclaim storage after compression, and reorder messages for better LLM context flow.
 
-`gc()` removes orphaned commits older than N days. Archived commits can have a separate retention window. Non-destructive to any reachable commit chain.
+`gc()` removes unreachable commits beyond a configurable retention window. `archive_retention_days=None` (default) keeps archives forever for audit; set a number to reclaim storage. `compile(order=[...])` reorders the compiled context by commit hash without changing history — returns `(CompiledContext, list[ReorderWarning])` with safety checks for structural issues.
 
-> `gc(orphan_retention_days=7, archive_retention_days=30)`
+> `gc(archive_retention_days=)`, `GCResult`, `compile(order=)`, `ReorderWarning`
 
-### 07/04 — Retention-Aware Compression
-
-**Use case:** Compressing a long conversation that contains critical financial figures. You need to guarantee those figures survive summarization.
-
-IMPORTANT commits with `retain_match=["$50k", "2026-03-01"]` get deterministic validation after summarization. If the summary is missing a required substring or regex, `retry_with_steering()` amends the prompt with the diagnosis and retries. Fuzzy `retain=` instructions are injected into the summarization prompt to guide the LLM. Combines IMPORTANT priority (story 04/04) with the retry protocol (story 11).
-
-> `compress()` with IMPORTANT commits, `retain_match=` validation, `retry_with_steering()`, enriched summarization prompt
+**Note:** Retention-aware compression (IMPORTANT priority with `retain_match=` patterns surviving summarization) is demonstrated in story 04/04.
 
 ---
 

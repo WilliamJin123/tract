@@ -1,12 +1,15 @@
 """Manual Compression
 
 You know exactly what the summary should say -- no LLM needed. Compress
-a range of commits into a single summary commit with your own text.
-Shows all three range selection modes and the preserve= temporary pin.
+commits into a summary with your own text. Shows compress-all, preserve=
+for keeping specific messages, and CompressResult inspection.
 
-Demonstrates: compress(content=), from_commit/to_commit range,
-              commits= explicit list, compress-all default,
-              preserve= temporary pin, CompressResult fields,
+Manual mode (content=) works when the compression produces a single group
+of non-preserved commits. For multi-group scenarios (preserved commits in
+the middle), use LLM mode (see 02_llm_compression.py).
+
+Demonstrates: compress(content=), compress-all default, preserve=
+              temporary pin, CompressResult fields, PINNED system prompt,
               before/after visualization with pprint(style="compact")
 """
 
@@ -14,7 +17,7 @@ import os
 
 from dotenv import load_dotenv
 
-from tract import Tract
+from tract import Priority, Tract
 
 load_dotenv()
 
@@ -25,15 +28,15 @@ CEREBRAS_MODEL = "gpt-oss-120b"
 
 def main():
     # =================================================================
-    # Part 1: Range compression (from_commit / to_commit)
+    # Part 1: Compress everything (default)
     # =================================================================
 
     print("=" * 60)
-    print("Part 1: RANGE COMPRESSION (from_commit / to_commit)")
+    print("Part 1: COMPRESS ALL (manual content)")
     print("=" * 60)
     print()
-    print("  Compress a specific range of commits using your own summary.")
-    print("  content= bypasses the LLM summarizer entirely.")
+    print("  compress(content=...) replaces all eligible commits with")
+    print("  your text. PINNED commits survive verbatim.")
 
     with Tract.open(
         api_key=CEREBRAS_API_KEY,
@@ -41,63 +44,57 @@ def main():
         model=CEREBRAS_MODEL,
     ) as t:
 
-        # Build a multi-turn conversation
-        t.system("You are a concise Python tutor.")
-        r1 = t.chat("What are decorators?")
-        r2 = t.chat("What about context managers?")
-        r3 = t.chat("And generators?")
+        # Pin the system prompt so it survives compression
+        sys_ci = t.system("You are a concise Python tutor.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
+
+        t.chat("What are decorators?")
+        t.chat("What about context managers?")
+        t.chat("And generators?")
 
         print("\n  BEFORE compression:\n")
-        t.compile().pprint(style="compact")
+        ctx_before = t.compile()
+        ctx_before.pprint(style="compact")
+        print(f"\n  {ctx_before.token_count} tokens, {len(ctx_before.messages)} messages")
 
-        # Compress the first two Q&A pairs (r1 + r2), keep the third (r3)
-        # log() returns newest-first; reverse for chronological order
-        all_entries = list(t.log(limit=20))
-        all_entries.reverse()
-        # [0]=system, [1]=r1_user, [2]=r1_asst, [3]=r2_user, [4]=r2_asst, ...
-        from_hash = all_entries[1].commit_hash   # first user message
-        to_hash = r2.commit_info.commit_hash     # second assistant response
-
-        print(f"\n  Compressing range: {from_hash[:8]}..{to_hash[:8]}")
-        print(f"  (first two Q&A pairs -> one summary)\n")
-
+        # Compress everything -- PINNED system prompt survives
         result = t.compress(
-            from_commit=from_hash,
-            to_commit=to_hash,
             content=(
-                "User asked about Python decorators and context managers. "
-                "Decorators are functions that wrap other functions to extend "
-                "behavior (using @syntax). Context managers handle setup/teardown "
-                "via __enter__/__exit__ (using 'with' statements)."
+                "User learned about three Python features: "
+                "decorators (@syntax wrapping functions), "
+                "context managers (with statements for setup/teardown), "
+                "and generators (yield keyword for lazy iteration)."
             ),
         )
 
-        # Inspect the CompressResult -- rich data about what happened
-        print(f"  CompressResult:")
+        # Inspect the CompressResult
+        print(f"\n  CompressResult:")
         print(f"    compression_id:    {result.compression_id[:8]}")
         print(f"    original_tokens:   {result.original_tokens}")
         print(f"    compressed_tokens: {result.compressed_tokens}")
         print(f"    compression_ratio: {result.compression_ratio:.1%}")
         print(f"    source_commits:    {len(result.source_commits)} archived")
         print(f"    summary_commits:   {len(result.summary_commits)} created")
-        print(f"    preserved_commits: {len(result.preserved_commits)} kept as-is")
+        print(f"    preserved_commits: {len(result.preserved_commits)} kept (PINNED)")
         print(f"    new_head:          {result.new_head[:8]}")
 
         print("\n  AFTER compression:\n")
-        t.compile().pprint(style="compact")
-
-        print("\n  First two Q&A pairs -> one summary. Generators Q&A untouched.")
+        ctx_after = t.compile()
+        ctx_after.pprint(style="compact")
+        print(f"\n  {ctx_after.token_count} tokens, {len(ctx_after.messages)} messages")
+        print(f"\n  3 Q&A pairs -> 1 summary. PINNED system prompt survived.")
 
     # =================================================================
-    # Part 2: Explicit commit list (commits=)
+    # Part 2: preserve= keeps specific messages
     # =================================================================
 
     print(f"\n{'=' * 60}")
-    print("Part 2: EXPLICIT COMMIT LIST (commits=)")
+    print("Part 2: TEMPORARY PIN (preserve=)")
     print("=" * 60)
     print()
-    print("  Cherry-pick specific commits to compress by hash.")
-    print("  Useful when the commits to compress aren't contiguous.")
+    print("  preserve= treats commits as PINNED for this one compression")
+    print("  only, without permanently annotating them. They pass through")
+    print("  verbatim while everything else gets summarized.")
 
     with Tract.open(
         api_key=CEREBRAS_API_KEY,
@@ -105,55 +102,53 @@ def main():
         model=CEREBRAS_MODEL,
     ) as t:
 
-        t.system("You are a concise Python tutor.")
-        r1 = t.chat("What's a list comprehension?")
-        r2 = t.chat("What's a dict comprehension?")
-        r3 = t.chat("What's a set comprehension?")
+        sys_ci = t.system("You are a concise Python tutor.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
+
+        t.chat("What are decorators?")
+        t.chat("What about context managers?")
+
+        # This Q&A is the one we want to keep
+        r3 = t.chat("What's the GIL and how does it affect threading?")
 
         print("\n  BEFORE compression:\n")
         t.compile().pprint(style="compact")
 
-        # Compress r1 and r3 (skip r2) using explicit hashes
+        # Get the user + assistant hashes for the GIL Q&A (last pair)
         all_entries = list(t.log(limit=20))
         all_entries.reverse()
-        # [0]=system, [1,2]=r1 pair, [3,4]=r2 pair, [5,6]=r3 pair
-        target_commits = [
-            all_entries[1].commit_hash, all_entries[2].commit_hash,  # r1 pair
-            all_entries[5].commit_hash, all_entries[6].commit_hash,  # r3 pair
-        ]
+        # [0]=system, [1,2]=r1, [3,4]=r2, [5]=r3_user, [6]=r3_asst
+        r3_hashes = [all_entries[5].commit_hash, all_entries[6].commit_hash]
 
-        print(f"\n  Compressing 4 specific commits (r1 + r3, skipping r2):\n")
-        for h in target_commits:
-            print(f"    {h[:8]}")
+        print(f"\n  Preserving the GIL Q&A (last pair): "
+              f"[{r3_hashes[0][:8]}, {r3_hashes[1][:8]}]")
 
         result = t.compress(
-            commits=target_commits,
             content=(
-                "User asked about list and set comprehensions. "
-                "List: [expr for x in iter]. Set: {expr for x in iter} "
-                "for unique values."
+                "User learned about decorators (@syntax wrapping) "
+                "and context managers (with statements for setup/teardown)."
             ),
+            preserve=r3_hashes,
         )
 
-        print(f"\n  Compressed {len(result.source_commits)} commits "
-              f"({result.original_tokens} -> {result.compressed_tokens} tokens)")
+        print(f"\n  Compressed: {result.original_tokens} -> {result.compressed_tokens} tokens")
+        print(f"  Preserved:  {len(result.preserved_commits)} commits")
 
         print("\n  AFTER compression:\n")
         t.compile().pprint(style="compact")
 
-        print("\n  Dict comprehension Q&A (r2) survived untouched.")
+        print("\n  GIL Q&A passed through verbatim. No permanent annotation needed.")
 
     # =================================================================
-    # Part 3: preserve= temporary pin
+    # Part 3: Continue after compression
     # =================================================================
 
     print(f"\n{'=' * 60}")
-    print("Part 3: TEMPORARY PIN (preserve=)")
+    print("Part 3: CONTINUE AFTER COMPRESSION")
     print("=" * 60)
     print()
-    print("  preserve= treats commits as PINNED for this one compression,")
-    print("  without permanently annotating them. They pass through")
-    print("  verbatim while everything else gets compressed.")
+    print("  After compression, the conversation continues normally.")
+    print("  New messages build on top of the compressed summary.")
 
     with Tract.open(
         api_key=CEREBRAS_API_KEY,
@@ -161,38 +156,34 @@ def main():
         model=CEREBRAS_MODEL,
     ) as t:
 
-        t.system("You are a concise Python tutor.")
-        r1 = t.chat("What are decorators?")
-        r2 = t.chat("What's the GIL?")           # we want to keep this one
-        r3 = t.chat("What are metaclasses?")
+        sys_ci = t.system("You are a concise Python tutor.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
+
+        t.chat("What are decorators?")
+        t.chat("What about context managers?")
+        t.chat("And generators?")
 
         print("\n  BEFORE compression:\n")
-        t.compile().pprint(style="compact")
+        ctx_before = t.compile()
+        ctx_before.pprint(style="compact")
 
-        # Preserve r2's user+assistant commits
-        all_entries = list(t.log(limit=20))
-        all_entries.reverse()
-        r2_hashes = [all_entries[3].commit_hash, all_entries[4].commit_hash]
-
-        print(f"\n  Compressing all, but preserve= the GIL Q&A:")
-        print(f"    [{r2_hashes[0][:8]}, {r2_hashes[1][:8]}]\n")
-
-        result = t.compress(
-            content=(
-                "User asked about Python decorators and metaclasses. "
-                "Decorators wrap functions with @syntax. Metaclasses "
-                "control class creation via type() or __metaclass__."
-            ),
-            preserve=r2_hashes,
+        # Compress
+        t.compress(
+            content="User learned about decorators, context managers, and generators.",
         )
 
-        print(f"  Compressed: {result.original_tokens} -> {result.compressed_tokens} tokens")
-        print(f"  Preserved:  {len(result.preserved_commits)} commits (GIL Q&A)")
-
-        print("\n  AFTER compression:\n")
+        print("\n  AFTER compression (before new messages):\n")
         t.compile().pprint(style="compact")
 
-        print("\n  GIL Q&A passed through verbatim -- no permanent annotation needed.")
+        # Continue chatting -- the LLM sees the compressed summary as context
+        print("\n  Continuing the conversation...\n")
+        r = t.chat("Based on what we discussed, which concept is most useful for file handling?")
+        r.pprint()
+
+        print("\n  FINAL context:\n")
+        t.compile().pprint(style="compact")
+
+        print("\n  The LLM built on the compressed summary seamlessly.")
 
 
 if __name__ == "__main__":

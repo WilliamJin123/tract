@@ -1,6 +1,6 @@
 """Garbage Collection and Message Reordering
 
-After compression, archived source commits pile up in the database.
+After compression, archived source commits remain in the database.
 gc() reclaims storage by removing unreachable commits beyond a retention
 window. compile(order=) reorders messages for better LLM context flow,
 with safety checks that warn about structural issues.
@@ -25,16 +25,15 @@ CEREBRAS_MODEL = "gpt-oss-120b"
 
 def main():
     # =================================================================
-    # Part 1: Garbage Collection
+    # Part 1: GC after compression
     # =================================================================
 
     print("=" * 60)
-    print("Part 1: GARBAGE COLLECTION")
+    print("Part 1: GARBAGE COLLECTION AFTER COMPRESSION")
     print("=" * 60)
     print()
     print("  After compression, original commits are archived but still")
-    print("  in the database. gc() removes unreachable commits beyond")
-    print("  the retention window to reclaim storage.")
+    print("  in the database. gc() removes them to reclaim storage.")
 
     with Tract.open(
         api_key=CEREBRAS_API_KEY,
@@ -43,7 +42,9 @@ def main():
     ) as t:
 
         # Build a conversation and compress it
-        t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise Python tutor.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
+
         t.chat("What are decorators?")
         t.chat("What about context managers?")
         t.chat("Explain generators and yield.")
@@ -62,31 +63,17 @@ def main():
             ),
         )
 
-        print(f"\n  Compressed: {len(compress_result.source_commits)} commits archived")
+        print(f"  Compressed: {len(compress_result.source_commits)} commits archived")
         print(f"    {compress_result.original_tokens} -> {compress_result.compressed_tokens} tokens")
 
         ctx_after = t.compile()
-        print(f"\n  Post-compression: {len(ctx_after.messages)} messages")
+        print(f"\n  Post-compression context:")
         ctx_after.pprint(style="compact")
 
-        # Also create orphaned commits by resetting
-        # (reset moves HEAD back, leaving unreachable commits)
-        t.chat("What about list comprehensions?")
-        r_orphan = t.chat("And dict comprehensions?")
-        orphan_head = t.head
-        t.reset(ctx_after.commit_hashes[-1])  # reset back to post-compression
+        # GC with 0-day archive retention (immediate cleanup for demo)
+        print(f"\n  Running gc(archive_retention_days=0)...\n")
 
-        print(f"\n  Created orphaned commits by adding 2 messages then resetting.")
-        print(f"    Orphaned HEAD was: {orphan_head[:8]}")
-        print(f"    Reset back to:     {t.head[:8]}")
-
-        # Run GC with 0-day retention (immediate cleanup for demo)
-        print(f"\n  Running gc(orphan_retention_days=0, archive_retention_days=0)...\n")
-
-        gc_result = t.gc(
-            orphan_retention_days=0,
-            archive_retention_days=0,
-        )
+        gc_result = t.gc(archive_retention_days=0)
 
         print(f"  GCResult:")
         print(f"    commits_removed:        {gc_result.commits_removed}")
@@ -98,8 +85,7 @@ def main():
         # Context is unchanged -- GC only removes unreachable data
         print(f"\n  Context unchanged after GC:")
         t.compile().pprint(style="compact")
-
-        print(f"\n  GC removed archived + orphaned commits. Reachable data is safe.")
+        print(f"\n  Archived source commits are gone. Reachable data is safe.")
 
     # =================================================================
     # Part 2: Retention policies
@@ -110,8 +96,8 @@ def main():
     print("=" * 60)
     print()
     print("  orphan_retention_days: how long orphaned commits survive.")
-    print("  archive_retention_days: how long compressed source commits survive.")
-    print("  None (default) means archives are never removed.")
+    print("  archive_retention_days: how long compressed sources survive.")
+    print("  None (default) = archives kept forever.")
 
     with Tract.open(
         api_key=CEREBRAS_API_KEY,
@@ -119,38 +105,30 @@ def main():
         model=CEREBRAS_MODEL,
     ) as t:
 
-        t.system("You are a concise Python tutor.")
+        sys_ci = t.system("You are a concise Python tutor.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
+
         t.chat("What's a closure?")
         t.chat("What's a lambda?")
 
-        # Compress
         t.compress(
-            content="User asked about closures (functions capturing scope) and lambdas (anonymous functions).",
+            content="User asked about closures (functions capturing scope) "
+                    "and lambdas (anonymous functions).",
         )
 
-        # GC with conservative retention -- keeps archives indefinitely
-        print(f"\n  gc(orphan_retention_days=7, archive_retention_days=None)")
-        print(f"  (7-day orphan window, archives kept forever)\n")
+        # Conservative: keep archives forever
+        print(f"\n  gc(archive_retention_days=None)  -- keep archives forever")
+        gc1 = t.gc(archive_retention_days=None)
+        print(f"    commits_removed: {gc1.commits_removed}  (archives preserved)")
 
-        gc_result = t.gc(
-            orphan_retention_days=7,
-            archive_retention_days=None,  # never remove archives
-        )
+        # Aggressive: remove archives immediately
+        print(f"\n  gc(archive_retention_days=0)  -- remove archives now")
+        gc2 = t.gc(archive_retention_days=0)
+        print(f"    commits_removed: {gc2.commits_removed}")
+        print(f"    tokens_freed:    {gc2.tokens_freed}")
 
-        print(f"  commits_removed: {gc_result.commits_removed}")
-        print(f"  (Archives survived because archive_retention_days=None)")
-
-        # GC again with 0-day archive retention
-        print(f"\n  gc(orphan_retention_days=0, archive_retention_days=0)")
-        print(f"  (immediate cleanup of everything unreachable)\n")
-
-        gc_result = t.gc(
-            orphan_retention_days=0,
-            archive_retention_days=0,
-        )
-
-        print(f"  commits_removed: {gc_result.commits_removed}")
-        print(f"  tokens_freed:    {gc_result.tokens_freed}")
+        print(f"\n  In production, use archive_retention_days=30 (or similar)")
+        print(f"  so you can still audit pre-compression history for a month.")
 
     # =================================================================
     # Part 3: Message reordering with compile(order=)
@@ -161,8 +139,8 @@ def main():
     print("=" * 60)
     print()
     print("  compile(order=) reorders messages by commit hash.")
-    print("  Returns (CompiledContext, list[ReorderWarning]) with")
-    print("  safety checks for structural issues like edits")
+    print("  Returns (CompiledContext, list[ReorderWarning]).")
+    print("  Safety checks warn about structural issues like edits")
     print("  appearing before their targets.")
 
     with Tract.open(
@@ -180,17 +158,16 @@ def main():
         ctx = t.compile()
         ctx.pprint(style="compact")
 
-        # Reorder: put GIL discussion first, then decorators, then generators
-        # We need the commit hashes for the user+assistant pairs
-        hashes = ctx.commit_hashes  # parallel to messages
+        # Get commit hashes (parallel to messages)
+        hashes = ctx.commit_hashes
         # [0]=system, [1]=r1_user, [2]=r1_asst, [3]=r2_user, [4]=r2_asst, [5]=r3_user, [6]=r3_asst
 
-        # Put GIL (r3) right after system, then decorators (r1), then generators (r2)
+        # Reorder: GIL first, then decorators, then generators
         new_order = [
-            hashes[0],  # system
-            hashes[5], hashes[6],  # r3: GIL
-            hashes[1], hashes[2],  # r1: decorators
-            hashes[3], hashes[4],  # r2: generators
+            hashes[0],              # system stays first
+            hashes[5], hashes[6],   # r3: GIL
+            hashes[1], hashes[2],   # r1: decorators
+            hashes[3], hashes[4],   # r2: generators
         ]
 
         reordered, warnings = t.compile(order=new_order)
@@ -205,8 +182,8 @@ def main():
         if not warnings:
             print(f"    (none -- all APPEND-only, safe to reorder)")
 
-        print(f"\n  compile(order=) lets you rearrange context for better LLM flow")
-        print(f"  without changing the underlying commit history.")
+        print(f"\n  Reordering rearranges the compiled context for better LLM")
+        print(f"  flow without changing the underlying commit history.")
 
 
 if __name__ == "__main__":

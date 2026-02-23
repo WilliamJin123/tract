@@ -243,9 +243,9 @@ class SqliteCommitRepository(CommitRepository):
     def delete(self, commit_hash: str) -> None:
         """Delete a commit by hash. Also cleans up related rows.
 
-        Removes CommitParentRow, AnnotationRow, RefRow pointing to this
-        commit, and nullifies parent_hash/edit_target references from
-        other commits before deleting the commit itself.
+        Removes all rows that reference this commit via FK, and nullifies
+        parent_hash/edit_target references from other commits, before
+        deleting the commit itself.
         """
         # Delete CommitParentRow entries where this commit is child or parent
         parent_stmts = select(CommitParentRow).where(
@@ -267,6 +267,20 @@ class SqliteCommitRepository(CommitRepository):
             RefRow.commit_hash == commit_hash
         )
         for row in self._session.execute(ref_stmts).scalars().all():
+            self._session.delete(row)
+
+        # Delete CompileEffectiveRow entries referencing this commit
+        effective_stmts = select(CompileEffectiveRow).where(
+            CompileEffectiveRow.commit_hash == commit_hash
+        )
+        for row in self._session.execute(effective_stmts).scalars().all():
+            self._session.delete(row)
+
+        # Delete CommitToolRow entries referencing this commit
+        tool_stmts = select(CommitToolRow).where(
+            CommitToolRow.commit_hash == commit_hash
+        )
+        for row in self._session.execute(tool_stmts).scalars().all():
             self._session.delete(row)
 
         # Nullify parent_hash on children (SET NULL semantics)
