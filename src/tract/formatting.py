@@ -189,9 +189,26 @@ def _pprint_compiled_chat(ctx: Any, *, abbreviate: bool = False, file: Any = Non
 
         title, border = _ROLE_STYLES.get(msg.role, (msg.role.title(), "white"))
 
-        # Render assistant messages as Markdown, others as plain text
-        if msg.role == "assistant":
-            body: Any = Markdown(content) if content else Text("(empty)")
+        # Tool-calling assistant messages: show calls instead of "(empty)"
+        if msg.role == "assistant" and msg.tool_calls:
+            parts: list[Any] = []
+            if content:
+                parts.append(Markdown(content))
+                parts.append(Text(""))
+            for tc in msg.tool_calls:
+                call_text = Text()
+                call_text.append(f"{tc.name}", style="bold cyan")
+                call_text.append("(", style="dim")
+                # Show arguments concisely: key=value pairs
+                arg_parts = [f"{k}={v!r}" for k, v in tc.arguments.items()]
+                call_text.append(", ".join(arg_parts), style="white")
+                call_text.append(")", style="dim")
+                parts.append(call_text)
+            body: Any = Group(*parts) if len(parts) > 1 else parts[0]
+            title = "Tool Call"
+            border = "cyan"
+        elif msg.role == "assistant":
+            body = Markdown(content) if content else Text("(empty)")
         else:
             body = content
 

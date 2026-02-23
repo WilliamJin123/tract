@@ -668,19 +668,27 @@ class Tract:
         the estimated token cost of the tool schemas to ``token_count``
         so pre-call budget checks account for them.
 
+        When the token count is API-calibrated (source starts with ``"api:"``),
+        the API's ``prompt_tokens`` already includes tool definitions, so we
+        skip adding tiktoken-estimated tool tokens to avoid double-counting.
+
         Returns the original result unchanged if no tools are found.
         """
         tools = self._gather_tools_for_compile()
         if not tools:
             return result
-        # Estimate tokens for tool definitions (serialized JSON is what the API sees)
-        import json as _json
-        tools_text = _json.dumps(tools)
-        tools_tokens = self._token_counter.count_text(tools_text)
+        # Only add tiktoken tool tokens when source is NOT API-calibrated
+        # (API prompt_tokens already includes tool definition costs)
+        token_count = result.token_count
+        if not result.token_source.startswith("api:"):
+            import json as _json
+            tools_text = _json.dumps(tools)
+            tools_tokens = self._token_counter.count_text(tools_text)
+            token_count += tools_tokens
         # CompiledContext is frozen, so create new instance with tools
         return CompiledContext(
             messages=result.messages,
-            token_count=result.token_count + tools_tokens,
+            token_count=token_count,
             commit_count=result.commit_count,
             token_source=result.token_source,
             generation_configs=result.generation_configs,

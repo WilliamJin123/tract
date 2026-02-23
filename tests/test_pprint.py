@@ -19,6 +19,7 @@ from tract.protocols import (
     CompiledContext,
     Message,
     TokenUsage,
+    ToolCall,
 )
 
 
@@ -387,6 +388,70 @@ class TestCompiledContextPprint:
         output = buf.getvalue()
         assert "api:10+5" in output
         assert "\u224810" not in output  # no ≈
+
+    def test_pprint_chat_tool_call_shows_function_info(self) -> None:
+        """Tool-calling assistant messages show function name and args, not '(empty)'."""
+        tcs = [ToolCall(id="call_1", name="python_eval", arguments={"expression": "2+2"})]
+        ctx = CompiledContext(
+            messages=[
+                Message(role="user", content="calculate"),
+                Message(role="assistant", content="", tool_calls=tcs),
+                Message(role="tool", content="4", tool_call_id="call_1", name="python_eval"),
+            ],
+            token_count=50,
+            commit_count=3,
+            token_source="tiktoken:o200k_base",
+        )
+        buf = StringIO()
+        from tract.formatting import pprint_compiled_context
+        pprint_compiled_context(ctx, style="chat", file=buf)
+        output = buf.getvalue()
+        # Should show tool call info, not "(empty)"
+        assert "(empty)" not in output
+        assert "python_eval" in output
+        assert "expression" in output
+        assert "2+2" in output
+        # Should use "Tool Call" title instead of "Assistant"
+        assert "Tool Call" in output
+
+    def test_pprint_chat_tool_call_with_content(self) -> None:
+        """Tool-calling message with content shows both content and calls."""
+        tcs = [ToolCall(id="call_1", name="eval", arguments={"x": 1})]
+        ctx = CompiledContext(
+            messages=[
+                Message(role="assistant", content="Let me compute that.", tool_calls=tcs),
+            ],
+            token_count=20,
+            commit_count=1,
+            token_source="tiktoken:o200k_base",
+        )
+        buf = StringIO()
+        from tract.formatting import pprint_compiled_context
+        pprint_compiled_context(ctx, style="chat", file=buf)
+        output = buf.getvalue()
+        assert "Let me compute that" in output
+        assert "eval" in output
+
+    def test_pprint_chat_multiple_tool_calls(self) -> None:
+        """Multiple tool calls in one message are all shown."""
+        tcs = [
+            ToolCall(id="c1", name="python_eval", arguments={"expression": "7*6"}),
+            ToolCall(id="c2", name="run_shell", arguments={"command": "echo hi"}),
+        ]
+        ctx = CompiledContext(
+            messages=[Message(role="assistant", content="", tool_calls=tcs)],
+            token_count=30,
+            commit_count=1,
+            token_source="tiktoken:o200k_base",
+        )
+        buf = StringIO()
+        from tract.formatting import pprint_compiled_context
+        pprint_compiled_context(ctx, style="chat", file=buf)
+        output = buf.getvalue()
+        assert "python_eval" in output
+        assert "run_shell" in output
+        assert "7*6" in output
+        assert "echo hi" in output
 
     def test_pprint_method_delegates(
         self, sample_compiled_context: CompiledContext
