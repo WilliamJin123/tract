@@ -22,7 +22,7 @@ load_dotenv()
 
 CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
 CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-CEREBRAS_MODEL = "gpt-oss-120b"
+CEREBRAS_MODEL = "qwen-3-235b-a22b-instruct-2507"
 
 CONTRACT_PATH = Path(__file__).parent / "sample_contract.md"
 
