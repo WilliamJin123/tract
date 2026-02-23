@@ -9,7 +9,7 @@ at module level. Functions access object attributes dynamically.
 from __future__ import annotations
 
 from io import StringIO
-from typing import Any
+from typing import Any, Literal
 
 from rich.console import Console, Group
 from rich.markdown import Markdown
@@ -145,7 +145,11 @@ def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any =
 
 
 def pprint_compiled_context(
-    ctx: Any, *, abbreviate: bool = False, style: str = "table", file: Any = None,
+    ctx: Any,
+    *,
+    abbreviate: bool = False,
+    style: Literal["table", "chat", "compact"] = "table",
+    file: Any = None,
 ) -> None:
     """Pretty-print a CompiledContext.
 

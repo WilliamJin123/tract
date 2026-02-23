@@ -13,7 +13,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from pydantic import BaseModel
 
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from tract.models.branch import BranchInfo
-    from tract.models.compression import CompressResult, GCResult, PendingCompression
+    from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning
     from tract.models.merge import ImportResult, MergeResult, RebaseResult
     from tract.models.policy import PolicyProposal
     from tract.models.session import SpawnInfo
@@ -1457,6 +1457,28 @@ class Tract:
         effectives = self._compile_record_repo.get_effectives(record_id)
         return [e.commit_hash for e in effectives]
 
+    @overload
+    def compile(
+        self,
+        *,
+        at_time: datetime | None = ...,
+        at_commit: str | None = ...,
+        include_edit_annotations: bool = ...,
+        order: None = None,
+        check_safety: bool = ...,
+    ) -> CompiledContext: ...
+
+    @overload
+    def compile(
+        self,
+        *,
+        at_time: datetime | None = ...,
+        at_commit: str | None = ...,
+        include_edit_annotations: bool = ...,
+        order: list[str],
+        check_safety: bool = ...,
+    ) -> tuple[CompiledContext, list[ReorderWarning]]: ...
+
     def compile(
         self,
         *,
@@ -1465,7 +1487,7 @@ class Tract:
         include_edit_annotations: bool = False,
         order: list[str] | None = None,
         check_safety: bool = True,
-    ) -> CompiledContext | tuple[CompiledContext, list]:
+    ) -> CompiledContext | tuple[CompiledContext, list[ReorderWarning]]:
         """Compile the current context into LLM-ready messages.
 
         Args:

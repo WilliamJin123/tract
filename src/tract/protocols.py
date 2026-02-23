@@ -11,7 +11,7 @@ from __future__ import annotations
 import json as _json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from tract.models.config import LLMConfig
 
@@ -216,13 +216,19 @@ class CompiledContext:
             f" tokens={self.token_count}, source={self.token_source})"
         )
 
-    def pprint(self, *, abbreviate: bool = False, style: str = "table") -> None:
+    def pprint(
+        self,
+        *,
+        abbreviate: bool = False,
+        style: Literal["table", "chat", "compact"] = "table",
+    ) -> None:
         """Pretty-print this compiled context using rich formatting.
 
         Args:
             abbreviate: If True, truncate long content.
             style: ``"table"`` for a data table, ``"chat"`` for a chat
-                transcript with panels per message.
+                transcript with panels per message, ``"compact"`` for a
+                one-line-per-message summary.
         """
         from tract.formatting import pprint_compiled_context
 
