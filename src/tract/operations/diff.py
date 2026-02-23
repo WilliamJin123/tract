@@ -74,6 +74,11 @@ class DiffResult:
     generation_config_changes: dict[str, tuple[Any, Any]] = field(default_factory=dict)
     # field_name -> (old_value, new_value)
 
+    def pprint(self, *, stat_only: bool = False) -> None:
+        """Pretty-print this diff with colored unified diff output."""
+        from tract.formatting import pprint_diff_result
+        pprint_diff_result(self, stat_only=stat_only)
+
 
 def _serialize_message(msg: Message) -> str:
     """Serialize a Message to diffable text representation.

@@ -203,6 +203,163 @@ def pprint_commit_info(
     console.print(panel)
 
 
+def pprint_diff_result(result: Any, *, stat_only: bool = False, file: Any = None) -> None:
+    """Pretty-print a DiffResult with VS Code-style inline word highlights.
+
+    Modified lines show the specific changed words highlighted against a
+    dimmer background — like VS Code / Claude Code inline diffs.
+
+    Args:
+        result: A DiffResult instance.
+        stat_only: If True, show only summary statistics.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    stat = result.stat
+
+    if stat_only:
+        _pprint_diff_stat(stat, result.generation_config_changes, console)
+        return
+
+    # Header
+    console.print(
+        f"[bold]diff[/bold] [yellow]{result.commit_a[:8]}[/yellow] "
+        f"[yellow]{result.commit_b[:8]}[/yellow]"
+    )
+    console.print()
+
+    for md in result.message_diffs:
+        if md.status == "unchanged":
+            continue
+
+        if md.status == "added":
+            console.print(f"[green]+++ message [{md.index}] role={md.role_b}[/green]")
+        elif md.status == "removed":
+            console.print(f"[red]--- message [{md.index}] role={md.role_a}[/red]")
+        elif md.status == "modified":
+            if md.role_a == md.role_b:
+                role_str = f"role={md.role_a}"
+            else:
+                role_str = f"role={md.role_a} → {md.role_b}"
+            console.print(f"[yellow]~~~ message [{md.index}] {role_str}[/yellow]")
+            _render_inline_diff(md.content_diff_lines, console)
+
+    console.print()
+    _pprint_diff_stat(stat, result.generation_config_changes, console)
+
+
+def _render_inline_diff(diff_lines: list[str], console: Console) -> None:
+    """Render unified diff lines with word-level inline highlights.
+
+    Pairs consecutive -/+ lines and highlights the specific changed words.
+    Unpaired lines are shown as full red/green.
+    """
+    import difflib
+
+    # Collect lines, stripping trailing newlines
+    lines = [l.rstrip("\n") for l in diff_lines]
+
+    # Group into removed/added pairs for word-level diffing
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        if line.startswith("@@"):
+            console.print(Text(line, style="cyan"))
+            i += 1
+        elif line.startswith("---") or line.startswith("+++"):
+            # File headers from unified diff — skip (we show our own header)
+            i += 1
+        elif line.startswith("-"):
+            # Collect consecutive - lines, then consecutive + lines
+            removed: list[str] = []
+            while i < len(lines) and lines[i].startswith("-"):
+                removed.append(lines[i][1:])  # strip leading -
+                i += 1
+            added: list[str] = []
+            while i < len(lines) and lines[i].startswith("+"):
+                added.append(lines[i][1:])  # strip leading +
+                i += 1
+
+            # Pair them up for word-level highlighting
+            paired = min(len(removed), len(added))
+            for k in range(paired):
+                old_text, new_text = removed[k], added[k]
+                old_rich, new_rich = _word_level_highlight(old_text, new_text)
+                console.print(old_rich)
+                console.print(new_rich)
+
+            # Unpaired remainder
+            for k in range(paired, len(removed)):
+                console.print(Text(f"- {removed[k]}", style="red"))
+            for k in range(paired, len(added)):
+                console.print(Text(f"+ {added[k]}", style="green"))
+
+        elif line.startswith("+"):
+            console.print(Text(f"+ {line[1:]}", style="green"))
+            i += 1
+        elif line.startswith(" "):
+            console.print(Text(f"  {line[1:]}", style="white"))
+            i += 1
+        else:
+            console.print(line)
+            i += 1
+
+
+def _word_level_highlight(old_text: str, new_text: str) -> tuple[Text, Text]:
+    """Produce two Rich Text lines with word-level change highlights.
+
+    Unchanged words are dim red/green; changed words are bright bold.
+    """
+    import difflib
+
+    old_words = old_text.split()
+    new_words = new_text.split()
+
+    matcher = difflib.SequenceMatcher(None, old_words, new_words)
+
+    old_rich = Text("- ", style="red")
+    new_rich = Text("+ ", style="green")
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            old_rich.append(" ".join(old_words[i1:i2]) + " ", style="red")
+            new_rich.append(" ".join(new_words[j1:j2]) + " ", style="green")
+        elif tag == "replace":
+            old_rich.append(" ".join(old_words[i1:i2]) + " ", style="bold red on #3d0000")
+            new_rich.append(" ".join(new_words[j1:j2]) + " ", style="bold green on #003d00")
+        elif tag == "delete":
+            old_rich.append(" ".join(old_words[i1:i2]) + " ", style="bold red on #3d0000")
+        elif tag == "insert":
+            new_rich.append(" ".join(new_words[j1:j2]) + " ", style="bold green on #003d00")
+
+    return old_rich, new_rich
+
+
+def _pprint_diff_stat(stat: Any, config_changes: dict, console: Console) -> None:
+    """Print diff summary statistics."""
+    parts: list[str] = []
+    if stat.messages_added:
+        parts.append(f"[green]+{stat.messages_added} added[/green]")
+    if stat.messages_removed:
+        parts.append(f"[red]-{stat.messages_removed} removed[/red]")
+    if stat.messages_modified:
+        parts.append(f"[yellow]~{stat.messages_modified} modified[/yellow]")
+    if stat.messages_unchanged:
+        parts.append(f"[dim]{stat.messages_unchanged} unchanged[/dim]")
+
+    if stat.total_token_delta:
+        sign = "+" if stat.total_token_delta > 0 else ""
+        parts.append(f"[bold]{sign}{stat.total_token_delta} tokens[/bold]")
+
+    if config_changes:
+        for field_name, (old, new) in config_changes.items():
+            parts.append(f"[cyan]{field_name}: {old} → {new}[/cyan]")
+
+    console.print("  ".join(parts) if parts else "[dim]No changes[/dim]")
+
+
 def pprint_status_info(status: Any, *, abbreviate: bool = False, file: Any = None) -> None:
     """Pretty-print a StatusInfo.
 

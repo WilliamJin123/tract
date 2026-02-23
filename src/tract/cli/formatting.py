@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
-from rich.text import Text
 
 if TYPE_CHECKING:
     from tract.models.branch import BranchInfo
@@ -145,76 +144,19 @@ def format_status(info: StatusInfo, console: Console) -> None:
             )
 
 
-def _format_stat_summary(
-    stat: "DiffStat",
-    generation_config_changes: dict,
-    console: Console,
-) -> None:
-    """Print the stat summary block (shared between full and stat-only diff)."""
-    from tract.operations.diff import DiffStat  # noqa: F811
-
-    console.print(
-        f"[green]+{stat.messages_added}[/green] added  "
-        f"[red]-{stat.messages_removed}[/red] removed  "
-        f"[yellow]~{stat.messages_modified}[/yellow] modified  "
-        f"[dim]={stat.messages_unchanged} unchanged[/dim]"
-    )
-    if stat.total_token_delta != 0:
-        delta_sign = "+" if stat.total_token_delta > 0 else ""
-        console.print(f"Token delta: {delta_sign}{stat.total_token_delta}")
-    if generation_config_changes:
-        console.print()
-        console.print("[bold]Config changes:[/bold]")
-        for field_name, (old_val, new_val) in generation_config_changes.items():
-            console.print(f"  {field_name}: {old_val} -> {new_val}")
-
-
 def format_diff(result: DiffResult, console: Console, stat_only: bool = False) -> None:
     """Display diff results with colors.
 
+    Delegates to the SDK's canonical pprint_diff_result for consistent
+    rendering between CLI and Python API.
+
     Args:
         result: DiffResult from Tract.diff()
-        console: Rich console
+        console: Rich console (unused — SDK creates its own)
         stat_only: If True, show only stat summary (like git diff --stat)
     """
-    if stat_only:
-        _format_stat_summary(result.stat, result.generation_config_changes, console)
-        return
-
-    # Full diff display
-    console.print(
-        f"diff [yellow]{result.commit_a[:8]}[/yellow] "
-        f"[yellow]{result.commit_b[:8]}[/yellow]"
-    )
-    console.print()
-
-    for md in result.message_diffs:
-        if md.status == "unchanged":
-            continue
-
-        if md.status == "added":
-            console.print(f"[green]+++ message [{md.index}] role={md.role_b}[/green]")
-        elif md.status == "removed":
-            console.print(f"[red]--- message [{md.index}] role={md.role_a}[/red]")
-        elif md.status == "modified":
-            console.print(
-                f"[yellow]~~~ message [{md.index}] "
-                f"role={md.role_a} -> {md.role_b}[/yellow]"
-            )
-            for line in md.content_diff_lines:
-                line_stripped = line.rstrip("\n")
-                if line_stripped.startswith("+"):
-                    console.print(Text(line_stripped, style="green"))
-                elif line_stripped.startswith("-"):
-                    console.print(Text(line_stripped, style="red"))
-                elif line_stripped.startswith("@@"):
-                    console.print(Text(line_stripped, style="cyan"))
-                else:
-                    console.print(line_stripped)
-
-    # Summary
-    console.print()
-    _format_stat_summary(result.stat, result.generation_config_changes, console)
+    from tract.formatting import pprint_diff_result
+    pprint_diff_result(result, stat_only=stat_only)
 
 
 def format_branches(branches: list[BranchInfo], console: Console) -> None:
