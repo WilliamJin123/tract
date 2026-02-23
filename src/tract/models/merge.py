@@ -44,6 +44,12 @@ class ConflictInfo(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
+    def pprint(self) -> None:
+        """Pretty-print this conflict as a git-style diff."""
+        from tract.formatting import pprint_conflict_info
+
+        pprint_conflict_info(self)
+
 
 class MergeResult(BaseModel):
     """Result of a merge operation. Returned for review before commit.
@@ -79,6 +85,12 @@ class MergeResult(BaseModel):
             new_content: The new resolved content text.
         """
         self.resolutions[target_hash] = new_content
+
+    def pprint(self) -> None:
+        """Pretty-print this merge result summary."""
+        from tract.formatting import pprint_merge_result
+
+        pprint_merge_result(self)
 
 
 # ---------------------------------------------------------------------------

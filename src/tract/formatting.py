@@ -90,13 +90,37 @@ def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any =
     text = response.text
     if abbreviate and len(text) > 200:
         text = text[:197] + "..."
-    body = Markdown(text) if text else Text("(empty response)")
+
+    # Tool-calling responses: show function calls in magenta
+    tool_calls = getattr(response, "tool_calls", None)
+    has_tool_calls = bool(tool_calls)
+
+    if has_tool_calls:
+        body_parts: list[Any] = []
+        if text:
+            body_parts.append(Markdown(text))
+            body_parts.append(Text(""))
+        for tc in tool_calls:
+            call_text = Text()
+            call_text.append(f"{tc.name}", style="bold cyan")
+            call_text.append("(", style="dim")
+            arg_parts = [f"{k}={v!r}" for k, v in tc.arguments.items()]
+            call_text.append(", ".join(arg_parts), style="white")
+            call_text.append(")", style="dim")
+            body_parts.append(call_text)
+        body: Any = Group(*body_parts) if len(body_parts) > 1 else body_parts[0]
+        panel_title = "[bold]Tool Call[/bold]"
+        panel_border = "magenta"
+    else:
+        body = Markdown(text) if text else Text("(empty response)")
+        panel_title = "[bold]Assistant[/bold]"
+        panel_border = "green"
 
     # Footer metadata (usage + config) as plain Rich markup
-    footer_parts: list[str] = []
+    footer_parts_str: list[str] = []
     if response.usage is not None:
         u = response.usage
-        footer_parts.append(
+        footer_parts_str.append(
             f"[dim]{u.prompt_tokens} prompt + {u.completion_tokens} completion"
             f" = {u.total_tokens} tokens[/dim]"
         )
@@ -104,18 +128,18 @@ def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any =
         fields = response.generation_config.non_none_fields()
         if fields:
             parts = [f"{k}={v}" for k, v in fields.items()]
-            footer_parts.append(f"[dim]config: {', '.join(parts)}[/dim]")
+            footer_parts_str.append(f"[dim]config: {', '.join(parts)}[/dim]")
 
     # Combine markdown body + plain-text footer into a single panel
-    if footer_parts:
-        content = Group(body, Text(""), Text.from_markup("\n".join(footer_parts)))
+    if footer_parts_str:
+        content = Group(body, Text(""), Text.from_markup("\n".join(footer_parts_str)))
     else:
         content = body
 
     panel = Panel(
         content,
-        title="[bold]Assistant[/bold]",
-        border_style="green",
+        title=panel_title,
+        border_style=panel_border,
     )
     console.print(panel)
 
@@ -129,18 +153,22 @@ def pprint_compiled_context(
         ctx: A CompiledContext instance.
         abbreviate: If True, truncate long content. Default False (show full).
         style: Display style — ``"table"`` (default) for a data table,
-            ``"chat"`` for a chat transcript with panels per message.
+            ``"chat"`` for a chat transcript with panels per message,
+            ``"compact"`` for a one-line-per-message summary.
         file: Optional file-like object for output (used in tests).
     """
     if style == "chat":
         _pprint_compiled_chat(ctx, abbreviate=abbreviate, file=file)
+        return
+    if style == "compact":
+        _pprint_compiled_compact(ctx, abbreviate=abbreviate, file=file)
         return
 
     console = _make_console(file)
 
     table = Table(title="Compiled Context", show_lines=False)
     table.add_column("#", style="dim", width=4, justify="right")
-    table.add_column("Role", style="bold", width=10)
+    table.add_column("Role", width=10)
     table.add_column("Content", no_wrap=False)
     table.add_column("Tokens", justify="right", width=8)
 
@@ -148,14 +176,39 @@ def pprint_compiled_context(
     estimate = _is_estimate(ctx.token_source)
 
     for i, msg in enumerate(ctx.messages):
-        content = msg.content
-        if abbreviate and len(content) > 80:
-            content = content[:77] + "..."
+        # Tool-calling assistant messages: show function calls
+        if msg.role == "assistant" and getattr(msg, "tool_calls", None):
+            call_parts = []
+            for tc in msg.tool_calls:
+                args = ", ".join(f"{k}={v!r}" for k, v in tc.arguments.items())
+                call_parts.append(f"{tc.name}({args})")
+            display_text = "; ".join(call_parts)
+            if abbreviate and len(display_text) > 80:
+                display_text = display_text[:77] + "..."
+            role_label = Text("tool call", style="bold magenta")
+            cell: Any = Text(display_text, style="bold magenta")
+        else:
+            content = msg.content
+            if abbreviate and len(content) > 80:
+                content = content[:77] + "..."
+            color = _ROLE_COLORS.get(msg.role, "white")
+            role_label = Text(msg.role, style=f"bold {color}")
+            # Role-appropriate content rendering:
+            # - system: dim (configuration, not conversation)
+            # - assistant: Markdown (preserves code blocks, headers, lists)
+            # - user/tool/other: plain white text
+            if msg.role == "system":
+                cell = Text(content, style="dim")
+            elif msg.role == "assistant":
+                cell = Markdown(content)
+            else:
+                cell = Text(content)
+
         if msg.token_count > 0:
             tokens_str = f"\u2248{msg.token_count}" if estimate else str(msg.token_count)
         else:
             tokens_str = ""
-        table.add_row(str(i + 1), msg.role, Markdown(content), tokens_str)
+        table.add_row(str(i + 1), role_label, cell, tokens_str)
 
     console.print(table)
 
@@ -176,6 +229,56 @@ _ROLE_STYLES: dict[str, tuple[str, str]] = {
     "assistant": ("Assistant", "green"),
     "tool": ("Tool Result", "magenta"),
 }
+
+_ROLE_COLORS: dict[str, str] = {
+    "system": "yellow",
+    "user": "blue",
+    "assistant": "green",
+    "tool": "magenta",
+}
+
+
+def _pprint_compiled_compact(ctx: Any, *, abbreviate: bool = False, file: Any = None) -> None:
+    """Render a CompiledContext as a compact one-line-per-message summary."""
+    console = _make_console(file)
+
+    max_width = 60 if abbreviate else 80
+
+    for msg in ctx.messages:
+        content = (msg.content or "").replace("\n", " ").strip()
+        # Filter internal merge commit metadata
+        if content.startswith("{") and "message" in content:
+            continue
+
+        # Tool-calling assistant messages: show function calls
+        if msg.role == "assistant" and getattr(msg, "tool_calls", None):
+            color = "magenta"
+            role_label = "tool call"
+            call_parts = []
+            for tc in msg.tool_calls:
+                args = ", ".join(f"{k}={v!r}" for k, v in tc.arguments.items())
+                call_parts.append(f"{tc.name}({args})")
+            preview = "; ".join(call_parts)
+            if len(preview) > max_width:
+                preview = preview[:max_width - 3] + "..."
+        else:
+            color = _ROLE_COLORS.get(msg.role, "white")
+            role_label = msg.role
+            preview = content[:max_width - 3] + "..." if len(content) > max_width else content
+
+        line = Text()
+        line.append(f"  {role_label:10s}", style=f"bold {color}")
+        line.append(" | ", style="dim")
+        line.append(preview)
+        console.print(line)
+
+    # Footer
+    estimate = _is_estimate(ctx.token_source)
+    prefix = "\u2248" if estimate else ""
+    footer = Text()
+    footer.append(f"  {len(ctx.messages)} messages", style="bold")
+    footer.append(f" | {prefix}{ctx.token_count} tokens", style="dim")
+    console.print(footer)
 
 
 def _pprint_compiled_chat(ctx: Any, *, abbreviate: bool = False, file: Any = None) -> None:
@@ -493,3 +596,114 @@ def pprint_status_info(status: Any, *, abbreviate: bool = False, file: Any = Non
         border_style="cyan",
     )
     console.print(panel)
+
+
+# ---------------------------------------------------------------------------
+# Merge / conflict display
+# ---------------------------------------------------------------------------
+
+
+def pprint_conflict_info(conflict: Any, *, file: Any = None) -> None:
+    """Pretty-print a ConflictInfo as a git-style conflict diff.
+
+    Shows both sides with ``<<<<<<<`` / ``=======`` / ``>>>>>>>`` markers,
+    colored red (side A / target branch) and green (side B / source branch).
+
+    Args:
+        conflict: A ConflictInfo instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    # Header
+    target_short = conflict.target_hash[:8] if conflict.target_hash else "???"
+    ctype = conflict.conflict_type
+    if hasattr(ctype, "value"):
+        ctype = ctype.value
+    header = Text()
+    header.append("CONFLICT ", style="bold red")
+    header.append(f"({ctype}) ", style="dim")
+    header.append(f"on {target_short}", style="bold")
+    console.print(header)
+
+    # Ancestor (if available)
+    if conflict.ancestor_content_text:
+        console.print(Text(f"  ||||||| ancestor", style="dim"))
+        console.print(Text(f"  {conflict.ancestor_content_text}", style="dim"))
+
+    # Side A (target / current branch)
+    label_a = "current"
+    if conflict.commit_a and hasattr(conflict.commit_a, "commit_hash"):
+        label_a = conflict.commit_a.commit_hash[:8]
+    console.print(Text(f"  <<<<<<< {label_a}", style="bold red"))
+    for line in (conflict.content_a_text or "").splitlines():
+        rich_line = Text(f"  {line}", style="red")
+        console.print(rich_line)
+
+    console.print(Text("  =======", style="bold"))
+
+    # Side B (source branch)
+    label_b = "incoming"
+    if conflict.commit_b and hasattr(conflict.commit_b, "commit_hash"):
+        label_b = conflict.commit_b.commit_hash[:8]
+    for line in (conflict.content_b_text or "").splitlines():
+        rich_line = Text(f"  {line}", style="green")
+        console.print(rich_line)
+    console.print(Text(f"  >>>>>>> {label_b}", style="bold green"))
+
+
+def pprint_merge_result(result: Any, *, file: Any = None) -> None:
+    """Pretty-print a MergeResult summary.
+
+    Shows merge type, status, conflict count, and resolutions. For conflict
+    merges, renders each conflict with :func:`pprint_conflict_info`.
+
+    Args:
+        result: A MergeResult instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    # Type + status line
+    mtype = result.merge_type
+    status_style = "green" if result.committed else "yellow"
+    status_text = "committed" if result.committed else "pending"
+
+    header = Text()
+    header.append("Merge ", style="bold")
+    header.append(f"{result.source_branch}", style="cyan")
+    header.append(" -> ", style="dim")
+    header.append(f"{result.target_branch}", style="cyan")
+    console.print(Panel(header, border_style=status_style, expand=False))
+
+    # Summary fields
+    info = Text()
+    info.append(f"  type:      ", style="dim")
+    info.append(f"{mtype}\n", style="bold")
+    info.append(f"  status:    ", style="dim")
+    info.append(f"{status_text}\n", style=f"bold {status_style}")
+    info.append(f"  conflicts: ", style="dim")
+    conflict_count = len(result.conflicts)
+    info.append(
+        f"{conflict_count}\n",
+        style="bold red" if conflict_count > 0 else "bold green",
+    )
+    if result.merge_commit_hash and result.merge_type != "fast_forward":
+        info.append(f"  commit:    ", style="dim")
+        info.append(f"{result.merge_commit_hash[:8]}\n", style="bold")
+    console.print(info)
+
+    # Show each conflict
+    for conflict in result.conflicts:
+        pprint_conflict_info(conflict, file=file)
+        console.print()
+
+    # Show resolutions
+    if result.resolutions:
+        console.print(Text("  Resolutions:", style="bold"))
+        for target_hash, text in result.resolutions.items():
+            line = Text()
+            line.append(f"    {target_hash[:8]}", style="bold cyan")
+            line.append(" -> ", style="dim")
+            line.append(text)
+            console.print(line)
