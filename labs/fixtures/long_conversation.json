@@ -1,0 +1,4 @@
+{
+  "_comment": "40-message research conversation fixture for labs. To be populated with realistic multi-turn dialogue including system prompt, user queries, assistant responses, tool outputs, and follow-ups. Should include 8-10 key facts that can be tested for retention after compression.",
+  "messages": []
+}
