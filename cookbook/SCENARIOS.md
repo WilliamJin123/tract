@@ -253,25 +253,25 @@ Parallel timelines for experimentation, merging results back.
 
 **Use case:** Try an experimental approach without affecting main. Clean up when done.
 
-`branch("experiment")` creates a new timeline from current HEAD. `switch("experiment")` moves to it. Work there, then `switch("main")` to come back. `delete_branch("experiment")` removes the pointer when you're done.
+`branch("analogy")` creates a new timeline from current HEAD and switches to it. `switch("main")` moves back. `list_branches()` shows all branches with a `*` on the current one. `branch("draft", switch=False)` creates without switching. `delete_branch("analogy", force=True)` removes unmerged branches.
 
-> `branch()`, `switch()`, `delete_branch()`
+> `branch()`, `switch()`, `list_branches()`, `current_branch`, `branch(switch=False)`, `delete_branch(force=True)`
 
 ### 06/02 — Merge Strategies
 
 **Use case:** The experiment worked. Bring it back to main.
 
-Three merge modes: **fast-forward** (branch is ahead of main, just advance the pointer), **clean** (branches diverged but no conflicts, auto-merge), **conflict** (branches have overlapping edits, LLM resolves). All via `merge()`.
+Three merge modes, all deterministic (no LLM needed): **fast-forward** (branch is ahead, just advance the pointer), **clean** (branches diverged but only APPENDs, auto-merge), **conflict** (both branches EDIT the same message, manual resolution required). For conflicts: inspect `result.conflicts`, call `result.edit_resolution(target_hash, "merged content")`, then `t.commit_merge(result)` to finalize. Bonus: `no_ff=True` forces merge commit, `delete_branch=True` cleans up after merge.
 
-> `merge("experiment")` — FF / clean / conflict
+> `merge()`, `MergeResult`, `merge_type`, `committed`, `ConflictInfo`, `edit_resolution()`, `commit_merge()`, `no_ff`, `delete_branch=True`
 
-### 06/03 — Cherry-Pick and Rebase
+### 06/03 — Import Commit and Rebase
 
 **Use case:** Grab one useful commit from an experiment, and update a stale branch to include the latest main.
 
-`cherry_pick(hash)` copies a single commit onto the current branch. `rebase("main")` replays the current branch's commits on top of main's tip — with safety checks warning if edit_target chains would break.
+`import_commit(hash)` copies a single commit onto the current branch with a new hash but same content — Tract's cherry-pick. `rebase("main")` replays the current branch's commits on top of main's tip, producing new hashes with new parentage. Both operations preserve content while updating the commit graph.
 
-> `cherry_pick(hash)`, `rebase("main")`
+> `import_commit(hash)`, `ImportResult`, `rebase("main")`, `RebaseResult`, `replayed_commits`, `new_head`
 
 ---
 

@@ -139,7 +139,10 @@ def main():
 
         if r.tool_calls:
             # The LLM requested tool calls -- typed access via ToolCall
-            print(f"  LLM requested {len(r.tool_calls)} tool call(s):\n")
+            # pprint shows the tool-calling response with magenta "Tool Call" panel
+            r.pprint()
+
+            print(f"\n  LLM requested {len(r.tool_calls)} tool call(s):\n")
 
             for tc in r.tool_calls:
                 # tc.name, tc.arguments (dict), tc.id -- all typed, no JSON parsing
@@ -230,6 +233,13 @@ def main():
         # ============================================================
         # set_tools() changes available tools for subsequent commits.
         # set_tools(None) clears all tools.
+
+        # Show all three pprint styles to verify tool call rendering
+        print("\n  --- Compact view (tool calls as one-liners) ---\n")
+        t.compile().pprint(style="compact")
+
+        print("\n  --- Table view (tool calls in table format) ---\n")
+        t.compile().pprint(style="table")
 
         print("\n\n=== Phase 3: swap tools ===\n")
 
