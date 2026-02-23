@@ -59,6 +59,11 @@ def _make_console(file: Any = None) -> Console:
     return Console(theme=_MARKDOWN_THEME)
 
 
+def _is_estimate(token_source: str) -> bool:
+    """Whether token_source indicates a tiktoken estimate (not API-reported)."""
+    return not token_source or token_source.startswith("tiktoken:")
+
+
 def pprint_chat_response(response: Any, *, abbreviate: bool = False, file: Any = None) -> None:
     """Pretty-print a ChatResponse.
 
@@ -139,18 +144,25 @@ def pprint_compiled_context(
     table.add_column("Content", no_wrap=False)
     table.add_column("Tokens", justify="right", width=8)
 
+    # Per-message token counts are always tiktoken estimates
+    estimate = _is_estimate(ctx.token_source)
+
     for i, msg in enumerate(ctx.messages):
         content = msg.content
         if abbreviate and len(content) > 80:
             content = content[:77] + "..."
-        tokens_str = str(msg.token_count) if msg.token_count > 0 else ""
+        if msg.token_count > 0:
+            tokens_str = f"\u2248{msg.token_count}" if estimate else str(msg.token_count)
+        else:
+            tokens_str = ""
         table.add_row(str(i + 1), msg.role, Markdown(content), tokens_str)
 
     console.print(table)
 
     # Footer summary
+    prefix = "\u2248" if estimate else ""
     summary = Text()
-    summary.append(f"  {ctx.token_count}", style="bold")
+    summary.append(f"  {prefix}{ctx.token_count}", style="bold")
     summary.append(f" tokens | ", style="dim")
     summary.append(f"{ctx.commit_count}", style="bold")
     summary.append(f" commits | ", style="dim")
@@ -162,6 +174,7 @@ _ROLE_STYLES: dict[str, tuple[str, str]] = {
     "system": ("System", "yellow"),
     "user": ("User", "blue"),
     "assistant": ("Assistant", "green"),
+    "tool": ("Tool", "magenta"),
 }
 
 
@@ -185,10 +198,14 @@ def _pprint_compiled_chat(ctx: Any, *, abbreviate: bool = False, file: Any = Non
         console.print(Panel(body, title=f"[bold]{title}[/bold]", border_style=border))
 
     # Footer
+    estimate = _is_estimate(ctx.token_source)
+    prefix = "\u2248" if estimate else ""
     summary = Text()
     summary.append(f"  {len(ctx.messages)} messages", style="bold")
     summary.append(f" | ", style="dim")
-    summary.append(f"{ctx.token_count} tokens", style="bold")
+    summary.append(f"{prefix}{ctx.token_count} tokens", style="bold")
+    summary.append(f" | ", style="dim")
+    summary.append(f"source: {ctx.token_source}", style="dim")
     console.print(summary)
 
 
@@ -436,13 +453,15 @@ def pprint_status_info(status: Any, *, abbreviate: bool = False, file: Any = Non
     body_parts.append(f"[bold]Commits:[/bold] {status.commit_count}")
 
     # Token count / budget
+    estimate = _is_estimate(status.token_source)
+    prefix = "\u2248" if estimate else ""
     if status.token_budget_max:
         pct = status.token_count / status.token_budget_max * 100
         body_parts.append(
-            f"[bold]Tokens:[/bold]  {status.token_count}/{status.token_budget_max} ({pct:.0f}%)"
+            f"[bold]Tokens:[/bold]  {prefix}{status.token_count}/{status.token_budget_max} ({pct:.0f}%)"
         )
     else:
-        body_parts.append(f"[bold]Tokens:[/bold]  {status.token_count}")
+        body_parts.append(f"[bold]Tokens:[/bold]  {prefix}{status.token_count}")
 
     # Token source
     body_parts.append(f"[bold]Source:[/bold]  {status.token_source}")

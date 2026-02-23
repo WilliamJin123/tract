@@ -328,6 +328,66 @@ class TestCompiledContextPprint:
         assert "150" in output
         assert "3" in output
 
+    def test_pprint_table_shows_estimate_prefix_for_tiktoken(self) -> None:
+        """Table style shows ≈ prefix on tokens when source is tiktoken."""
+        ctx = CompiledContext(
+            messages=[Message(role="user", content="hi", token_count=42)],
+            token_count=45,
+            commit_count=1,
+            token_source="tiktoken:o200k_base",
+        )
+        buf = StringIO()
+        from tract.formatting import pprint_compiled_context
+        pprint_compiled_context(ctx, file=buf)
+        output = buf.getvalue()
+        assert "\u224842" in output  # per-message ≈42
+        assert "\u224845" in output  # total ≈45
+
+    def test_pprint_table_no_estimate_prefix_for_api(self) -> None:
+        """Table style shows plain tokens when source is API-reported."""
+        ctx = CompiledContext(
+            messages=[Message(role="user", content="hi", token_count=42)],
+            token_count=45,
+            commit_count=1,
+            token_source="api:45+10",
+        )
+        buf = StringIO()
+        from tract.formatting import pprint_compiled_context
+        pprint_compiled_context(ctx, file=buf)
+        output = buf.getvalue()
+        assert "\u224842" not in output  # no ≈ prefix
+        assert "\u224845" not in output
+
+    def test_pprint_chat_shows_token_source(self) -> None:
+        """Chat style includes token_source in footer."""
+        ctx = CompiledContext(
+            messages=[Message(role="user", content="hello")],
+            token_count=10,
+            commit_count=1,
+            token_source="tiktoken:o200k_base",
+        )
+        buf = StringIO()
+        from tract.formatting import pprint_compiled_context
+        pprint_compiled_context(ctx, style="chat", file=buf)
+        output = buf.getvalue()
+        assert "tiktoken:o200k_base" in output
+        assert "\u224810" in output  # ≈10
+
+    def test_pprint_chat_no_estimate_for_api(self) -> None:
+        """Chat style shows plain tokens for API source."""
+        ctx = CompiledContext(
+            messages=[Message(role="user", content="hello")],
+            token_count=10,
+            commit_count=1,
+            token_source="api:10+5",
+        )
+        buf = StringIO()
+        from tract.formatting import pprint_compiled_context
+        pprint_compiled_context(ctx, style="chat", file=buf)
+        output = buf.getvalue()
+        assert "api:10+5" in output
+        assert "\u224810" not in output  # no ≈
+
     def test_pprint_method_delegates(
         self, sample_compiled_context: CompiledContext
     ) -> None:
@@ -403,9 +463,27 @@ class TestStatusInfoPprint:
         from tract.formatting import pprint_status_info
         pprint_status_info(sample_status_info, file=buf)
         output = buf.getvalue()
-        assert "500" in output
+        assert "\u2248500" in output  # ≈500 (tiktoken source)
         assert "2000" in output
         assert "25%" in output
+
+    def test_pprint_no_estimate_prefix_for_api_source(self) -> None:
+        """Status pprint shows plain tokens for API source."""
+        status = StatusInfo(
+            head_hash="deadbeef12345678",
+            branch_name="main",
+            is_detached=False,
+            commit_count=5,
+            token_count=500,
+            token_budget_max=2000,
+            token_source="api:500+100",
+        )
+        buf = StringIO()
+        from tract.formatting import pprint_status_info
+        pprint_status_info(status, file=buf)
+        output = buf.getvalue()
+        assert "500" in output
+        assert "\u2248500" not in output  # no ≈ for API source
 
     def test_pprint_detached_warning(self) -> None:
         status = StatusInfo(
