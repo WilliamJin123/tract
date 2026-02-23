@@ -1,130 +1,218 @@
-"""Tool Schema Provenance
+"""Tool Provenance
 
-Track which tool definitions were available at each point in the
-conversation. set_tools() registers schemas that auto-link to every
-subsequent commit. Change the tool set mid-session and audit exactly
-what tools any past commit had access to.
+Register real tools, let the LLM call them, execute locally, and track
+everything in Tract. Every commit records which tools were available.
+After the conversation, audit tool provenance for any past commit.
 
-Demonstrates: set_tools(), get_commit_tools(), get_tools(),
+The tool call loop is intentionally manual here — frameworks like Agno
+or LangChain automate this. Tract's job is to version and track the
+context, not to own the execution loop.
+
+Demonstrates: set_tools(), tool call loop, get_commit_tools(),
               compile().tools, to_openai_params(), content-addressed storage
 """
 
+import json
+import os
+import subprocess
+
+from dotenv import load_dotenv
+
 from tract import Tract
+
+load_dotenv()
+
+CEREBRAS_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
+CEREBRAS_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
+CEREBRAS_MODEL = "llama-4-scout-17b-16e-instruct"
+
+# --- Tool definitions (OpenAI function calling format) ---
+
+PYTHON_EVAL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "python_eval",
+        "description": "Evaluate a Python expression and return the result. "
+                       "Use for math, string operations, list comprehensions, etc.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "A Python expression to evaluate (e.g. '2**10 + 3**7')",
+                },
+            },
+            "required": ["expression"],
+        },
+    },
+}
+
+BASH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "run_bash",
+        "description": "Run a bash command and return stdout. "
+                       "Use for file listing, date/time, system info, etc.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The bash command to execute (e.g. 'date', 'ls', 'echo hello')",
+                },
+            },
+            "required": ["command"],
+        },
+    },
+}
+
+
+# --- Tool execution ---
+
+def execute_tool(name: str, args: dict) -> str:
+    """Execute a tool by name and return the result string."""
+    if name == "python_eval":
+        try:
+            result = eval(args["expression"])  # noqa: S307
+            return str(result)
+        except Exception as e:
+            return f"Error: {e}"
+
+    elif name == "run_bash":
+        try:
+            result = subprocess.run(
+                args["command"],
+                shell=True,  # noqa: S602
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            return result.stdout.strip() or result.stderr.strip() or "(no output)"
+        except subprocess.TimeoutExpired:
+            return "Error: command timed out"
+        except Exception as e:
+            return f"Error: {e}"
+
+    return f"Unknown tool: {name}"
 
 
 def main():
-    t = Tract.open()
+    with Tract.open(
+        api_key=CEREBRAS_API_KEY,
+        base_url=CEREBRAS_BASE_URL,
+        model=CEREBRAS_MODEL,
+    ) as t:
 
-    # --- Define two tool sets ---
+        # --- Phase 1: register tools and start conversation ---
 
-    search_tool = {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web for information.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                },
-                "required": ["query"],
-            },
-        },
-    }
+        t.set_tools([PYTHON_EVAL_TOOL, BASH_TOOL])
+        t.system(
+            "You are a helpful assistant with access to tools. "
+            "Use python_eval for math and run_bash for system commands. "
+            "Always use tools when appropriate — don't compute in your head."
+        )
 
-    calculator_tool = {
-        "type": "function",
-        "function": {
-            "name": "calculator",
-            "description": "Evaluate a math expression.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {"type": "string", "description": "Math expression"},
-                },
-                "required": ["expression"],
-            },
-        },
-    }
+        print("=== Phase 1: tool-assisted conversation ===\n")
 
-    code_tool = {
-        "type": "function",
-        "function": {
-            "name": "run_code",
-            "description": "Execute Python code in a sandbox.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {"type": "string", "description": "Python code to run"},
-                },
-                "required": ["code"],
-            },
-        },
-    }
+        # Ask something that should trigger a tool call
+        user_msg = "What is 2**20 + 3**13? Use the python_eval tool."
+        r1 = t.chat(user_msg)
 
-    # --- Phase 1: research tools (search + calculator) ---
+        # Check if the LLM made tool calls
+        # chat() commits the text response, but the raw API response
+        # might contain tool_calls. For a real tool loop we need to
+        # go lower-level. Let's demonstrate the manual approach:
 
-    print("=== Phase 1: research tools ===\n")
-    t.set_tools([search_tool, calculator_tool])
+        print(f"Response: {r1.text}\n")
 
-    sys_ci = t.system("You are a research assistant with access to tools.")
-    q1 = t.user("What is the GDP of France?")
-    a1 = t.assistant("Let me search for that. France's GDP is approximately $3.05 trillion.")
+        # --- Phase 2: manual tool loop ---
+        # This is how frameworks do it under the hood:
+        # 1. Compile context with tools
+        # 2. Call LLM
+        # 3. If tool_calls: execute, commit results, call LLM again
+        # 4. Repeat until no more tool_calls
 
-    print(f"Active tools: {len(t.get_tools())} (search, calculator)")
-    print(f"Tools on system commit: {len(t.get_commit_tools(sys_ci.commit_hash))}")
-    print(f"Tools on Q1: {len(t.get_commit_tools(q1.commit_hash))}")
-    print(f"Tools on A1: {len(t.get_commit_tools(a1.commit_hash))}")
+        print("=== Phase 2: manual tool loop ===\n")
 
-    # --- Phase 2: switch to coding tools (search + code) ---
+        # Commit a new user message
+        t.user("Now use run_bash to show today's date, and python_eval to compute 7! (factorial of 7).")
 
-    print("\n=== Phase 2: coding tools ===\n")
-    t.set_tools([search_tool, code_tool])
+        # Compile and call LLM directly (to see the raw response)
+        compiled = t.compile()
+        params = compiled.to_openai_params()
+        print(f"  Sending {len(params['messages'])} messages + {len(params.get('tools', []))} tools\n")
 
-    q2 = t.user("Write a Python function to calculate compound interest.")
-    a2 = t.assistant(
-        "Here's a compound interest function:\n"
-        "def compound_interest(principal, rate, years):\n"
-        "    return principal * (1 + rate) ** years"
-    )
+        # Call the LLM client directly
+        client = t._resolve_llm_client("chat")
+        llm_kwargs = t._resolve_llm_config("chat")
+        response = client.chat(compiled.to_dicts(), tools=compiled.tools, **llm_kwargs)
 
-    print(f"Active tools: {len(t.get_tools())} (search, code)")
-    print(f"Tools on Q2: {len(t.get_commit_tools(q2.commit_hash))}")
-    print(f"Tools on A2: {len(t.get_commit_tools(a2.commit_hash))}")
+        message = response["choices"][0]["message"]
+        tool_calls = message.get("tool_calls", [])
 
-    # --- Phase 3: clear tools ---
+        if tool_calls:
+            print(f"  LLM requested {len(tool_calls)} tool call(s):\n")
 
-    print("\n=== Phase 3: no tools ===\n")
-    t.set_tools(None)
+            # Commit the assistant's tool-calling message (may have null content)
+            assistant_content = message.get("content") or ""
+            t.assistant(assistant_content, message="tool call request")
 
-    q3 = t.user("Summarize what we've discussed.")
-    a3 = t.assistant("We looked up France's GDP and wrote a compound interest calculator.")
+            # Execute each tool and commit results
+            for tc in tool_calls:
+                func_name = tc["function"]["name"]
+                func_args = json.loads(tc["function"]["arguments"])
+                tool_call_id = tc["id"]
 
-    print(f"Active tools: {t.get_tools()}")
-    print(f"Tools on Q3: {len(t.get_commit_tools(q3.commit_hash))}")
+                print(f"    Tool: {func_name}({func_args})")
+                result = execute_tool(func_name, func_args)
+                print(f"    Result: {result}\n")
 
-    # --- Audit: reconstruct tool availability at any point ---
+                # Commit the tool result back into the conversation
+                # Using the OpenAI tool result format
+                t.commit(
+                    role="tool",
+                    content=result,
+                    message=f"tool result: {func_name}",
+                    metadata={"tool_call_id": tool_call_id, "name": func_name},
+                )
 
-    print("\n=== Audit: tool provenance ===\n")
+            # Now generate the final answer (LLM sees tool results in context)
+            r2 = t.generate()
+            print(f"  Final answer:")
+            r2.pprint()
+        else:
+            # LLM responded directly without tools
+            t.assistant(message.get("content", ""))
+            print(f"  LLM responded without tool calls: {message.get('content', '')[:100]}")
 
-    for label, ci in [("System", sys_ci), ("Q1", q1), ("A1", a1),
-                       ("Q2", q2), ("A2", a2), ("Q3", q3), ("A3", a3)]:
-        tools = t.get_commit_tools(ci.commit_hash)
-        names = [d["function"]["name"] for d in tools] if tools else ["(none)"]
-        print(f"  {label} ({ci.commit_hash[:8]}): {', '.join(names)}")
+        # --- Phase 3: change tools mid-session ---
 
-    # --- Compiled context includes latest tools ---
+        print("\n=== Phase 3: swap tools ===\n")
 
-    print("\n=== Compiled context ===\n")
-    ctx = t.compile()
-    print(f"Messages: {len(ctx.messages)}")
-    print(f"Tools in compiled context: {len(ctx.tools)}")
+        # Remove bash, keep only python_eval
+        t.set_tools([PYTHON_EVAL_TOOL])
+        r3 = t.chat("What's the square root of 144? Use python_eval.")
+        r3.pprint()
 
-    # to_openai_params() includes tools alongside messages
-    params = ctx.to_openai_params()
-    print(f"OpenAI params keys: {list(params.keys())}")
+        # Clear all tools
+        t.set_tools(None)
+        r4 = t.chat("Summarize what we computed today.")
+        r4.pprint()
 
-    t.close()
+        # --- Phase 4: audit tool provenance ---
+
+        print("\n=== Tool provenance audit ===\n")
+
+        for entry in t.log():
+            tools = t.get_commit_tools(entry.commit_hash)
+            tool_names = [d["function"]["name"] for d in tools] if tools else ["(none)"]
+            role = entry.content_type if hasattr(entry, "content_type") else "?"
+            print(f"  {entry.commit_hash[:8]}  {role:<12}  tools: {', '.join(tool_names)}")
+
+        # --- Show full session ---
+
+        print("\n=== Full session ===\n")
+        t.compile().pprint(style="chat")
 
 
 if __name__ == "__main__":

@@ -1262,6 +1262,8 @@ class Tract:
             "chat", model=model, temperature=temperature,
             max_tokens=max_tokens, llm_config=llm_config,
         )
+        if compiled.tools:
+            llm_kwargs["tools"] = compiled.tools
         response = chat_client.chat(messages, **llm_kwargs)
 
         # 3. Extract content and usage (dispatch to client methods, with

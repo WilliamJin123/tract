@@ -85,7 +85,7 @@ def main():
 
         print("\n=== Query: temperature between [0.0, 1.0] ===\n")
         moderate = t.query_by_config("temperature", "between", [0.0, 1.0])
-        print(f"  {len(moderate)} commit(s) with temperature in [0.0, 1.0]:")
+        print(f"  {len(moderate)} commit(s) with temperature between [0.0, 1.0]:")
         for c in moderate:
             cfg = c.generation_config
             print(f"    {c.commit_hash[:8]}  temp={cfg.temperature}")
@@ -106,7 +106,7 @@ def main():
         # --- Query: IN operator (set membership) ---
         # "Which calls used temperature 0.0 or 1.5?"
 
-        print("\n=== Query: temperature in [0.0, 1.5] ===\n")
+        print("\n=== Query: temperature in list [0.0, 1.5] ===\n")
         extremes = t.query_by_config("temperature", "in", [0.0, 1.5])
         print(f"  {len(extremes)} commit(s) at extreme temperatures:")
         for c in extremes:

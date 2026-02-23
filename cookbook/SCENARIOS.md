@@ -53,6 +53,8 @@ cookbook/
 │   ├── 01_validate_and_retry.py
 │   ├── 02_chat_with_validation.py
 │   └── 03_custom_retry_pipeline.py
+├── 12_integrations/
+│   └── 01_agno_sidecar.py
 └── compositions/
     ├── ab_testing.py
     ├── context_forensics.py
@@ -420,6 +422,20 @@ Validate LLM output and retry with steering when it fails. The retry protocol is
 Build your own retry pipeline by providing closures to `retry_with_steering()`. Validate compression summaries for key terms, steer by amending the prompt, retry merge resolutions with different strategies. The same primitive handles all cases — only the callables change.
 
 > `retry_with_steering()` with custom `attempt`/`validate`/`steer`, wrapping arbitrary operations
+
+---
+
+## 12 — Framework Integrations
+
+Using Tract alongside agent frameworks. Tract handles versioning and provenance; the framework handles the execution loop.
+
+### 12/01 — Agno Sidecar
+
+**Use case:** You're building an agent with Agno (tools, multi-turn, session management) but want version-controlled context history — branching, time-travel, compression, and config provenance that Agno doesn't provide.
+
+Run Tract as a sidecar alongside Agno. Agno owns the tool call loop and live session. After each Agno run, commit messages into Tract. Now you can branch conversations, compress old context, time-travel to debug bad responses, and audit tool/config provenance — all on top of Agno's agent execution.
+
+> Agno `Agent`, Agno `Toolkit`, Tract sidecar pattern, `t.user()`, `t.assistant()`, `t.branch()`, `t.compile(at_commit=)`
 
 ---
 
