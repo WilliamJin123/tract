@@ -5,6 +5,7 @@ Use edit_history() to see every version of a commit, and restore()
 to roll back when the edits go too far.
 
 Demonstrates: edit_history(), restore(), get_content(), t.assistant(edit=),
+              Priority.SKIP for cleaning up intermediate commits,
               version inspection without full recompile
 """
 
@@ -12,7 +13,7 @@ import os
 
 from dotenv import load_dotenv
 
-from tract import Tract
+from tract import Priority, Tract
 
 load_dotenv()
 
@@ -60,6 +61,12 @@ def main():
         )
         print(f"  Edit commit: {e1.commit_hash[:8]}")
         print(f"  Content: {t.get_content(e1)}\n")
+
+        # The t.chat() call above created intermediate commits (user prompt +
+        # LLM response) that would clutter the compiled context.  SKIP them
+        # so only the edit itself survives in the conversation view.
+        t.annotate(improve.commit_info.parent_hash, Priority.SKIP)
+        t.annotate(improve.commit_info.commit_hash, Priority.SKIP)
 
         # --- Edit again: further refinement ---
 
@@ -109,8 +116,10 @@ def main():
         print("=== Updated edit history (restore is itself an edit) ===\n")
         updated_history = t.edit_history(original_hash)
         for i, version in enumerate(updated_history):
-            label = version.message or "(no message)"
-            print(f"  v{i} [{version.commit_hash[:8]}] {label}")
+            msg = version.message or "(no message)"
+            if len(msg) > 60:
+                msg = msg[:57] + "..."
+            print(f"  v{i} [{version.commit_hash[:8]}] {msg}")
         print(f"\n  Total versions: {len(updated_history)} "
               f"(was {len(history)}, +1 from restore)")
 
