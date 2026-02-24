@@ -122,6 +122,23 @@ class CommitRepository(ABC):
         ...
 
     @abstractmethod
+    def get_edits_for(self, commit_hash: str, tract_id: str) -> Sequence[CommitRow]:
+        """Get the original commit and all its edits in chronological order.
+
+        Returns commits where commit_hash matches OR edit_target matches,
+        ordered by created_at ascending. The first element is always the
+        original commit (operation=APPEND).
+
+        Args:
+            commit_hash: The original commit hash (must not be an edit itself).
+            tract_id: Tract identifier to scope the query.
+
+        Returns:
+            List of CommitRow in chronological order: [original, edit1, edit2, ...].
+        """
+        ...
+
+    @abstractmethod
     def delete(self, commit_hash: str) -> None:
         """Delete a commit by hash. Also cleans up CommitParentRow entries."""
         ...

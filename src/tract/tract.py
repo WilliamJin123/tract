@@ -1990,6 +1990,100 @@ class Tract:
             configs_b=compiled_b.generation_configs,
         )
 
+    def edit_history(self, commit_hash: str) -> list[CommitInfo]:
+        """Get the full edit chain for a commit.
+
+        Returns a chronological list starting with the original commit,
+        followed by each EDIT in the order they were created.
+
+        Args:
+            commit_hash: A commit hash, branch name, or hash prefix.
+                Can be the original commit or any of its edits.
+
+        Returns:
+            List of :class:`CommitInfo` in chronological order:
+            ``[original, edit1, edit2, ...]``.  If the commit has never
+            been edited, returns a single-element list.
+
+        Raises:
+            CommitNotFoundError: If the commit cannot be resolved.
+        """
+        resolved = self.resolve_commit(commit_hash)
+        row = self._commit_repo.get(resolved)
+        if row is None:
+            raise CommitNotFoundError(resolved)
+
+        # If the resolved commit is itself an edit, follow to the original
+        original_hash = row.edit_target if row.edit_target else resolved
+
+        rows = self._commit_repo.get_edits_for(original_hash, self._tract_id)
+        if not rows:
+            raise CommitNotFoundError(resolved)
+
+        return [self._commit_engine._row_to_info(r) for r in rows]
+
+    def restore(
+        self,
+        commit_hash: str,
+        version: int = 0,
+        *,
+        message: str | None = None,
+    ) -> CommitInfo:
+        """Restore a previous version of a commit by creating a new EDIT.
+
+        Looks up the edit history for the given commit, picks the version
+        at index ``version``, and creates a new EDIT commit with that
+        version's content.
+
+        Args:
+            commit_hash: A commit hash, branch name, or hash prefix.
+                Can be the original commit or any of its edits.
+            version: Zero-based index into the edit history
+                (0 = original, 1 = first edit, etc.).
+            message: Optional commit message.  Defaults to
+                ``"restore to version {version}"``.
+
+        Returns:
+            :class:`CommitInfo` for the new EDIT commit.
+
+        Raises:
+            CommitNotFoundError: If the commit cannot be resolved.
+            IndexError: If ``version`` is out of range.
+        """
+        history = self.edit_history(commit_hash)
+        if version < 0 or version >= len(history):
+            raise IndexError(
+                f"Version {version} out of range (0..{len(history) - 1})"
+            )
+
+        source = history[version]
+        original = history[0]
+
+        if message is None:
+            message = f"restore to version {version}"
+
+        # Get the content blob to reconstruct the content model
+        blob_row = self._blob_repo.get(source.content_hash)
+        if blob_row is None:
+            raise CommitNotFoundError(source.commit_hash)
+
+        # Reconstruct the content model from the blob
+        import json
+        content_data = json.loads(blob_row.payload_json)
+        content = validate_content(
+            content_data, custom_registry=self._custom_type_registry
+        )
+
+        return self.commit(
+            content,
+            operation=CommitOperation.EDIT,
+            edit_target=original.commit_hash,
+            message=message,
+            generation_config=source.generation_config.to_dict()
+            if source.generation_config
+            else None,
+        )
+
     def query_by_config(
         self,
         field_or_config: str | LLMConfig | None = None,

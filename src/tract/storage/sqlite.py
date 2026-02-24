@@ -240,6 +240,21 @@ class SqliteCommitRepository(CommitRepository):
         )
         return list(self._session.execute(stmt).scalars().all())
 
+    def get_edits_for(self, commit_hash: str, tract_id: str) -> Sequence[CommitRow]:
+        """Get original commit and all its edits, ordered by created_at."""
+        stmt = (
+            select(CommitRow)
+            .where(
+                CommitRow.tract_id == tract_id,
+                or_(
+                    CommitRow.commit_hash == commit_hash,
+                    CommitRow.edit_target == commit_hash,
+                ),
+            )
+            .order_by(CommitRow.created_at)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
     def delete(self, commit_hash: str) -> None:
         """Delete a commit by hash. Also cleans up related rows.
 
