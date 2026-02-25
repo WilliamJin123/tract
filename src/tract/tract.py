@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from tract.hooks.rebase import PendingRebase
     from tract.hooks.tool_result import PendingToolResult
     from tract.models.branch import BranchInfo
-    from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning
+    from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning, ToolCompactResult
     from tract.models.merge import ImportResult, MergeResult, RebaseResult
     from tract.models.policy import PolicyProposal
     from tract.models.session import SpawnInfo
