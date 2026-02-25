@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from tract.operations.history import StatusInfo
     from tract.orchestrator.config import AutonomyLevel, OrchestratorConfig
     from tract.orchestrator.loop import Orchestrator
+    from tract.protocols import ToolTurn
     from tract.orchestrator.models import OrchestratorResult
     from tract.policy.evaluator import PolicyEvaluator
     from tract.models.config import ToolSummarizationConfig
