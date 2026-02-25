@@ -16,8 +16,13 @@ from tract.cli.formatting import format_merge_result
     default="auto",
     help="Merge strategy (default: auto).",
 )
+@click.option(
+    "--delete-branch/--no-delete-branch",
+    default=None,
+    help="Delete source branch after merge (default: from config).",
+)
 @click.pass_context
-def merge(ctx: click.Context, source: str, no_ff: bool, strategy: str) -> None:
+def merge(ctx: click.Context, source: str, no_ff: bool, strategy: str, delete_branch: bool | None) -> None:
     """Merge SOURCE branch into the current branch.
 
     SOURCE is the name of the branch to merge in.
@@ -27,7 +32,7 @@ def merge(ctx: click.Context, source: str, no_ff: bool, strategy: str) -> None:
 
     with _tract_session(ctx) as (t, console):
         try:
-            result = t.merge(source, no_ff=no_ff, strategy=strategy)
+            result = t.merge(source, no_ff=no_ff, strategy=strategy, delete_branch=delete_branch)
             format_merge_result(result, console)
         except NothingToMergeError:
             console.print("Already up to date.")

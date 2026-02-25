@@ -2854,7 +2854,7 @@ class Tract:
         temperature: float | None = None,
         max_tokens: int | None = None,
         llm_config: LLMConfig | None = None,
-        delete_branch: bool = False,
+        delete_branch: bool | None = None,
         message: str | None = None,
         triggered_by: str | None = None,
     ) -> MergeResult | PendingMerge:
@@ -2883,6 +2883,7 @@ class Tract:
             max_tokens: Override max_tokens for the default resolver.
             llm_config: Full LLMConfig override for this call.
             delete_branch: If True, delete the source branch after merge.
+                If None (default), uses ``config.delete_branch_on_merge``.
             message: Optional merge commit message. If not provided, a
                 default message is generated.
             triggered_by: Optional provenance string.
@@ -2894,6 +2895,10 @@ class Tract:
         from tract.hooks.merge import PendingMerge as _PendingMerge
         from tract.models.merge import MergeResult
         from tract.operations.merge import merge_branches
+
+        # Resolve delete_branch from config default
+        if delete_branch is None:
+            delete_branch = self.config.delete_branch_on_merge
 
         # Determine resolver
         effective_resolver = resolver

@@ -63,6 +63,7 @@ class TractConfig(BaseModel):
     token_budget: Optional[TokenBudgetConfig] = None
     default_branch: str = "main"
     compile_cache_maxsize: int = 8
+    delete_branch_on_merge: bool = False
 
 
 @dataclass(frozen=True)
