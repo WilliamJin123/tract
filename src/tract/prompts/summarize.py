@@ -1,12 +1,41 @@
-"""Default summarization prompt for context compression.
+"""Summarization prompts for context compression.
 
-Provides the system prompt and user prompt builder for LLM-based
-conversation summarization.
+Provides system prompts and user prompt builders for LLM-based
+summarization.  Three system-prompt variants cover the common cases:
+
+- **DEFAULT_SUMMARIZE_SYSTEM** -- neutral, for compressing any commit
+  subset (tool calls, a verbose batch, a section of dialogue, etc.).
+- **CONVERSATION_SUMMARIZE_SYSTEM** -- for compressing an entire
+  conversation history into a recap.
+- **TOOL_SUMMARIZE_SYSTEM** -- for compressing tool-call / tool-result
+  sequences while preserving key findings.
 """
 
 from __future__ import annotations
 
+# ---------------------------------------------------------------------------
+# General-purpose (default) -- used by compress() when no system_prompt given
+# ---------------------------------------------------------------------------
+
 DEFAULT_SUMMARIZE_SYSTEM: str = (
+    "You are a context summarizer for an AI assistant. "
+    "Your job is to produce a concise summary of the provided context "
+    "segment, preserving information most relevant to future quality.\n\n"
+    "Guidelines:\n"
+    "- Write in third-person narrative prose.\n"
+    "- Preserve specific details: names, numbers, code snippets, decisions, "
+    "and agreed-upon constraints.\n"
+    "- Prioritize information that affects future interactions -- "
+    "decisions made, preferences expressed, requirements established.\n"
+    "- Omit filler, pleasantries, and redundant phrasing.\n"
+    "- If a target token count is specified, aim for approximately that length."
+)
+
+# ---------------------------------------------------------------------------
+# Conversation -- for full-conversation compression / auto-compress policies
+# ---------------------------------------------------------------------------
+
+CONVERSATION_SUMMARIZE_SYSTEM: str = (
     "You are a context summarizer for an AI assistant's conversation history. "
     "Your job is to produce a concise summary that preserves the information "
     "most relevant to future conversation quality.\n\n"
@@ -20,6 +49,27 @@ DEFAULT_SUMMARIZE_SYSTEM: str = (
     "(e.g., 'the user then asked...' is fine, but 'the user said hello' is not).\n"
     "- If a target token count is specified, aim for approximately that length.\n"
     '- Begin your summary with "Previously in this conversation:"'
+)
+
+# ---------------------------------------------------------------------------
+# Tool calls -- for compressing tool-call / tool-result sequences
+# ---------------------------------------------------------------------------
+
+TOOL_SUMMARIZE_SYSTEM: str = (
+    "You are summarizing tool-call interactions from an AI agent's workflow. "
+    "The content contains tool calls (function invocations) and their results. "
+    "Your job is to distill the sequence into a concise summary of what "
+    "happened and what was found.\n\n"
+    "Guidelines:\n"
+    "- Focus on OUTCOMES: what was searched/fetched, what was found or "
+    "returned, and any errors encountered.\n"
+    "- Omit raw file contents, full directory listings, verbose API "
+    "responses, and other bulk output -- summarize what they contained.\n"
+    "- Preserve key findings: specific values, line numbers, file paths, "
+    "error messages, and decisions made based on results.\n"
+    "- If multiple tool calls were made, summarize the sequence of actions "
+    "and their cumulative result, not each call individually.\n"
+    "- If a target token count is specified, aim for approximately that length."
 )
 
 
