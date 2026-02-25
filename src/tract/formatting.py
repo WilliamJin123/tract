@@ -305,7 +305,7 @@ def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: An
                 preview = preview[:max_chars - 3] + "..."
         else:
             color = _ROLE_COLORS.get(msg.role, "white")
-            role_label = msg.role
+            role_label = "tool res." if msg.role == "tool" else msg.role
             if max_chars is not None and len(content) > max_chars:
                 preview = content[:max_chars - 3] + "..."
             else:
