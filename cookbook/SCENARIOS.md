@@ -16,7 +16,8 @@ cookbook/
 │   ├── 04_annotations.py            # pin, skip, important, edit-in-place, annotate()
 │   ├── 05_log_diff_time_travel.py   # log, show, diff, checkout, reset, compile(at_commit=)
 │   ├── 06_batch_and_rollback.py     # batch() context manager, atomic operations
-│   └── 07_branching.py              # branch, switch, delete, list, FF merge, clean merge
+│   ├── 07_branching.py              # branch, switch, delete, list, FF merge, clean merge
+│   └── 08_tool_calling.py           # agentic loop, tool_result, compress_tool_calls, query API, auto-summarization
 │
 ├── patterns/                         # Tier 2: Real workflows with LLM
 │   ├── 01_chat_and_persist.py       # chat(), ChatResponse, persistence, session resume
@@ -28,7 +29,8 @@ cookbook/
 │   ├── 07_rebase_and_import.py      # import_commit (cherry-pick), rebase
 │   ├── 08_gc_and_reorder.py         # gc, archive retention, compile(order=), hook review
 │   ├── 09_provenance.py            # config provenance, tool provenance, edit history
-│   └── 10_retry_and_validation.py   # chat(validator=), retry_with_steering, purify
+│   ├── 10_retry_and_validation.py   # chat(validator=), retry_with_steering, purify
+│   └── 11_tool_query_and_audit.py   # find_tool_results/calls/turns, ToolTurn, tool_result(edit=), selective compress
 │
 ├── advanced/                         # Tier 3: Power features
 │   ├── hooks/
@@ -36,7 +38,8 @@ cookbook/
 │   │   ├── 02_compress_review.py    # PendingCompress, edit_summary, approve/reject
 │   │   ├── 03_gc_rebase_merge.py    # PendingGC, PendingRebase, PendingMerge, exclude()
 │   │   ├── 04_guidance.py           # GuidanceMixin, two-stage reasoning, edit_guidance
-│   │   └── 05_agent_interface.py    # to_dict, to_tools, describe_api, apply_decision
+│   │   ├── 05_agent_interface.py    # to_dict, to_tools, describe_api, apply_decision
+│   │   └── 06_tool_result_hooks.py  # PendingToolResult, edit/summarize/reject, configure_tool_summarization
 │   ├── policies/
 │   │   ├── 01_builtin.py            # CompressPolicy, PinPolicy, BranchPolicy, ArchivePolicy
 │   │   ├── 02_custom.py             # Policy protocol, evaluate(), custom triggers
@@ -118,6 +121,14 @@ Wrap multiple commits in `with t.batch(): ...`. If any commit fails or an except
 `branch("name")` creates a new timeline from current HEAD and switches to it. `switch("main")` moves back. `list_branches()` shows all branches with a `*` on the current one. `branch("name", switch=False)` creates without switching. `delete_branch("name", force=True)` removes unmerged branches. The file also covers the two non-conflicting merge modes: **fast-forward** (branch is ahead of main, just advance the pointer) and **clean** (diverged branches with no overlapping edits, auto-merge). Conflict resolution is in `patterns/06_merge_conflicts.py`.
 
 > `branch()`, `switch()`, `list_branches()`, `current_branch`, `branch(switch=False)`, `delete_branch(force=True)`, `merge()`, fast-forward, clean merge
+
+## 08 — Tool Calling
+
+**Use case:** Build an agentic tool-calling loop where the LLM decides which tools to call, every step is committed for provenance, and verbose tool output is compressed afterward.
+
+Part 1 (agentic loop): define tools in OpenAI function-calling format, register with `set_tools()`, run a compile-call-execute loop. The agent calls `list_directory`, `read_file`, and `search_files` to find a hidden comment. Each tool call is committed as an assistant message with `metadata.tool_calls`, each result via `tool_result()`. After the agent answers, `compress_tool_calls()` collapses the verbose intermediate messages into a concise summary while preserving the final answer. Part 2 (query API + surgical edits): `find_tool_results()`, `find_tool_calls()`, and `find_tool_turns()` inspect tool history. `tool_result(edit=hash)` surgically replaces a verbose result with a trimmed version — the original is preserved in history. Part 3 (automatic summarization): `configure_tool_summarization()` sets up a hook that auto-summarizes tool results based on per-tool instructions and token thresholds.
+
+> `set_tools()`, `tool_result()`, `ToolCall`, `compress_tool_calls()`, `find_tool_results()`, `find_tool_calls()`, `find_tool_turns()`, `tool_result(edit=)`, `configure_tool_summarization()`
 
 ---
 
@@ -205,6 +216,14 @@ Part 1 (core primitive): `retry_with_steering()` takes `attempt` (produces a res
 
 > `retry_with_steering()`, `RetryResult`, `RetryExhaustedError`, `chat(validator=, max_retries=, purify=, provenance_note=)`
 
+## 11 — Tool Query and Audit
+
+**Use case:** After an agentic tool-calling session, inspect which tools were called, how many tokens each consumed, and selectively clean up or compress the verbose ones — without touching the rest.
+
+Part 1 (query API): `find_tool_results(name="grep")` returns all grep result commits. `find_tool_calls()` returns assistant commits that requested tool calls. `find_tool_turns()` returns `ToolTurn` objects pairing each tool-call commit with its result(s) — inspect `tool_names`, `total_tokens`, and `all_hashes`. No LLM needed. Part 2 (surgical edits): walk verbose tool results with `find_tool_results()`, replace each with a trimmed version via `tool_result(edit=hash)`. The original is preserved in history. Compare token counts before and after. Part 3 (selective compression): `compress_tool_calls(name="grep")` compresses only grep tool turns while leaving read_file and bash results untouched.
+
+> `find_tool_results(name=, after=)`, `find_tool_calls(name=)`, `find_tool_turns(name=)`, `ToolTurn`, `tool_result(edit=)`, `compress_tool_calls(name=)`
+
 ---
 
 # Tier 3: Advanced
@@ -252,6 +271,14 @@ Register a hook on `"compress"`. The hook receives a `PendingCompress` with draf
 Every `Pending` subclass auto-generates an agent-facing interface: `to_dict()` returns a JSON-serializable description of the proposal, `to_tools()` returns tool schemas for function calling, and `describe_api()` returns a human-readable API description. `apply_decision(tool_result)` routes the agent's tool call back to the right method. Use this to build LLM-driven review loops without writing custom parsing logic.
 
 > `to_dict()`, `to_tools()`, `describe_api()`, `apply_decision()`
+
+### hooks/06 — Tool Result Hooks
+
+**Use case:** Intercept tool results before they enter the commit chain — filter sensitive output, enforce token budgets on verbose tools, or route different tools through different summarization strategies.
+
+Part 1 (hook basics): `t.on("tool_result", handler)` registers a handler that receives a `PendingToolResult` before each tool result commits. Inspect `pending.tool_name`, `pending.content`, `pending.token_count`. Call `approve()` to commit as-is, `reject()` to discard, or `edit_result()` to replace content. Part 2 (summarize): `pending.summarize(instructions="keep filenames only")` calls the LLM with `TOOL_SUMMARIZE_SYSTEM` and replaces content with the summary. `original_content` preserves the raw output. Part 3 (declarative config): `configure_tool_summarization(instructions={"grep": "filenames only"}, auto_threshold=500)` sets up a hook automatically — per-tool instructions for named tools, threshold-based summarization for everything else. Part 4 (custom routing): combine manual and automatic strategies in one handler.
+
+> `t.on("tool_result", handler)`, `PendingToolResult`, `edit_result()`, `summarize(instructions=, target_tokens=)`, `approve()`, `reject()`, `original_content`, `configure_tool_summarization()`, `ToolSummarizationConfig`, `review=True`
 
 ---
 
