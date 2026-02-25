@@ -278,10 +278,16 @@ _ROLE_COLORS: dict[str, str] = {
 
 def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: Any = None) -> None:
     """Render a CompiledContext as a compact one-line-per-message summary."""
+    import textwrap
+
     console = _make_console(file)
 
+    # Prefix: "  {role:10s} | " = 15 chars; wrap content to remaining width
+    _PREFIX_WIDTH = 15
+    content_width = max((console.width or 100) - _PREFIX_WIDTH, 20)
+
     for msg in ctx.messages:
-        content = (msg.content or "").replace("\n", " ").strip()
+        content = (msg.content or "").strip()
         # Filter internal merge commit metadata
         if content.startswith("{") and "message" in content:
             continue
@@ -305,21 +311,39 @@ def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: An
             else:
                 preview = content
 
-        # Build the role prefix as plain Text
-        prefix = Text()
-        prefix.append(f"  {role_label:10s}", style=f"bold {color}")
-        prefix.append(" | ", style="dim")
+        # Split on real newlines, then wrap each paragraph to available width
+        raw_lines = preview.split("\n")
+        wrapped_lines: list[str] = []
+        for raw_line in raw_lines:
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            wrapped_lines.extend(textwrap.wrap(stripped, width=content_width) or [""])
+        if not wrapped_lines:
+            wrapped_lines = [""]
 
-        # Assistant messages get inline markdown rendering
-        if msg.role == "assistant" and not getattr(msg, "tool_calls", None):
-            markup = _inline_markdown(preview)
-            line = prefix.copy()
-            line.append_text(Text.from_markup(markup))
-            console.print(line)
-        else:
-            line = prefix.copy()
-            line.append(preview)
-            console.print(line)
+        # Role prefix for first line
+        role_prefix = Text()
+        role_prefix.append(f"  {role_label:10s}", style=f"bold {color}")
+        role_prefix.append(" | ", style="dim")
+
+        # Continuation prefix — aligns "|" with the first line's "|"
+        cont_prefix = Text()
+        cont_prefix.append(" " * 13)
+        cont_prefix.append("| ", style="dim")
+
+        is_assistant_text = msg.role == "assistant" and not getattr(msg, "tool_calls", None)
+
+        for i, line_text in enumerate(wrapped_lines):
+            line = role_prefix.copy() if i == 0 else cont_prefix.copy()
+
+            if is_assistant_text:
+                markup = _inline_markdown(line_text)
+                line.append_text(Text.from_markup(markup))
+            else:
+                line.append(line_text)
+
+            console.print(line, soft_wrap=True)
 
     # Footer
     estimate = _is_estimate(ctx.token_source)
