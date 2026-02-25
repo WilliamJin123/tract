@@ -7,7 +7,8 @@ no state. Rollback leaves state clean for a safe retry. After a successful
 batch, chat with the LLM to verify the batched context is usable.
 
 Demonstrates: batch() context manager, rollback on failure, clean retry
-              after rollback, compile() before/after batch, chat() verification
+              after rollback, compile() before/after batch, chat() verification,
+              set_tools(), tool_result(), ToolCall for realistic RAG pattern
 """
 
 import os
@@ -15,12 +16,35 @@ import os
 from dotenv import load_dotenv
 
 from tract import Tract
+from tract.protocols import ToolCall
 
 load_dotenv()
 
 TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
 TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-MODEL_ID = "llama3.1-8b"
+MODEL_ID = "gpt-oss-120b"
+
+# Tool definition — the LLM knows about this tool, but we execute it
+# deterministically (no LLM decision needed for the retrieval step).
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_financials",
+            "description": "Fetch quarterly financial data from the knowledge base.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "quarter": {
+                        "type": "string",
+                        "description": "The fiscal quarter, e.g. 'Q4 2025'.",
+                    },
+                },
+                "required": ["quarter"],
+            },
+        },
+    },
+]
 
 
 def fetch_financials(quarter: str) -> str:
@@ -36,11 +60,33 @@ def fetch_financials(quarter: str) -> str:
 
 
 def run_rag_batch(t: Tract, quarter: str) -> None:
-    """Commit a RAG retrieval as one atomic batch."""
+    """Commit a RAG retrieval as one atomic batch.
+
+    The batch contains a realistic tool-call flow:
+      1. User asks a question
+      2. Assistant "decides" to call the retrieval tool (deterministic here)
+      3. Tool result is committed via tool_result()
+      4. User asks a follow-up
+
+    All four commits land atomically — or none do.
+    """
     with t.batch():
         t.user(f"What were {quarter}'s revenue figures?")
+
+        # Simulate the assistant deciding to call the retrieval tool.
+        # In a real agentic loop the LLM would return this; here we
+        # construct it deterministically so the batch stays predictable.
+        tc = ToolCall(
+            id=f"call_{quarter.lower().replace(' ', '_')}",
+            name="fetch_financials",
+            arguments={"quarter": quarter},
+        )
+        t.assistant("", metadata={"tool_calls": [tc.to_dict()]})
+
+        # Execute the tool — this is the flaky part that can fail mid-batch
         data = fetch_financials(quarter)
-        t.assistant(f"[Retrieved from knowledge base]\n{data}")
+        t.tool_result(tc.id, tc.name, data)
+
         t.user("How does that compare to guidance?")
 
 
@@ -51,6 +97,7 @@ def main():
         model=MODEL_ID,
     ) as t:
         t.system("You are a financial analyst assistant.")
+        t.set_tools(TOOLS)
 
         # --- Attempt 1: data source fails mid-batch, everything rolls back ---
 
@@ -73,7 +120,7 @@ def main():
         run_rag_batch(t, "Q4 2025")
 
         ctx = t.compile()
-        print(f"After retry: {len(ctx.messages)} messages (system + 3 from batch)\n")
+        print(f"After retry: {len(ctx.messages)} messages (system + 4 from batch)\n")
         ctx.pprint()
 
         # --- Verify: chat with the batched context ---
