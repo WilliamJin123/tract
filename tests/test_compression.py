@@ -20,6 +20,7 @@ from tract import (
     PendingToolResult,
     Priority,
     Tract,
+    ToolDropResult,
     TraceError,
 )
 
@@ -1235,3 +1236,253 @@ class TestCompressToolCallsAutoDetect:
             assert isinstance(result, ToolCompactResult)
             assert result.source_commits == (tr.commit_hash,)
             assert len(result.edit_commits) == 1
+
+
+# ---------------------------------------------------------------------------
+# is_error + drop_failed_tool_turns tests
+# ---------------------------------------------------------------------------
+
+
+class TestToolResultIsError:
+    """Tests for is_error field on tool_result()."""
+
+    def test_tool_result_is_error_metadata(self):
+        """is_error=True stores is_error in commit metadata."""
+        with Tract.open() as t:
+            t.system("test")
+            t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+            ci = t.tool_result("c1", "grep", "Error: file not found", is_error=True)
+            assert ci.metadata["is_error"] is True
+
+    def test_tool_result_is_error_false_default(self):
+        """No is_error key in metadata by default."""
+        with Tract.open() as t:
+            t.system("test")
+            t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+            ci = t.tool_result("c1", "grep", "some result")
+            assert "is_error" not in (ci.metadata or {})
+
+    def test_tool_result_is_error_with_edit(self):
+        """is_error=True works with edit= path too."""
+        with Tract.open() as t:
+            t.system("test")
+            t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+            original = t.tool_result("c1", "grep", "original result")
+            edited = t.tool_result(
+                "c1", "grep", "Error: permission denied",
+                edit=original.commit_hash,
+                is_error=True,
+            )
+            assert edited.metadata["is_error"] is True
+
+
+class TestDropFailedToolTurns:
+    """Tests for drop_failed_tool_turns()."""
+
+    def _make_tool_turn(self, t, call_id, name, content, *, is_error=False):
+        """Helper: commit a tool call + result pair."""
+        t.assistant(
+            "",
+            metadata={"tool_calls": [{"id": call_id, "name": name, "arguments": {}}]},
+        )
+        return t.tool_result(call_id, name, content, is_error=is_error)
+
+    def test_drop_failed_tool_turns_basic(self):
+        """Drops error turns and keeps clean ones."""
+        with Tract.open() as t:
+            t.system("test")
+            t.user("find files")
+
+            self._make_tool_turn(t, "c1", "grep", "found matches")
+            self._make_tool_turn(t, "c2", "bash", "Error: command failed", is_error=True)
+            self._make_tool_turn(t, "c3", "read_file", "file contents")
+
+            result = t.drop_failed_tool_turns()
+            assert result.turns_dropped == 1
+            assert "bash" in result.tool_names
+
+            # Compile should exclude the error turn
+            ctx = t.compile()
+            contents = [m.content for m in ctx.messages]
+            full = " ".join(contents)
+            assert "Error: command failed" not in full
+            assert "found matches" in full
+            assert "file contents" in full
+
+    def test_drop_failed_tool_turns_no_errors(self):
+        """Returns zero result, not an exception, when no errors found."""
+        with Tract.open() as t:
+            t.system("test")
+            self._make_tool_turn(t, "c1", "grep", "ok result")
+
+            result = t.drop_failed_tool_turns()
+            assert result.turns_dropped == 0
+            assert result.commits_skipped == 0
+            assert result.tokens_freed == 0
+            assert result.tool_names == ()
+
+    def test_drop_failed_tool_turns_name_filter(self):
+        """name= scoping limits which turns are considered."""
+        with Tract.open() as t:
+            t.system("test")
+            self._make_tool_turn(t, "c1", "grep", "Error: grep failed", is_error=True)
+            self._make_tool_turn(t, "c2", "bash", "Error: bash failed", is_error=True)
+
+            result = t.drop_failed_tool_turns(name="grep")
+            assert result.turns_dropped == 1
+            assert result.tool_names == ("grep",)
+
+            # bash error turn still compiles (was not filtered)
+            ctx = t.compile()
+            contents = [m.content for m in ctx.messages]
+            full = " ".join(contents)
+            assert "Error: bash failed" in full
+            assert "Error: grep failed" not in full
+
+    def test_drop_failed_tool_turns_skips_entire_turn(self):
+        """Both call + results are gone from compile() for error turns."""
+        with Tract.open() as t:
+            t.system("test")
+            t.user("do stuff")
+
+            # Commit a tool call with assistant text
+            t.assistant(
+                "I will search for files.",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+            t.tool_result("c1", "grep", "Error: no results", is_error=True)
+
+            result = t.drop_failed_tool_turns()
+            assert result.commits_skipped == 2  # call + result
+
+            ctx = t.compile()
+            contents = [m.content for m in ctx.messages]
+            full = " ".join(contents)
+            # Neither the assistant tool-calling message nor the result should appear
+            assert "I will search for files." not in full
+            assert "Error: no results" not in full
+
+    def test_drop_failed_tool_turns_result_type(self):
+        """ToolDropResult is a proper frozen dataclass with correct field types."""
+        with Tract.open() as t:
+            t.system("test")
+            self._make_tool_turn(t, "c1", "grep", "Error", is_error=True)
+
+            result = t.drop_failed_tool_turns()
+            assert isinstance(result, ToolDropResult)
+            assert isinstance(result.turns_dropped, int)
+            assert isinstance(result.commits_skipped, int)
+            assert isinstance(result.tokens_freed, int)
+            assert isinstance(result.tool_names, tuple)
+
+    def test_drop_failed_tool_turns_tokens_freed(self):
+        """tokens_freed sums call + result token counts."""
+        with Tract.open() as t:
+            t.system("test")
+            self._make_tool_turn(t, "c1", "grep", "x " * 100, is_error=True)
+
+            result = t.drop_failed_tool_turns()
+            assert result.tokens_freed > 0
+
+
+class TestSummarizeIncludeContext:
+    """Tests for context-aware summarize()."""
+
+    def test_summarize_include_context(self):
+        """include_context=True passes conversation context to the LLM."""
+        with Tract.open() as t:
+            t._llm_client = MockLLMClient(["Relevant summary."])
+            t.system("You are a code helper.")
+            t.user("Find the main function.")
+
+            t.assistant(
+                "Searching...",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+
+            pending = t.tool_result("c1", "grep", "verbose output " * 20, review=True)
+            pending.summarize(include_context=True)
+
+            # Verify context was included in the prompt
+            llm = t._llm_client
+            user_msg = llm.last_messages[1]["content"]
+            assert "conversation so far" in user_msg
+            assert "You are a code helper" in user_msg
+            assert "Find the main function" in user_msg
+
+            # Verify context-aware system prompt was used
+            sys_msg = llm.last_messages[0]["content"]
+            from tract.prompts.summarize import TOOL_CONTEXT_SUMMARIZE_SYSTEM
+            assert sys_msg == TOOL_CONTEXT_SUMMARIZE_SYSTEM
+
+    def test_summarize_custom_system_prompt(self):
+        """system_prompt= overrides the default system prompt."""
+        with Tract.open() as t:
+            t._llm_client = MockLLMClient(["Custom summary."])
+            t.system("test")
+
+            t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+
+            pending = t.tool_result("c1", "grep", "output", review=True)
+            pending.summarize(system_prompt="You are a custom summarizer.")
+
+            llm = t._llm_client
+            sys_msg = llm.last_messages[0]["content"]
+            assert sys_msg == "You are a custom summarizer."
+
+    def test_summarize_custom_system_prompt_with_context(self):
+        """Explicit system_prompt takes priority over TOOL_CONTEXT_SUMMARIZE_SYSTEM."""
+        with Tract.open() as t:
+            t._llm_client = MockLLMClient(["Summary."])
+            t.system("test")
+
+            t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+
+            pending = t.tool_result("c1", "grep", "output", review=True)
+            pending.summarize(include_context=True, system_prompt="Custom prompt.")
+
+            llm = t._llm_client
+            sys_msg = llm.last_messages[0]["content"]
+            assert sys_msg == "Custom prompt."
+            # Context should still be in the user message
+            user_msg = llm.last_messages[1]["content"]
+            assert "conversation so far" in user_msg
+
+    def test_configure_tool_summarization_include_context(self):
+        """include_context threads through configure_tool_summarization hook."""
+        with Tract.open() as t:
+            t._llm_client = MockLLMClient(["Auto summary."])
+            t.system("test context")
+            t.user("do something")
+
+            t.configure_tool_summarization(
+                instructions={"grep": "summarize grep results"},
+                include_context=True,
+            )
+
+            t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+            ci = t.tool_result("c1", "grep", "verbose " * 30)
+
+            # Verify the LLM was called with context
+            llm = t._llm_client
+            user_msg = llm.last_messages[1]["content"]
+            assert "conversation so far" in user_msg
+            assert "test context" in user_msg
