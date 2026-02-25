@@ -130,12 +130,29 @@ def build_tool_compact_prompt(
     return prompt
 
 
+TOOL_CONTEXT_SUMMARIZE_SYSTEM: str = (
+    "You are summarizing a tool result from an AI agent's workflow. "
+    "You have been given the full conversation context so far, followed "
+    "by the specific tool result to summarize. "
+    "Your job is to distill the tool result into only the information "
+    "that is relevant to the ongoing conversation.\n\n"
+    "Guidelines:\n"
+    "- Read the conversation to understand the current goal.\n"
+    "- Filter the tool result to ONLY relevant information.\n"
+    "- Omit data with no bearing on the conversation goals.\n"
+    "- Preserve specific details needed: names, numbers, paths, errors.\n"
+    "- If entirely irrelevant, say so in one line.\n"
+    "- If a target token count is specified, aim for that length."
+)
+
+
 def build_summarize_prompt(
     messages_text: str,
     *,
     target_tokens: int | None = None,
     instructions: str | None = None,
     retention_instructions: list[str] | None = None,
+    context_text: str | None = None,
 ) -> str:
     """Build the user prompt for summarization.
 
@@ -148,11 +165,22 @@ def build_summarize_prompt(
         retention_instructions: Optional list of retention instructions from
             IMPORTANT-annotated commits. Each entry is injected as a
             bullet point under a dedicated section.
+        context_text: Optional conversation context preceding the content
+            to summarize. When provided, the prompt frames the task as
+            context-aware summarization.
 
     Returns:
         The formatted user prompt string.
     """
-    prompt = f"Summarize the following conversation segment:\n\n{messages_text}"
+    if context_text is not None:
+        prompt = (
+            f"Here is the conversation so far:\n\n{context_text}\n\n"
+            f"---\n\n"
+            f"Now summarize ONLY the following tool result, keeping only "
+            f"information relevant to the conversation above:\n\n{messages_text}"
+        )
+    else:
+        prompt = f"Summarize the following conversation segment:\n\n{messages_text}"
 
     if target_tokens is not None:
         prompt += f"\nTarget approximately {target_tokens} tokens."

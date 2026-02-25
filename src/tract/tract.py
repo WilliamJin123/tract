@@ -964,6 +964,7 @@ class Tract:
         message: str | None = None,
         metadata: dict | None = None,
         review: bool = False,
+        is_error: bool = False,
     ) -> CommitInfo | PendingToolResult:
         """Commit a tool execution result.
 
@@ -991,6 +992,10 @@ class Tract:
                 added automatically).
             review: If True, return :class:`PendingToolResult` for manual
                 review instead of auto-committing.
+            is_error: If True, mark this result as a failed tool call by
+                storing ``is_error: True`` in commit metadata. Used by
+                :meth:`drop_failed_tool_turns` to identify and skip
+                error turns.
 
         Returns:
             :class:`CommitInfo` (if committed) or :class:`PendingToolResult`
@@ -1002,6 +1007,8 @@ class Tract:
         # If this is an edit, bypass the hook (user already decided)
         if edit is not None:
             meta = {**(metadata or {}), "tool_call_id": tool_call_id, "name": name}
+            if is_error:
+                meta["is_error"] = True
             return self.commit(
                 DialogueContent(role="tool", text=content),
                 operation=CommitOperation.EDIT,
@@ -1015,6 +1022,8 @@ class Tract:
             meta = {**(metadata or {}), "tool_call_id": pending.tool_call_id, "name": pending.tool_name}
             if pending.original_content is not None:
                 meta["summarized_from_length"] = len(pending.original_content)
+            if pending.is_error:
+                meta["is_error"] = True
             return self.commit(
                 DialogueContent(role="tool", text=pending.content),
                 message=message or f"tool result: {pending.tool_name}",
@@ -1029,6 +1038,7 @@ class Tract:
             tool_name=name,
             content=content,
             token_count=self._token_counter.count_text(content),
+            is_error=is_error,
         )
         pending._execute_fn = _execute
 
@@ -1055,6 +1065,8 @@ class Tract:
         *,
         auto_threshold: int | None = None,
         default_instructions: str | None = None,
+        include_context: bool = False,
+        system_prompt: str | None = None,
     ) -> None:
         """Configure automatic tool result summarization.
 
@@ -1076,6 +1088,13 @@ class Tract:
                 Results under the threshold pass through unchanged.
             default_instructions: Fallback instructions for tools not
                 listed in ``instructions`` but over the threshold.
+            include_context: If True, compile the current conversation
+                context and pass it to the summarization LLM so it can
+                filter tool results based on conversational relevance.
+            system_prompt: Override the default system prompt for
+                summarization. When ``include_context=True`` and no
+                explicit system_prompt is given,
+                ``TOOL_CONTEXT_SUMMARIZE_SYSTEM`` is used.
 
         Example::
 
@@ -1093,6 +1112,8 @@ class Tract:
             instructions=instructions or {},
             auto_threshold=auto_threshold,
             default_instructions=default_instructions,
+            include_context=include_context,
+            system_prompt=system_prompt,
         )
 
         def _auto_handler(pending: PendingToolResult) -> None:
@@ -1103,11 +1124,17 @@ class Tract:
 
             tool_instructions = config.instructions.get(pending.tool_name)
 
+            summarize_kwargs: dict = {}
+            if config.include_context:
+                summarize_kwargs["include_context"] = True
+            if config.system_prompt:
+                summarize_kwargs["system_prompt"] = config.system_prompt
+
             if tool_instructions:
-                pending.summarize(instructions=tool_instructions)
+                pending.summarize(instructions=tool_instructions, **summarize_kwargs)
                 pending.approve()
             elif config.auto_threshold and pending.token_count > config.auto_threshold:
-                pending.summarize(instructions=config.default_instructions)
+                pending.summarize(instructions=config.default_instructions, **summarize_kwargs)
                 pending.approve()
             else:
                 pending.approve()
@@ -1253,6 +1280,65 @@ class Tract:
             ))
 
         return turns
+
+    def drop_failed_tool_turns(
+        self,
+        name: str | None = None,
+    ) -> "ToolDropResult":
+        """Drop tool turns that contain error results from the compiled context.
+
+        Walks :meth:`find_tool_turns` and checks each result's metadata for
+        ``is_error: True``.  If *any* result in a turn is an error, the
+        entire turn (call commit + all result commits) is annotated with
+        :attr:`Priority.SKIP` so it no longer appears in :meth:`compile`.
+
+        Args:
+            name: If set, only consider turns matching this tool name.
+
+        Returns:
+            :class:`ToolDropResult` with stats on what was dropped.
+        """
+        from tract.models.compression import ToolDropResult
+
+        turns = self.find_tool_turns(name=name)
+
+        turns_dropped = 0
+        commits_skipped = 0
+        tokens_freed = 0
+        dropped_names: set[str] = set()
+
+        for turn in turns:
+            # Check if any result in this turn has is_error
+            has_error = False
+            for r in turn.results:
+                meta = r.metadata or {}
+                if meta.get("is_error", False):
+                    has_error = True
+                    break
+
+            if not has_error:
+                continue
+
+            turns_dropped += 1
+            dropped_names.update(turn.tool_names)
+
+            # Skip the call commit
+            self.annotate(turn.call.commit_hash, Priority.SKIP)
+            commits_skipped += 1
+            tokens_freed += turn.call.token_count
+
+            # Skip all result commits
+            for r in turn.results:
+                self.annotate(r.commit_hash, Priority.SKIP)
+                commits_skipped += 1
+                tokens_freed += r.token_count
+
+        return ToolDropResult(
+            turns_dropped=turns_dropped,
+            commits_skipped=commits_skipped,
+            tokens_freed=tokens_freed,
+            tool_names=tuple(sorted(dropped_names)),
+        )
 
     # ------------------------------------------------------------------
     # Conversation layer (chat/generate)

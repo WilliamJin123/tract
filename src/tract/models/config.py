@@ -249,3 +249,5 @@ class ToolSummarizationConfig:
     instructions: dict[str, str] = field(default_factory=dict)
     auto_threshold: int | None = None
     default_instructions: str | None = None
+    include_context: bool = False
+    system_prompt: str | None = None

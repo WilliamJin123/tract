@@ -62,6 +62,27 @@ class ToolCompactResult:
     """Number of tool turns that were compacted."""
 
 
+@dataclass(frozen=True)
+class ToolDropResult:
+    """Result of dropping failed tool turns from context.
+
+    Returned by :meth:`Tract.drop_failed_tool_turns`.  Tracks how many
+    turns were dropped and how many tokens were freed.
+    """
+
+    turns_dropped: int
+    """Number of tool turns that were marked SKIP."""
+
+    commits_skipped: int
+    """Total commits annotated with SKIP (calls + results)."""
+
+    tokens_freed: int
+    """Approximate tokens freed by skipping the dropped turns."""
+
+    tool_names: tuple[str, ...]
+    """Unique tool names involved in the dropped turns."""
+
+
 @dataclass
 class PendingCompression:
     """A compression that has been planned but not yet committed.
