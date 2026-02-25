@@ -98,7 +98,7 @@ Part 1 covers priority annotations without an LLM. `system()` commits are `PINNE
 
 > `annotate(hash, Priority.PINNED/SKIP/NORMAL)`, `system(edit=hash)`, `Priority` enum, `log()`, compile reflects annotations
 
-## 05 — Log, Diff, and Time Travel
+## 05 — Log, Diff, and Rollback
 
 **Use case:** Walk history, compare two states, and reconstruct exactly what the LLM was seeing at any past point.
 
@@ -374,7 +374,7 @@ Branch from the same conversation state, run identical prompts on each branch wi
 
 ## context_forensics.py
 
-**Combines:** fundamentals/05 (log + time travel) + fundamentals/07 (branching) + patterns/07 (rebase + import)
+**Combines:** fundamentals/05 (log + Rollback) + fundamentals/07 (branching) + patterns/07 (rebase + import)
 
 Walk `log()` to find the commit where bad data entered the conversation. `compile(at_commit=hash)` reconstructs exactly what the LLM was seeing at that point. Branch from just before the contamination, cherry-pick the good work with `import_commit()`, and rebase the clean branch onto main.
 

@@ -1,27 +1,27 @@
 """Tool Calling
 
-Build an agentic loop where the LLM decides which tools to call, tract
-commits every step, and you compress the verbose tool output afterward.
+Two scenarios requiring an LLM, plus an offline Part 2.
 
-The agent's mission: find a hidden comment in THIS file by searching the
-cookbook directory. Every tool call and result is committed for full
-provenance. After the agent answers, compact the noisy intermediate
-tool results using EDIT commits — each result is shortened in-place,
-preserving commit structure, tool roles, and metadata.
+Scenario 1 — Agentic loop: the LLM searches cookbook files for a hidden
+marker comment. Every tool call and result is committed for full provenance.
+After the agent answers, compress_tool_calls() shortens results in-place.
 
-After compression, demonstrates the tool query API for inspecting
-tool history, tool_result(edit=) for surgical edits, and
-configure_tool_summarization() for automatic per-tool summarization.
+Scenario 2 — Context-aware auto-summarization: intentionally noisy tool
+results (huge directory listing, verbose config file) are auto-summarized
+on commit. include_context=True lets the summarizer see the conversation
+so it keeps only what matters to the user's question.
+
+Part 2 — Offline tool management: error handling with is_error=True and
+drop_failed_tool_turns(), the tool query API (find_tool_turns/results/calls),
+and tool_result(edit=) for surgical edits. No LLM needed.
 
 Demonstrates: set_tools(), generate() with tool_calls, tool_result(),
-              ToolCall, compress_tool_calls() for EDIT-based tool compaction,
-              find_tool_turns/results/calls for querying tool history,
-              tool_result(edit=) for surgical result replacement,
-              configure_tool_summarization() for automatic summarization,
-              agentic loop pattern, compile() before/after compaction
+              ToolCall, compress_tool_calls(), is_error=True,
+              drop_failed_tool_turns(), find_tool_turns/results/calls,
+              tool_result(edit=), configure_tool_summarization(),
+              include_context=True, agentic loop pattern
 """
 
-import json
 import os
 
 import httpx
@@ -39,10 +39,8 @@ MODEL_ID = "gpt-oss-120b"
 # The directory this file lives in — tools will search here.
 COOKBOOK_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# -----------------------------------------------------------------------
-# DISCOVERY: Tool calls are just commits with metadata — the context
-# window is the source of truth.
-# -----------------------------------------------------------------------
+# The marker to search for — split to avoid matching THIS file in search.
+_MARKER = "DIS" + "COVERY"
 
 
 # --- Tool definitions (OpenAI function-calling format) ---
@@ -104,6 +102,9 @@ TOOLS = [
 
 # --- Tool implementations ---
 
+_SELF = os.path.basename(__file__)  # Exclude this file from search results.
+
+
 def execute_tool(name: str, arguments: dict) -> str:
     """Execute a tool by name. All paths are sandboxed to COOKBOOK_DIR."""
     if name == "list_directory":
@@ -132,7 +133,7 @@ def execute_tool(name: str, arguments: dict) -> str:
         pattern = arguments["pattern"]
         matches = []
         for fname in sorted(os.listdir(COOKBOOK_DIR)):
-            if not fname.endswith(".py"):
+            if not fname.endswith(".py") or fname == _SELF:
                 continue
             fpath = os.path.join(COOKBOOK_DIR, fname)
             try:
@@ -172,15 +173,9 @@ def call_llm(messages: list[dict], tools: list[dict]) -> dict:
 
 
 def main():
-    print("=" * 60)
-    print("TOOL CALLING: Agentic File Search")
-    print("=" * 60)
-    print()
-    print("  The agent will search the cookbook directory to find a hidden")
-    print("  DISCOVERY comment in one of the .py files. Every tool call")
-    print("  and result is committed to the tract for full provenance.")
-    print("  Afterward, we compress the verbose results into a summary.")
-    print()
+    # =================================================================
+    # SCENARIO 1: Agentic File Search + Post-Hoc Compaction
+    # =================================================================
 
     with Tract.open(
         api_key=TRACT_OPENAI_API_KEY,
@@ -199,9 +194,9 @@ def main():
         )
         t.user(
             "One of the .py files in the cookbook/fundamentals/ directory "
-            "contains a comment line starting with '# DISCOVERY:'. "
+            f"contains a comment line starting with '# {_MARKER}:'. "
             "Find it and tell me the filename, line number, exact text, "
-            "and a brief explanation of what the comment means."
+            "and a brief explanation of what the comment means, as well as what other content exists in the file."
         )
 
         # --- Agentic loop: compile → LLM → tool calls → execute → repeat ---
@@ -227,8 +222,6 @@ def main():
                 # Agent gave a final text answer — commit and done
                 answer_text = msg.get("content") or ""
                 answer_ci = t.assistant(answer_text)
-                print(f"  Agent answered after {turn + 1} turn(s).\n")
-                print(f"  Answer: {answer_text}\n")
                 break
 
             # Commit assistant's tool-calling message (content may be null)
@@ -241,18 +234,10 @@ def main():
 
             # Execute each tool call and commit results
             for tc in tool_calls:
-                print(f"  [{turn + 1}] {tc.name}({json.dumps(tc.arguments)})")
                 result = execute_tool(tc.name, tc.arguments)
-
-                # Show truncated output
-                display = result[:120] + "..." if len(result) > 120 else result
-                print(f"       → {display}\n")
-
-                ci = t.tool_result(tc.id, tc.name, result)
+                is_error = result.startswith("Error:")
+                ci = t.tool_result(tc.id, tc.name, result, is_error=is_error)
                 intermediate_hashes.append(ci.commit_hash)
-
-        else:
-            print(f"  Agent didn't finish in {max_turns} turns.\n")
 
         # --- Full context: everything including verbose tool output ---
 
@@ -261,7 +246,7 @@ def main():
         print("=" * 60)
         full_ctx = t.compile()
         print(f"  {len(full_ctx.messages)} messages  |  {full_ctx.token_count} tokens\n")
-        full_ctx.pprint(style="chat")
+        full_ctx.pprint(style="compact")
 
         # --- Compact tool interactions ---
         # compress_tool_calls() uses EDIT commits to shorten each tool
@@ -277,7 +262,7 @@ def main():
             instructions=(
                 "Summarize as a single line in the format: "
                 "'line <N>: <exact comment text>' where N is the line number "
-                "and the text is the DISCOVERY comment that was found."
+                f"and the text is the {_MARKER} comment that was found."
             ),
         )
 
@@ -307,142 +292,259 @@ def main():
             print(f"  {entry}")
 
     # =================================================================
-    # PART 2: Tool Query API + Surgical Edits
+    # SCENARIO 2: Context-Aware Auto-Summarization (Noisy Tools)
     # =================================================================
-    # These features work without an LLM — demonstrated with a fresh
-    # in-memory tract using manually committed tool interactions.
+    # A different task with intentionally verbose tool results.
+    # configure_tool_summarization(include_context=True) lets the
+    # summarizer see the conversation, so it extracts ONLY what the
+    # user asked about — filtering out irrelevant noise.
 
     print(f"\n\n{'=' * 60}")
-    print("PART 2: Tool Query API + Surgical Edits")
+    print("SCENARIO 2: Context-Aware Auto-Summarization")
     print("=" * 60)
-
-    with Tract.open() as t2:
-        # Simulate a multi-tool agent session
-        t2.system("You are a code analysis agent.")
-        t2.user("Find the main entry point and its dependencies.")
-
-        # Turn 1: Agent calls grep
-        t2.assistant(
-            "I'll search for the main function.",
-            metadata={"tool_calls": [
-                {"id": "call_1", "name": "grep", "arguments": {"pattern": "def main"}},
-            ]},
-        )
-        grep_ci = t2.tool_result("call_1", "grep", (
-            "src/app.py:15: def main():\n"
-            "src/app.py:16:     parser = argparse.ArgumentParser()\n"
-            "src/app.py:17:     parser.add_argument('--verbose')\n"
-            "src/cli.py:42: def main_cli():\n"
-            "tests/test_app.py:8: def test_main():\n"
-        ))
-
-        # Turn 2: Agent calls read_file
-        t2.assistant(
-            "Found it in src/app.py. Let me read the full file.",
-            metadata={"tool_calls": [
-                {"id": "call_2", "name": "read_file", "arguments": {"path": "src/app.py"}},
-            ]},
-        )
-        read_ci = t2.tool_result("call_2", "read_file", (
-            "import argparse\nimport logging\nfrom . import db, auth, api\n\n"
-            "logger = logging.getLogger(__name__)\n\n"
-            "def main():\n    parser = argparse.ArgumentParser()\n"
-            "    parser.add_argument('--verbose')\n"
-            "    # ... 200 more lines of setup code ...\n"
-        ))
-
-        t2.assistant("The main entry point is src/app.py:15, depending on db, auth, and api.")
-
-        # --- Query API: find tool results, calls, and turns ---
-
-        print("\n--- find_tool_results() ---")
-        all_results = t2.find_tool_results()
-        print(f"  Total tool results: {len(all_results)}")
-        for r in all_results:
-            print(f"    {r.metadata['name']}: {r.token_count} tokens")
-
-        grep_results = t2.find_tool_results(name="grep")
-        print(f"  Grep results only: {len(grep_results)}")
-
-        print("\n--- find_tool_calls() ---")
-        all_calls = t2.find_tool_calls()
-        print(f"  Total tool-calling turns: {len(all_calls)}")
-
-        print("\n--- find_tool_turns() ---")
-        turns = t2.find_tool_turns()
-        print(f"  Total tool turns: {len(turns)}")
-        for turn in turns:
-            names = ", ".join(turn.tool_names)
-            print(f"    {names}: {turn.total_tokens} tokens, {len(turn.results)} result(s)")
-
-        # --- Surgical edit: replace verbose grep output with just filenames ---
-
-        print("\n--- tool_result(edit=) ---")
-        print(f"  Before edit: grep result is {grep_ci.token_count} tokens")
-
-        edited_ci = t2.tool_result(
-            "call_1", "grep",
-            "src/app.py:15, src/cli.py:42, tests/test_app.py:8",
-            edit=grep_ci.commit_hash,
-        )
-        print(f"  After edit:  grep result is {edited_ci.token_count} tokens")
-        print(f"  Original preserved at {grep_ci.commit_hash[:8]}...")
-
-        ctx = t2.compile()
-        print(f"  Compiled context: {ctx.token_count} tokens")
-
-    # =================================================================
-    # PART 3: Automatic Tool Summarization
-    # =================================================================
-    # configure_tool_summarization() sets up a hook that auto-summarizes
-    # verbose tool results. Requires an LLM client.
-
-    print(f"\n\n{'=' * 60}")
-    print("PART 3: Automatic Tool Summarization (configure_tool_summarization)")
-    print("=" * 60)
+    print()
+    print("  The user asks a specific question. Tools return intentionally")
+    print("  noisy output. The auto-summarizer sees the conversation and")
+    print("  extracts only the relevant information.")
+    print()
 
     with Tract.open(
         api_key=TRACT_OPENAI_API_KEY,
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
-    ) as t3:
-        # Configure per-tool summarization rules
-        t3.configure_tool_summarization(
-            instructions={
-                "grep": "Summarize to matching filenames and line numbers only.",
-                "read_file": "Keep the first 5 lines, summarize the rest.",
-            },
-            auto_threshold=200,  # Auto-summarize any tool result over 200 tokens
-            default_instructions="Preserve key findings, omit raw output.",
+    ) as t2:
+
+        t2.set_tools(TOOLS)
+        t2.system("You are a configuration auditor. Answer precisely.")
+        t2.user("What is the database connection string in the project config?")
+
+        # Enable context-aware auto-summarization — the hook fires on every
+        # tool_result() commit and the LLM sees the conversation above.
+        t2.configure_tool_summarization(
+            auto_threshold=50,
+            default_instructions="Keep ONLY facts relevant to the user's question.",
+            include_context=True,
         )
 
-        t3.system("You are a code analysis agent.")
-        t3.user("Analyze the project structure.")
+        # --- Noisy tool result 1: large directory listing ---
+        # The user asked about a DB connection string. A 35-entry listing
+        # has one relevant file (config.yaml) buried in noise.
 
-        # This tool result will be auto-summarized because "grep" has
-        # explicit instructions in the config
-        t3.assistant(
-            "Searching for Python files...",
+        fake_listing = "\n".join(
+            ["README.md", "setup.py", "config.yaml", "requirements.txt",
+             "Makefile", "Dockerfile", ".gitignore", ".env.example",
+             "pyproject.toml", "LICENSE"]
+            + [f"module_{i:02d}.py" for i in range(20)]
+            + ["tests/", "docs/", "migrations/", "scripts/", "static/"]
+        )
+        t2.assistant(
+            "Let me list the project files to find the config.",
             metadata={"tool_calls": [
-                {"id": "call_1", "name": "grep", "arguments": {"pattern": "*.py"}},
+                {"id": "n1", "name": "list_directory",
+                 "arguments": {"path": "."}},
             ]},
         )
-        ci = t3.tool_result("call_1", "grep", (
-            "src/app.py:1: import argparse\n"
-            "src/app.py:2: import logging\n"
-            "src/db.py:1: import sqlalchemy\n"
-            "src/auth.py:1: import jwt\n"
-            "src/api.py:1: from flask import Flask\n"
-            "tests/test_app.py:1: import pytest\n"
-            "tests/test_db.py:1: import pytest\n"
-        ))
-        summarized_content = t3.get_content(ci)
-        print(f"\n  Original grep result: 7 lines of matches")
-        print(f"  Auto-summarized to: {summarized_content}")
+        ci1 = t2.tool_result("n1", "list_directory", fake_listing)
 
-        ctx = t3.compile()
-        print(f"\n  Context after auto-summarization: {ctx.token_count} tokens")
-        print(f"  (Tool results are summarized on commit — no manual step needed)")
+        print(f"  Tool 1: list_directory")
+        print(f"    Original: {len(fake_listing)} chars, "
+              f"{len(fake_listing.splitlines())} lines")
+        print(f"    Summarized: {t2.get_content(ci1)}\n")
+
+        # --- Noisy tool result 2: verbose config with one relevant line ---
+        # 20 settings, only DB_CONNECTION matters for the question.
+
+        fake_config = "\n".join([
+            "# Application Configuration",
+            "APP_NAME=my-service",
+            "APP_VERSION=2.4.1",
+            "LOG_LEVEL=INFO",
+            "LOG_FORMAT=json",
+            "CACHE_TTL=3600",
+            "CACHE_BACKEND=redis",
+            "REDIS_HOST=cache.internal",
+            "REDIS_PORT=6379",
+            "",
+            "# Database settings",
+            "DB_CONNECTION=postgresql://admin:s3cret@db.prod.internal:5432/myapp",
+            "DB_POOL_SIZE=20",
+            "DB_TIMEOUT=30",
+            "",
+            "# Feature flags",
+            "ENABLE_DARK_MODE=true",
+            "ENABLE_BETA=false",
+            "MAX_UPLOAD_SIZE=10485760",
+            "ALLOWED_ORIGINS=*.example.com",
+            "SMTP_HOST=mail.example.com",
+            "SMTP_PORT=587",
+        ])
+        t2.assistant(
+            "Found config.yaml. Let me read it.",
+            metadata={"tool_calls": [
+                {"id": "n2", "name": "read_file",
+                 "arguments": {"path": "config.yaml"}},
+            ]},
+        )
+        ci2 = t2.tool_result("n2", "read_file", fake_config)
+
+        print(f"  Tool 2: read_file (config.yaml)")
+        print(f"    Original: {len(fake_config)} chars, "
+              f"{len(fake_config.splitlines())} lines")
+        print(f"    Summarized: {t2.get_content(ci2)}\n")
+
+        # --- Noisy tool result 3: search with many irrelevant matches ---
+        # Search for "connection" returns hits in logs, docs, and code.
+        # Only the config line matters.
+
+        fake_search = "\n".join([
+            "module_03.py:12: # TODO: handle connection timeout",
+            "module_03.py:45:     self.connection_pool = create_pool()",
+            "module_07.py:8: class ConnectionManager:",
+            "module_07.py:19:     def close_connection(self):",
+            "module_07.py:33:     # connection retry logic",
+            "module_11.py:2: import connection_utils",
+            "module_15.py:88: # stale connections are cleaned up by GC",
+            "config.yaml:12: DB_CONNECTION=postgresql://admin:s3cret"
+            "@db.prod.internal:5432/myapp",
+        ])
+        t2.assistant(
+            "Let me search for 'connection' across all files.",
+            metadata={"tool_calls": [
+                {"id": "n3", "name": "search_files",
+                 "arguments": {"pattern": "connection"}},
+            ]},
+        )
+        ci3 = t2.tool_result("n3", "search_files", fake_search)
+
+        print(f"  Tool 3: search_files ('connection')")
+        print(f"    Original: {len(fake_search)} chars, "
+              f"{fake_search.count(chr(10)) + 1} matches")
+        print(f"    Summarized: {t2.get_content(ci3)}\n")
+
+        # --- Final context: see how the LLM window looks ---
+
+        print(f"{'=' * 60}")
+        print("FINAL CONTEXT (auto-summarized tool results)")
+        print("=" * 60)
+        ctx = t2.compile()
+        print(f"  {len(ctx.messages)} messages  |  {ctx.token_count} tokens\n")
+        ctx.pprint(style="chat")
+
+    # =================================================================
+    # PART 2: Offline Tool Management (no LLM needed)
+    # =================================================================
+    # Error handling, query API, surgical edits — all with pprint()
+    # so you can see exactly what the context window looks like.
+
+    print(f"\n\n{'=' * 60}")
+    print("PART 2: Offline Tool Management")
+    print("=" * 60)
+    print()
+    print("  No LLM needed. We manually commit tool interactions, then")
+    print("  show error handling, the query API, and surgical edits.")
+    print()
+
+    with Tract.open() as t3:
+
+        # --- Build a realistic multi-tool session ---
+
+        t3.system("You are a deployment agent.")
+        t3.user("Deploy the application to staging.")
+
+        # Turn 1: Health check (success)
+        t3.assistant(
+            "Checking server health...",
+            metadata={"tool_calls": [
+                {"id": "call_1", "name": "health_check", "arguments": {}},
+            ]},
+        )
+        t3.tool_result("call_1", "health_check",
+                        "Server is healthy. CPU: 23%, Memory: 45%")
+
+        # Turn 2: Deploy (fails — marked as error)
+        t3.assistant(
+            "Deploying to staging...",
+            metadata={"tool_calls": [
+                {"id": "call_2", "name": "deploy", "arguments": {"env": "staging"}},
+            ]},
+        )
+        t3.tool_result(
+            "call_2", "deploy",
+            "Error: Connection refused. Could not reach staging server "
+            "at 10.0.1.5:8080.\n"
+            "Traceback (most recent call last):\n"
+            "  File '/deploy/runner.py', line 42, in deploy_to\n"
+            "    conn = ssh.connect(host, port)\n"
+            "ConnectionRefusedError: [Errno 111] Connection refused",
+            is_error=True,
+        )
+
+        # Turn 3: Deploy retry (success)
+        t3.assistant(
+            "Retrying with backup server...",
+            metadata={"tool_calls": [
+                {"id": "call_3", "name": "deploy", "arguments": {"env": "staging-backup"}},
+            ]},
+        )
+        deploy_ci = t3.tool_result("call_3", "deploy",
+                                    "Deployed successfully to staging-backup. Build #1847.")
+
+        # --- Full context before dropping errors ---
+
+        print("--- Before drop_failed_tool_turns() ---\n")
+        ctx_before = t3.compile()
+        print(f"  {len(ctx_before.messages)} messages  |  {ctx_before.token_count} tokens\n")
+        ctx_before.pprint(style="compact")
+
+        # --- Drop error turns ---
+
+        drop_result = t3.drop_failed_tool_turns()
+
+        print(f"\n  drop_failed_tool_turns() -> ToolDropResult:")
+        print(f"    turns_dropped:   {drop_result.turns_dropped}")
+        print(f"    commits_skipped: {drop_result.commits_skipped}")
+        print(f"    tokens_freed:    {drop_result.tokens_freed}")
+        print(f"    tool_names:      {drop_result.tool_names}")
+
+        # --- Context after dropping: error turn gone ---
+
+        print(f"\n--- After drop_failed_tool_turns() ---\n")
+        ctx_after = t3.compile()
+        saved = ctx_before.token_count - ctx_after.token_count
+        print(f"  {len(ctx_after.messages)} messages  |  {ctx_after.token_count} tokens")
+        print(f"  (freed {saved} tokens)\n")
+        ctx_after.pprint(style="chat")
+
+        # --- Query API ---
+
+        print(f"\n--- find_tool_turns() ---")
+        turns = t3.find_tool_turns()
+        print(f"  {len(turns)} tool turn(s) in history:")
+        for turn in turns:
+            names = ", ".join(turn.tool_names)
+            print(f"    {names}: {turn.total_tokens} tokens, "
+                  f"{len(turn.results)} result(s)")
+
+        print(f"\n--- find_tool_results() ---")
+        for r in t3.find_tool_results():
+            print(f"    {r.metadata['name']}: {r.token_count} tokens")
+
+        # --- Surgical edit: shorten the deploy result in-place ---
+
+        print(f"\n--- tool_result(edit=) ---")
+        print(f"  Before: deploy result is {deploy_ci.token_count} tokens")
+
+        edited_ci = t3.tool_result(
+            "call_3", "deploy",
+            "Deployed to staging-backup. Build #1847.",
+            edit=deploy_ci.commit_hash,
+        )
+        print(f"  After:  deploy result is {edited_ci.token_count} tokens")
+        print(f"  Original preserved at {deploy_ci.commit_hash[:8]}...\n")
+
+        print("\n--- Full history (originals preserved for audit) ---\n")
+        for entry in reversed(t3.log()):
+            print(f"  {entry}")
 
 
 if __name__ == "__main__":

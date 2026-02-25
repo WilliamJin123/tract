@@ -1,4 +1,4 @@
-"""Log, Diff, and Time Travel
+"""Log, Diff, and Rollback
 
 Chat with an LLM over several turns, then inspect the commit history,
 diff two points in the conversation, and look back at what the context
@@ -9,7 +9,7 @@ Part 1 — Log and Diff:
   Demonstrates: log(), show(), diff(), DiffResult.pprint(), stat_only mode,
                 CommitInfo str/pprint, reversed() for chronological order
 
-Part 2 — Time Travel:
+Part 2 — Rollback:
   Demonstrates: compile(at_commit=), compile(at_time=), checkout(),
                 reset(), pprint(style="chat") for session view
 """
@@ -117,12 +117,12 @@ def part1_log_and_diff():
 
 
 # =============================================================================
-# Part 2: Time Travel
+# Part 2: Rollback
 # =============================================================================
 
 def part2_time_travel():
     print("=" * 60)
-    print("Part 2: TIME TRAVEL")
+    print("Part 2: Rollback")
     print("=" * 60)
     print()
     print("  Chat over several turns, then look back at what the context")
@@ -161,20 +161,20 @@ def part2_time_travel():
         print("=== Full session (7 messages) ===\n")
         t.compile().pprint(style="chat")
 
-        # --- Time travel: what did the LLM see after turn 1? ---
+        # --- Rollback: what did the LLM see after turn 1? ---
         # compile(at_commit=) rebuilds the context as it existed at that
         # commit — useful for debugging why the LLM gave a certain answer.
 
-        print(f"\n=== Time travel: context as of turn 1 ({turn1_hash[:8]}) ===\n")
+        print(f"\n=== Rollback: context as of turn 1 ({turn1_hash[:8]}) ===\n")
         past_ctx = t.compile(at_commit=turn1_hash)
         past_ctx.pprint(style="chat")
         print(f"\n  (turns 2-3 don't exist yet at this point)")
 
-        # --- Time travel by timestamp ---
+        # --- Rollback by timestamp ---
         # compile(at_time=) finds the latest commit before that timestamp.
         # Since midpoint is between turn 1 and turn 2, it matches turn 1.
 
-        print(f"\n=== Time travel: context at midpoint timestamp ===\n")
+        print(f"\n=== Rollback: context at midpoint timestamp ===\n")
         mid_ctx = t.compile(at_time=midpoint)
         print(f"  {len(mid_ctx.messages)} messages (same as turn 1 — "
               f"midpoint is between turn 1 and 2)")
