@@ -1,13 +1,25 @@
 """Status and Token Budget
 
 Check how many tokens are in the context window and how close you are to a
-limit. No LLM needed — this is pure local tracking via tiktoken.
+limit. With real LLM calls via chat(), status() reflects API-reported usage
+alongside tiktoken estimates — giving you ground-truth tracking.
 
 Demonstrates: status(), TractConfig(token_budget=), TokenBudgetConfig,
-              budget tracking fields, status.pprint(), print(status)
+              budget tracking fields, status.pprint(), print(status),
+              chat() with auto usage recording
 """
 
+import os
+
+from dotenv import load_dotenv
+
 from tract import Tract, TractConfig, TokenBudgetConfig
+
+load_dotenv()
+
+TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
+TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
+MODEL_ID = "llama3.1-8b"
 
 
 def main():
@@ -15,22 +27,26 @@ def main():
 
     print("=== No budget: raw token counting ===\n")
 
-    t = Tract.open()
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    ) as t:
+        t.system("You are a helpful assistant. Answer concisely.")
 
-    t.system("You are a helpful assistant. Answer concisely.")
-    t.user("What is Python?")
-    t.assistant("Python is a high-level programming language.")
+        # chat() commits the user message, calls the LLM, commits the response,
+        # and records API-reported usage automatically
+        response = t.chat("What are the three states of matter?")
+        print(f"Assistant: {response.text}\n")
 
-    status = t.status()
-    # The individual fields are there if you need them — e.g. for conditional logic:
-    print(f"Commits:     {status.commit_count}")
-    print(f"Token source: {status.token_source}")
-    print(f"Budget max:  {status.token_budget_max}")  # None — no budget set
-    # pprint() shows all of the above in a rich panel at once
-    print()
-    status.pprint()
-
-    t.close()
+        status = t.status()
+        # The individual fields are there if you need them — e.g. for conditional logic:
+        print(f"Commits:     {status.commit_count}")
+        print(f"Token source: {status.token_source}")
+        print(f"Budget max:  {status.token_budget_max}")  # None — no budget set
+        # pprint() shows all of the above in a rich panel at once
+        print()
+        status.pprint()
 
     # --- With a budget: tracking against a limit ---
 
@@ -40,42 +56,35 @@ def main():
         token_budget=TokenBudgetConfig(max_tokens=500),
     )
 
-    t = Tract.open(config=config)
+    with Tract.open(
+        config=config,
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    ) as t:
+        t.system("You are a helpful assistant. Answer concisely.")
 
-    t.system("You are a helpful assistant. Answer concisely.")
-    t.user("What is Python?")
-    t.assistant(
-        "Python is a high-level, interpreted programming language created by "
-        "Guido van Rossum. It emphasizes code readability and supports multiple "
-        "programming paradigms including procedural, object-oriented, and "
-        "functional programming."
-    )
+        response = t.chat("What is photosynthesis?")
+        print(f"Assistant: {response.text}\n")
 
-    status = t.status()
-    budget_max = status.token_budget_max or 0
-    usage_pct = (status.token_count / budget_max * 100) if budget_max else 0
-    # str(status) gives a compact one-liner: "main @ abc1234f | N commits | X/Y (Z%) tokens"
-    print(status)
+        status = t.status()
+        budget_max = status.token_budget_max or 0
+        usage_pct = (status.token_count / budget_max * 100) if budget_max else 0
+        # str(status) gives a compact one-liner: "main @ abc1234f | N commits | X/Y (Z%) tokens"
+        print(status)
 
-    # Add more messages and watch the budget fill up
-    t.user("Explain decorators in Python.")
-    t.assistant(
-        "Decorators are functions that modify the behavior of other functions. "
-        "They use the @decorator syntax and are commonly used for logging, "
-        "authentication, caching, and more. Under the hood, @decorator is "
-        "syntactic sugar for func = decorator(func)."
-    )
+        # Add more messages and watch the budget fill up
+        response = t.chat("How does the water cycle work?")
+        print(f"\nAssistant: {response.text}\n")
 
-    status = t.status()
-    usage_pct = (status.token_count / budget_max * 100) if budget_max else 0
-    print(f"\nAfter 2 more commits:")
-    # str(status) in a loop is compact and doesn't clutter the output
-    print(status)
+        status = t.status()
+        usage_pct = (status.token_count / budget_max * 100) if budget_max else 0
+        print(f"After follow-up:")
+        # str(status) in a loop is compact and doesn't clutter the output
+        print(status)
 
-    if usage_pct > 80:
-        print("WARNING: Over 80% budget — time to compress or take action!")
-
-    t.close()
+        if usage_pct > 80:
+            print("WARNING: Over 80% budget — time to compress or take action!")
 
 
 if __name__ == "__main__":

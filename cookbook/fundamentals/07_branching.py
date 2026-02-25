@@ -9,7 +9,7 @@ Part 1 — Branch Lifecycle (uses LLM):
   Demonstrates: branch(), switch(), list_branches(), current_branch,
                 branch(switch=False), delete_branch(force=True)
 
-Part 2 — Merge Strategies (no LLM):
+Part 2 — Merge Strategies (uses LLM):
   Demonstrates: merge(), merge_type, MergeResult, committed,
                 merge_commit_hash, no_ff, delete_branch=True,
                 pprint(style="compact"), MergeResult.pprint()
@@ -148,10 +148,13 @@ def part2_merge_strategies():
     print("  Main hasn't moved since branching. Merge just slides")
     print("  main's pointer forward to feature's tip.")
 
-    with Tract.open() as t:
-        t.system("You are a helpful assistant.")
-        t.user("What's Python?")
-        t.assistant("A programming language.")
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    ) as t:
+        t.system("You are a helpful assistant. Keep answers to one sentence.")
+        t.chat("What is recursion?")
 
         print(f"\n  BEFORE MERGE")
         print(f"  main:")
@@ -159,8 +162,7 @@ def part2_merge_strategies():
 
         # Branch and add commits only on feature
         t.branch("feature")
-        t.user("What about type hints?")
-        t.assistant("Type hints add optional static typing to Python.")
+        t.chat("Give an example of a base case in recursion.")
 
         print(f"\n  feature:")
         t.compile().pprint(style="compact")
@@ -186,20 +188,21 @@ def part2_merge_strategies():
     print("  Both branches diverged with new messages, but nobody edited")
     print("  existing ones. All APPENDs -- Tract auto-merges cleanly.")
 
-    with Tract.open() as t:
-        t.system("You are a helpful assistant.")
-        t.user("What's Python?")
-        t.assistant("A programming language.")
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    ) as t:
+        t.system("You are a helpful assistant. Keep answers to one sentence.")
+        t.chat("What is a linked list?")
 
-        # Feature: decorators
+        # Feature: stacks
         t.branch("feature")
-        t.user("Tell me about decorators.")
-        t.assistant("Decorators wrap functions to extend behavior.")
+        t.chat("What is a stack?")
 
-        # Main: generators
+        # Main: queues
         t.switch("main")
-        t.user("Tell me about generators.")
-        t.assistant("Generators yield values lazily using the yield keyword.")
+        t.chat("What is a queue?")
 
         print(f"\n  BEFORE MERGE")
         print(f"  main:")
@@ -230,11 +233,14 @@ def part2_merge_strategies():
     print("  This COULD fast-forward, but no_ff=True forces a merge commit.")
     print("  delete_branch=True auto-cleans the source branch after merge.")
 
-    with Tract.open() as t:
-        t.system("You are a helpful assistant.")
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    ) as t:
+        t.system("You are a helpful assistant. Keep answers to one sentence.")
         t.branch("quick-fix")
-        t.user("Fix: use snake_case for variable names.")
-        t.assistant("Done -- all variables now use snake_case.")
+        t.chat("What is the DRY principle?")
 
         t.switch("main")
 
