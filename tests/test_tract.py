@@ -261,7 +261,8 @@ class TestSC3ContentTypes:
     ])
     def test_content_type_commit_and_compile(self, tract: Tract, content, expected_role, expected_text):
         tract.commit(content)
-        result = tract.compile()
+        # Reasoning has SKIP priority by default; include_reasoning promotes it
+        result = tract.compile(include_reasoning=True)
         assert len(result.messages) == 1
         assert result.messages[0].role == expected_role
         assert expected_text in result.messages[0].content

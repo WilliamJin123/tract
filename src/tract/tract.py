@@ -186,6 +186,7 @@ class Tract:
         self._hooks: dict[str, Callable] = {}
         self._in_hook: bool = False
         self._tool_summarization_config: ToolSummarizationConfig | None = None
+        self._commit_reasoning: bool = True
 
     @classmethod
     def open(
@@ -207,6 +208,7 @@ class Tract:
         operations: OperationConfigs | None = None,
         operation_configs: dict[str, LLMConfig] | None = None,  # deprecated: use operations=
         tokenizer_encoding: str | None = None,
+        commit_reasoning: bool = True,
     ) -> Tract:
         """Open (or create) a Trace repository.
 
@@ -432,6 +434,9 @@ class Tract:
         # Apply per-operation configs (legacy dict path)
         elif operation_configs is not None:
             tract.configure_operations(**operation_configs)
+
+        # Reasoning commit config
+        tract._commit_reasoning = commit_reasoning
 
         return tract
 
@@ -953,6 +958,39 @@ class Tract:
                 retain=retain, retain_match=retain_match,
             )
         return info
+
+    def reasoning(
+        self,
+        text: str,
+        *,
+        format: str = "parsed",
+        message: str | None = None,
+        metadata: dict | None = None,
+    ) -> CommitInfo:
+        """Commit reasoning/chain-of-thought content.
+
+        Shorthand for ``commit(ReasoningContent(text=text, format=format))``.
+
+        Reasoning commits are **SKIP by default** — excluded from
+        ``compile()`` unless ``include_reasoning=True`` is passed.
+
+        Args:
+            text: The reasoning text.
+            format: Extraction source format (``"parsed"``, ``"raw"``,
+                ``"think_tags"``, ``"anthropic"``).
+            message: Optional commit message.
+            metadata: Optional commit metadata.
+
+        Returns:
+            :class:`CommitInfo` for the new commit.
+        """
+        from tract.models.content import ReasoningContent
+
+        return self.commit(
+            ReasoningContent(text=text, format=format),
+            message=message or _auto_message("reasoning", text),
+            metadata=metadata,
+        )
 
     def tool_result(
         self,
@@ -1504,6 +1542,7 @@ class Tract:
         llm_config: LLMConfig | None = None,
         message: str | None = None,
         metadata: dict | None = None,
+        reasoning: bool = True,
         validator: Callable[[str], tuple[bool, str | None]] | None = None,
         max_retries: int = 3,
         purify: bool = False,
@@ -1522,6 +1561,10 @@ class Tract:
             llm_config: Full LLMConfig override for this call.
             message: Optional commit message for the assistant commit.
             metadata: Optional metadata for the assistant commit.
+            reasoning: If True (default), auto-commit reasoning traces
+                extracted from the LLM response. Set to False to skip
+                reasoning commits for this call. Global opt-out via
+                ``commit_reasoning=False`` on ``Tract.open()``.
             validator: Optional callable that validates the response text.
                 Takes the response text, returns (ok, diagnosis). When provided,
                 the generate call is wrapped with retry_with_steering.
@@ -1556,6 +1599,7 @@ class Tract:
                 model=model, temperature=temperature,
                 max_tokens=max_tokens, llm_config=llm_config,
                 message=message, metadata=metadata,
+                reasoning=reasoning,
             )
 
         # Retry-guarded path
@@ -1566,6 +1610,7 @@ class Tract:
                 model=model, temperature=temperature,
                 max_tokens=max_tokens, llm_config=llm_config,
                 message=message, metadata=metadata,
+                reasoning=reasoning,
             )
 
         def _validate(resp: ChatResponse) -> tuple[bool, str | None]:
@@ -1634,6 +1679,7 @@ class Tract:
         llm_config: LLMConfig | None = None,
         message: str | None = None,
         metadata: dict | None = None,
+        reasoning: bool = True,
     ) -> ChatResponse:
         """Single generate attempt (no retry). Internal helper.
 
@@ -1682,6 +1728,19 @@ class Tract:
         text = self._extract_content(response, client=chat_client)
         usage_dict = self._extract_usage(response, client=chat_client)
 
+        # 3a. Extract reasoning (duck-typed optional on LLM client)
+        reasoning_text: str | None = None
+        reasoning_format: str = "parsed"
+        if hasattr(chat_client, "extract_reasoning"):
+            reasoning_result = chat_client.extract_reasoning(response)
+            if reasoning_result is not None:
+                reasoning_text, reasoning_format = reasoning_result
+                # When <think> tags were extracted, strip them from the
+                # assistant text so ChatResponse.text is clean
+                if reasoning_format == "think_tags":
+                    import re as _re
+                    text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL).strip()
+
         # 3b. Parse tool_calls from the raw response (if any)
         from tract.protocols import ToolCall as _ToolCall
 
@@ -1699,7 +1758,15 @@ class Tract:
         # 4. Build generation_config (use resolved kwargs for accurate tracking)
         gen_config = self._build_generation_config(response, resolved=llm_kwargs)
 
-        # 5. Commit assistant response (include tool_calls in metadata for provenance)
+        # 5a. Commit reasoning trace (if extracted and enabled)
+        reasoning_commit_info: CommitInfo | None = None
+        if reasoning_text and self._commit_reasoning and reasoning:
+            reasoning_commit_info = self.reasoning(
+                reasoning_text,
+                format=reasoning_format,
+            )
+
+        # 5b. Commit assistant response (include tool_calls in metadata for provenance)
         commit_meta = metadata
         if tool_calls:
             commit_meta = {**(metadata or {}), "tool_calls": [tc.to_dict() for tc in tool_calls]}
@@ -1718,6 +1785,8 @@ class Tract:
             usage=usage,
             commit_info=commit_info,
             generation_config=LLMConfig.from_dict(gen_config) or LLMConfig(),
+            reasoning=reasoning_text,
+            reasoning_commit=reasoning_commit_info,
             tool_calls=tool_calls,
             raw_response=response,
         )
@@ -1733,6 +1802,7 @@ class Tract:
         message: str | None = None,
         name: str | None = None,
         metadata: dict | None = None,
+        reasoning: bool = True,
         validator: Callable[[str], tuple[bool, str | None]] | None = None,
         max_retries: int = 3,
         purify: bool = False,
@@ -1756,6 +1826,9 @@ class Tract:
             message: Optional commit message for the user commit.
             name: Optional speaker name for the user commit.
             metadata: Optional metadata for the user commit.
+            reasoning: If True (default), auto-commit reasoning traces
+                extracted from the LLM response. Set to False to skip
+                reasoning commits for this call.
             validator: Optional callable that validates the response text.
                 Takes the response text, returns (ok, diagnosis). When provided,
                 the generate call is wrapped with retry_with_steering.
@@ -1784,6 +1857,7 @@ class Tract:
             temperature=temperature,
             max_tokens=max_tokens,
             llm_config=llm_config,
+            reasoning=reasoning,
             validator=validator,
             max_retries=max_retries,
             purify=purify,
@@ -1825,6 +1899,7 @@ class Tract:
         at_time: datetime | None = ...,
         at_commit: str | None = ...,
         include_edit_annotations: bool = ...,
+        include_reasoning: bool = ...,
         order: None = None,
         check_safety: bool = ...,
     ) -> CompiledContext: ...
@@ -1836,6 +1911,7 @@ class Tract:
         at_time: datetime | None = ...,
         at_commit: str | None = ...,
         include_edit_annotations: bool = ...,
+        include_reasoning: bool = ...,
         order: list[str],
         check_safety: bool = ...,
     ) -> tuple[CompiledContext, list[ReorderWarning]]: ...
@@ -1846,6 +1922,7 @@ class Tract:
         at_time: datetime | None = None,
         at_commit: str | None = None,
         include_edit_annotations: bool = False,
+        include_reasoning: bool = False,
         order: list[str] | None = None,
         check_safety: bool = True,
     ) -> CompiledContext | tuple[CompiledContext, list[ReorderWarning]]:
@@ -1889,7 +1966,7 @@ class Tract:
 
         # If order provided, bypass cache entirely and do a full compile + reorder
         if order is not None:
-            result = self._compiler.compile(self._tract_id, current_head)
+            result = self._compiler.compile(self._tract_id, current_head, include_reasoning=include_reasoning)
             warnings = []
             if check_safety:
                 from tract.operations.compression import check_reorder_safety
@@ -1898,14 +1975,15 @@ class Tract:
             reordered = self._inject_tools(reordered)
             return reordered, warnings
 
-        # Time-travel and edit annotations: always full compile, don't touch snapshot
-        if at_time is not None or at_commit is not None or include_edit_annotations:
+        # Time-travel, edit annotations, and include_reasoning: always full compile, don't touch snapshot
+        if at_time is not None or at_commit is not None or include_edit_annotations or include_reasoning:
             result = self._compiler.compile(
                 self._tract_id,
                 current_head,
                 at_time=at_time,
                 at_commit=at_commit,
                 include_edit_annotations=include_edit_annotations,
+                include_reasoning=include_reasoning,
             )
             # Apply API-reported token override if available for the
             # resolved head commit (tiktoken is temporary; API is truth).
@@ -2032,14 +2110,20 @@ class Tract:
         """
         return self._commit_engine.get_commit(commit_hash)
 
-    def get_content(self, commit_or_hash: CommitInfo | str) -> str | None:
-        """Load the full content text for a commit.
+    def get_content(self, commit_or_hash: CommitInfo | str) -> str | dict | None:
+        """Load the content for a commit.
+
+        For simple content types (dialogue, instruction, etc.), returns the
+        text string.  For structured content types that carry additional
+        metadata (reasoning, freeform), returns the full parsed dict so
+        callers can inspect fields like ``format``.
 
         Args:
             commit_or_hash: A :class:`CommitInfo` or a commit hash string.
 
         Returns:
-            The content text, or *None* if the commit or blob is not found.
+            The content text (str), full content dict, or *None* if the
+            commit or blob is not found.
         """
         if isinstance(commit_or_hash, str):
             row = self._commit_repo.get(commit_or_hash)
@@ -2059,6 +2143,12 @@ class Tract:
         except (json.JSONDecodeError, TypeError):
             return blob.payload_json
 
+        # Structured content types: return the full dict so callers
+        # can access all fields (e.g. format, payload, etc.)
+        _STRUCTURED_TYPES = {"reasoning", "freeform"}
+        if isinstance(data, dict) and data.get("content_type") in _STRUCTURED_TYPES:
+            return data
+
         # Extract text from known content shapes
         for key in ("text", "content"):
             if key in data:
@@ -2067,6 +2157,23 @@ class Tract:
             val = data["payload"]
             return json.dumps(val) if isinstance(val, dict) else str(val)
         return blob.payload_json
+
+    def get_metadata(self, commit_or_hash: CommitInfo | str) -> dict | None:
+        """Load the metadata dict for a commit.
+
+        Args:
+            commit_or_hash: A :class:`CommitInfo` or a commit hash string.
+
+        Returns:
+            The metadata dict, or *None* if the commit is not found or
+            has no metadata.
+        """
+        if isinstance(commit_or_hash, str):
+            row = self._commit_repo.get(commit_or_hash)
+            if row is None:
+                return None
+            return row.metadata_json
+        return commit_or_hash.metadata
 
     def show(self, commit_or_hash: CommitInfo | str) -> None:
         """Pretty-print a commit with its full content.

@@ -298,7 +298,22 @@ class DefaultContextCompiler:
                     annotation = None
 
             if annotation is not None:
-                priority_map[c.commit_hash] = annotation.priority
+                priority = annotation.priority
+                # Promote reasoning SKIP -> NORMAL when include_reasoning is set,
+                # but only for auto-generated default annotations (not explicit
+                # user annotations set via t.annotate()).
+                is_auto_default = (
+                    annotation.reason is not None
+                    and annotation.reason.startswith("Default priority for")
+                )
+                if (
+                    include_reasoning
+                    and c.content_type == "reasoning"
+                    and priority == Priority.SKIP
+                    and is_auto_default
+                ):
+                    priority = Priority.NORMAL
+                priority_map[c.commit_hash] = priority
             else:
                 default = DEFAULT_TYPE_PRIORITIES.get(
                     c.content_type, Priority.NORMAL

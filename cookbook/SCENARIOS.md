@@ -17,7 +17,8 @@ cookbook/
 │   ├── 05_log_diff_time_travel.py   # log, show, diff, checkout, reset, compile(at_commit=)
 │   ├── 06_batch_and_rollback.py     # batch() context manager, atomic operations
 │   ├── 07_branching.py              # branch, switch, delete, list, FF merge, clean merge
-│   └── 08_tool_calling.py           # agentic loop, tool_result, compress_tool_calls, query API, auto-summarization
+│   ├── 08_tool_calling.py           # agentic loop, tool_result, compress_tool_calls, query API, auto-summarization
+│   └── 09_reasoning_traces.py       # t.reasoning(), compile(include_reasoning=), pprint, LLM auto-extract
 │
 ├── patterns/                         # Tier 2: Real workflows with LLM
 │   ├── 01_chat_and_persist.py       # chat(), ChatResponse, persistence, session resume
@@ -129,6 +130,14 @@ Wrap multiple commits in `with t.batch(): ...`. If any commit fails or an except
 Part 1 (agentic loop): define tools in OpenAI function-calling format, register with `set_tools()`, run a compile-call-execute loop. The agent calls `list_directory`, `read_file`, and `search_files` to find a hidden comment. Each tool call is committed as an assistant message with `metadata.tool_calls`, each result via `tool_result()`. After the agent answers, `compress_tool_calls()` collapses the verbose intermediate messages into a concise summary while preserving the final answer. Part 2 (query API + surgical edits): `find_tool_results()`, `find_tool_calls()`, and `find_tool_turns()` inspect tool history. `tool_result(edit=hash)` surgically replaces a verbose result with a trimmed version — the original is preserved in history. Part 3 (automatic summarization): `configure_tool_summarization()` sets up a hook that auto-summarizes tool results based on per-tool instructions and token thresholds.
 
 > `set_tools()`, `tool_result()`, `ToolCall`, `compress_tool_calls()`, `find_tool_results()`, `find_tool_calls()`, `find_tool_turns()`, `tool_result(edit=)`, `configure_tool_summarization()`
+
+## 09 — Reasoning Traces
+
+**Use case:** Capture LLM chain-of-thought as first-class commits — inspectable, excludable, and recoverable — without bloating the context window.
+
+Part 1 (manual commits): `t.reasoning("Let me think...")` commits a `ReasoningContent` with SKIP priority by default. The reasoning is in `log()` and the commit chain but excluded from `compile()`. Use `format=` to track the extraction source (`"parsed"`, `"think_tags"`, `"anthropic"`, `"raw"`). Part 2 (compile control): `compile(include_reasoning=True)` promotes reasoning from SKIP to NORMAL. Explicit `annotate()` calls always take precedence — PINNED reasoning always appears, explicit SKIP always hides, regardless of the `include_reasoning` flag. Part 3 (formatting): `pprint()` renders reasoning in dim cyan across all three styles, visually distinct from dialogue. Part 4 (LLM integration): `generate()` auto-extracts reasoning from provider responses (Cerebras parsed, OpenAI o1/o3, Anthropic thinking, `<think>` tags) and auto-commits before the assistant response. `generate(reasoning=False)` skips the commit but still extracts. `Tract.open(commit_reasoning=False)` disables auto-commit globally.
+
+> `t.reasoning()`, `ReasoningContent`, `compile(include_reasoning=True)`, `generate(reasoning=False)`, `Tract.open(commit_reasoning=False)`, `ChatResponse.reasoning`, `ChatResponse.reasoning_commit`, `annotate()` overrides
 
 ---
 
