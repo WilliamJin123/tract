@@ -73,6 +73,63 @@ TOOL_SUMMARIZE_SYSTEM: str = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Tool compact -- for per-result compaction of tool-call sequences
+# ---------------------------------------------------------------------------
+
+TOOL_COMPACT_SYSTEM: str = (
+    "You are compacting tool results from an AI agent's workflow. "
+    "You will see a full tool-calling sequence with context. "
+    "Your job is to produce a concise summary for EACH tool result "
+    "that preserves key findings while eliminating verbose output.\n\n"
+    "Guidelines:\n"
+    "- Return a JSON array of strings, one summary per tool result, in order.\n"
+    "- Each summary should capture: key findings, specific values, file paths, "
+    "line numbers, error messages, and decisions made based on results.\n"
+    "- Eliminate: raw file contents, full directory listings, verbose API "
+    "responses, repeated information, formatting noise.\n"
+    "- Use the surrounding context (assistant messages, other tool results) "
+    "to inform what's important in each result.\n"
+    "- Keep each summary to 1-3 sentences unless the result contains "
+    "critical details that require more.\n"
+    "- Return ONLY the JSON array, no other text."
+)
+
+
+def build_tool_compact_prompt(
+    sequence_text: str,
+    result_count: int,
+    *,
+    target_tokens: int | None = None,
+    instructions: str | None = None,
+) -> str:
+    """Build the user prompt for per-result tool compaction.
+
+    Args:
+        sequence_text: The full tool-calling sequence with role labels.
+        result_count: Number of tool results to produce summaries for.
+        target_tokens: Optional per-result target token count.
+        instructions: Extra guidance appended to the prompt.
+
+    Returns:
+        The formatted user prompt string.
+    """
+    prompt = (
+        f"Compact the tool results in this sequence. "
+        f"Return a JSON array with exactly {result_count} "
+        f"string(s), one summary per tool result in order.\n\n"
+        f"{sequence_text}"
+    )
+
+    if target_tokens is not None:
+        prompt += f"\n\nTarget approximately {target_tokens} tokens per summary."
+
+    if instructions is not None:
+        prompt += f"\nAdditional instructions: {instructions}"
+
+    return prompt
+
+
 def build_summarize_prompt(
     messages_text: str,
     *,

@@ -58,7 +58,7 @@ from tract.models.merge import (
 )
 
 # Compression models
-from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning
+from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning, ToolCompactResult
 
 # Hook system
 from tract.hooks import Pending, PendingCompress, PendingToolResult, ValidationResult, HookRejection
@@ -250,6 +250,7 @@ __all__ = [
     # Compression models
     "CompressResult",
     "GCResult",
+    "ToolCompactResult",
     "PendingCompression",
     "ReorderWarning",
     "DEFAULT_SUMMARIZE_SYSTEM",

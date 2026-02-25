@@ -5,20 +5,20 @@ commits every step, and you compress the verbose tool output afterward.
 
 The agent's mission: find a hidden comment in THIS file by searching the
 cookbook directory. Every tool call and result is committed for full
-provenance. After the agent answers, compress the noisy intermediate
-tool interactions into a concise summary — preserving what happened
-without the raw file listings and contents.
+provenance. After the agent answers, compact the noisy intermediate
+tool results using EDIT commits — each result is shortened in-place,
+preserving commit structure, tool roles, and metadata.
 
 After compression, demonstrates the tool query API for inspecting
 tool history, tool_result(edit=) for surgical edits, and
 configure_tool_summarization() for automatic per-tool summarization.
 
 Demonstrates: set_tools(), generate() with tool_calls, tool_result(),
-              ToolCall, compress_tool_calls() for tool result cleanup,
+              ToolCall, compress_tool_calls() for EDIT-based tool compaction,
               find_tool_turns/results/calls for querying tool history,
               tool_result(edit=) for surgical result replacement,
-              configure_tool_summarization() for automatic compression,
-              agentic loop pattern, compile() before/after compression
+              configure_tool_summarization() for automatic summarization,
+              agentic loop pattern, compile() before/after compaction
 """
 
 import json
@@ -263,17 +263,16 @@ def main():
         print(f"  {len(full_ctx.messages)} messages  |  {full_ctx.token_count} tokens\n")
         full_ctx.pprint(style="chat")
 
-        # --- Compress tool interactions ---
-        # compress_tool_calls() auto-detects the final answer and
-        # preserves it verbatim while compressing the verbose tool
-        # interactions into a concise summary. It uses a tool-aware
-        # system prompt (TOOL_SUMMARIZE_SYSTEM) instead of the
-        # general-purpose default.
+        # --- Compact tool interactions ---
+        # compress_tool_calls() uses EDIT commits to shorten each tool
+        # result in-place.  The LLM sees the full tool-calling sequence
+        # for holistic context, then produces a per-result summary that
+        # is applied as an EDIT commit — preserving commit structure,
+        # tool roles, and metadata (tool_call_id, name).
 
-        all_hashes = intermediate_hashes + [answer_ci.commit_hash]
-        print(f"\n  Compressing {len(intermediate_hashes)} intermediate messages...\n")
-        compress_result = t.compress_tool_calls(
-            all_hashes,
+        print(f"\n  Compacting {len(intermediate_hashes)} intermediate messages...\n")
+        compact_result = t.compress_tool_calls(
+            intermediate_hashes,
             target_tokens=100,
             instructions=(
                 "Summarize as a single line in the format: "
@@ -282,22 +281,23 @@ def main():
             ),
         )
 
-        print(f"  CompressResult:")
-        print(f"    original_tokens:   {compress_result.original_tokens}")
-        print(f"    compressed_tokens: {compress_result.compressed_tokens}")
-        print(f"    compression_ratio: {compress_result.compression_ratio:.1%}")
-        print(f"    source_commits:    {len(compress_result.source_commits)} archived")
-        print(f"    summary_commits:   {len(compress_result.summary_commits)} created")
+        print(f"  ToolCompactResult:")
+        print(f"    original_tokens:  {compact_result.original_tokens}")
+        print(f"    compacted_tokens: {compact_result.compacted_tokens}")
+        print(f"    tool_names:       {compact_result.tool_names}")
+        print(f"    turn_count:       {compact_result.turn_count}")
+        print(f"    edit_commits:     {len(compact_result.edit_commits)} created")
+        print(f"    source_commits:   {len(compact_result.source_commits)} edited")
 
-        # --- Compressed context: tool interactions summarized ---
+        # --- Compacted context: tool results shortened in-place ---
 
         print(f"\n{'=' * 60}")
-        print("COMPRESSED CONTEXT (tool interactions summarized)")
+        print("COMPACTED CONTEXT (tool results shortened in-place)")
         print("=" * 60)
         clean_ctx = t.compile()
         saved = full_ctx.token_count - clean_ctx.token_count
         print(f"  {len(clean_ctx.messages)} messages  |  {clean_ctx.token_count} tokens")
-        print(f"  Saved {saved} tokens by compressing tool output\n")
+        print(f"  Saved {saved} tokens by compacting tool results\n")
         clean_ctx.pprint(style="chat")
 
         # --- Provenance: original tool results are still in history ---

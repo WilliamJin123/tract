@@ -261,18 +261,76 @@ def _partition_around_pinned(
     return groups
 
 
+def build_role_label(role: str, meta: dict) -> str:
+    """Build a role label enriched with tool metadata for summarization.
+
+    Used by :func:`_build_messages_text` and by
+    :meth:`Tract.compress_tool_calls` to give the LLM summarizer
+    structured context about tool interactions.
+
+    Examples::
+
+        >>> build_role_label("assistant", {})
+        '[assistant]'
+        >>> build_role_label("assistant", {"tool_calls": [{"name": "grep", "arguments": {"pattern": "error"}}]})
+        '[assistant (calls: grep(pattern=error))]'
+        >>> build_role_label("tool", {"tool_call_id": "call_abc", "name": "grep"})
+        '[tool:grep (call_id=call_abc)]'
+    """
+    # Assistant message that requested tool calls
+    tool_calls = meta.get("tool_calls")
+    if tool_calls and isinstance(tool_calls, list):
+        args_parts = []
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            tc_name = tc.get("name", "?")
+            tc_args = tc.get("arguments", {})
+            if isinstance(tc_args, dict) and tc_args:
+                brief = ", ".join(
+                    f"{k}={_truncate_value(v)}" for k, v in tc_args.items()
+                )
+                args_parts.append(f"{tc_name}({brief})")
+            else:
+                args_parts.append(tc_name)
+        if args_parts:
+            return f"[{role} (calls: {', '.join(args_parts)})]"
+
+    # Tool result message
+    tool_call_id = meta.get("tool_call_id")
+    tool_name = meta.get("name")
+    if tool_call_id or tool_name:
+        tag = f"tool:{tool_name}" if tool_name else "tool"
+        if tool_call_id:
+            return f"[{tag} (call_id={tool_call_id})]"
+        return f"[{tag}]"
+
+    return f"[{role}]"
+
+
+def _truncate_value(value: object, max_len: int = 60) -> str:
+    """Truncate a value repr for display in role labels."""
+    s = str(value)
+    if len(s) > max_len:
+        return s[: max_len - 3] + "..."
+    return s
+
+
 def _build_messages_text(
     group: list[CommitRow],
     blob_repo: BlobRepository,
 ) -> str:
     """Build text representation of a group of commits for LLM summarization.
 
+    Includes tool metadata (tool names, arguments, call IDs) when available
+    so the summarizer can produce structured, tool-aware summaries.
+
     Args:
         group: List of CommitRow in chain order.
         blob_repo: For loading blob content.
 
     Returns:
-        Formatted text with role labels.
+        Formatted text with role labels and tool metadata annotations.
 
     Raises:
         CompressionError: If all blobs in the group are unavailable.
@@ -306,7 +364,11 @@ def _build_messages_text(
             else:
                 text = json.dumps(data, sort_keys=True)
 
-        parts.append(f"[{role}]: {text}")
+        # Enrich label with tool metadata when available
+        meta = row.metadata_json or {}
+        label = build_role_label(role, meta)
+
+        parts.append(f"{label}: {text}")
 
     if unavailable_count > 0:
         logger.warning(

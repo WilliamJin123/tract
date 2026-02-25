@@ -735,32 +735,28 @@ class TestPromptVariants:
 
 
 class TestCompressToolCalls:
-    """Tests for the compress_tool_calls() convenience method."""
+    """Tests for the compress_tool_calls() EDIT-based compaction method."""
 
     def _build_tool_call_tract(self):
         """Build a tract with a realistic tool-call sequence.
 
-        Returns (tract, intermediate_hashes, answer_hash).
+        Returns (tract, tool_result_hashes, answer_hash).
         """
         t = Tract.open()
         t.system("You are a search agent.")
         t.user("Find the hidden comment.")
 
-        intermediate = []
-
         # Turn 1: assistant calls a tool
         asst1 = t.assistant(
             "",
             metadata={"tool_calls": [
-                {"id": "call_1", "type": "function",
-                 "function": {"name": "search", "arguments": '{"q": "DISCOVERY"}'}},
+                {"id": "call_1", "name": "search",
+                 "arguments": {"q": "DISCOVERY"}},
             ]},
         )
-        intermediate.append(asst1.commit_hash)
 
         # Turn 1: tool result
         tr1 = t.tool_result("call_1", "search", "file.py:36: # DISCOVERY: some text")
-        intermediate.append(tr1.commit_hash)
 
         # Turn 2: final answer (no tool_calls)
         answer = t.assistant(
@@ -768,112 +764,130 @@ class TestCompressToolCalls:
             "It means that tool calls are just commits."
         )
 
-        return t, intermediate, answer.commit_hash
+        return t, [tr1], answer.commit_hash
 
     def test_compress_tool_calls_basic(self):
-        """compress_tool_calls() compresses intermediates and preserves answer."""
-        t, intermediate, answer_hash = self._build_tool_call_tract()
-        all_hashes = intermediate + [answer_hash]
+        """compress_tool_calls() edits tool results and preserves structure."""
+        import json
+        from tract.models.compression import ToolCompactResult
 
-        mock = MockLLMClient(responses=["Tools: searched for DISCOVERY, found at line 36."])
+        t, tool_results, answer_hash = self._build_tool_call_tract()
+
+        mock = MockLLMClient(responses=[
+            json.dumps(["Found DISCOVERY comment at file.py:36."])
+        ])
         t.configure_llm(mock)
 
-        result = t.compress_tool_calls(all_hashes, target_tokens=50)
+        result = t.compress_tool_calls(target_tokens=50)
 
-        assert isinstance(result, CompressResult)
-        assert len(result.summary_commits) >= 1
+        assert isinstance(result, ToolCompactResult)
+        assert len(result.edit_commits) == 1
+        assert len(result.source_commits) == 1
+        assert result.turn_count == 1
+        assert "search" in result.tool_names
 
         # The final answer should survive in compiled context
         ctx = t.compile()
         messages = ctx.to_dicts()
-        # Last message should be the preserved answer
         assert "Found it!" in messages[-1]["content"]
 
-    def test_compress_tool_calls_uses_tool_prompt(self):
-        """compress_tool_calls() should use TOOL_SUMMARIZE_SYSTEM by default."""
-        from tract.prompts.summarize import TOOL_SUMMARIZE_SYSTEM
+        # Tool result should be the compacted version
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 1
+        assert "file.py:36" in tool_msgs[0]["content"]
 
-        t, intermediate, answer_hash = self._build_tool_call_tract()
-        all_hashes = intermediate + [answer_hash]
+        # tool_call_id and name metadata should be preserved
+        assert tool_msgs[0].get("tool_call_id") == "call_1"
 
-        mock = MockLLMClient(responses=["Summary of tool calls."])
+    def test_compress_tool_calls_uses_compact_prompt(self):
+        """compress_tool_calls() should use TOOL_COMPACT_SYSTEM by default."""
+        import json
+        from tract.prompts.summarize import TOOL_COMPACT_SYSTEM
+
+        t, _, _ = self._build_tool_call_tract()
+
+        mock = MockLLMClient(responses=[json.dumps(["Summary."])])
         t.configure_llm(mock)
 
-        t.compress_tool_calls(all_hashes)
+        t.compress_tool_calls()
 
-        # The mock captures the messages sent to LLM — the system message
-        # should be TOOL_SUMMARIZE_SYSTEM
         assert mock.last_messages is not None
         system_msg = mock.last_messages[0]
         assert system_msg["role"] == "system"
-        assert system_msg["content"] == TOOL_SUMMARIZE_SYSTEM
+        assert system_msg["content"] == TOOL_COMPACT_SYSTEM
 
     def test_compress_tool_calls_custom_system_prompt(self):
-        """system_prompt= overrides the default tool prompt."""
-        t, intermediate, answer_hash = self._build_tool_call_tract()
-        all_hashes = intermediate + [answer_hash]
+        """system_prompt= overrides the default compact prompt."""
+        import json
 
-        mock = MockLLMClient(responses=["Custom summary."])
+        t, _, _ = self._build_tool_call_tract()
+
+        mock = MockLLMClient(responses=[json.dumps(["Custom."]) ])
         t.configure_llm(mock)
 
-        custom = "You are a custom summarizer."
-        t.compress_tool_calls(all_hashes, system_prompt=custom)
+        custom = "You are a custom compactor."
+        t.compress_tool_calls(system_prompt=custom)
 
         system_msg = mock.last_messages[0]
         assert system_msg["content"] == custom
 
-    def test_compress_tool_calls_preserve_false(self):
-        """preserve_answer=False compresses everything including the answer."""
-        t, intermediate, answer_hash = self._build_tool_call_tract()
-        all_hashes = intermediate + [answer_hash]
+    def test_compress_tool_calls_preserves_metadata(self):
+        """After compaction, tool_call_id and name survive on edited commits."""
+        import json
 
-        mock = MockLLMClient(responses=["Everything compressed."])
+        t, tool_results, _ = self._build_tool_call_tract()
+
+        mock = MockLLMClient(responses=[json.dumps(["Compacted result."])])
         t.configure_llm(mock)
 
-        result = t.compress_tool_calls(all_hashes, preserve_answer=False)
+        result = t.compress_tool_calls()
 
-        assert isinstance(result, CompressResult)
-        # All commits should be compressed (none preserved)
-        ctx = t.compile()
-        messages = ctx.to_dicts()
-        # The answer text should NOT appear verbatim
-        assert not any("Found it!" in m.get("content", "") for m in messages)
+        # Check the edit commit preserves metadata
+        edited_ci = t.get_commit(result.edit_commits[0])
+        assert edited_ci is not None
+        meta = edited_ci.metadata or {}
+        assert meta.get("tool_call_id") == "call_1"
+        assert meta.get("name") == "search"
+        assert edited_ci.operation.value == "edit"
 
-    def test_compress_tool_calls_review_mode(self):
-        """review=True returns PendingCompress instead of auto-committing."""
-        t, intermediate, answer_hash = self._build_tool_call_tract()
-        all_hashes = intermediate + [answer_hash]
+    def test_compress_tool_calls_find_tool_turns_still_works(self):
+        """After compaction, find_tool_turns() still finds the turns."""
+        import json
 
-        mock = MockLLMClient(responses=["Summary."])
+        t, _, _ = self._build_tool_call_tract()
+
+        mock = MockLLMClient(responses=[json.dumps(["Compacted."])])
         t.configure_llm(mock)
 
-        pending = t.compress_tool_calls(all_hashes, review=True)
-        assert isinstance(pending, PendingCompress)
+        t.compress_tool_calls()
 
-    def test_compress_tool_calls_only_tool_messages(self):
-        """When all commits are tool-related, preserve_answer finds nothing to preserve."""
+        # Tool turns should still be discoverable
+        turns = t.find_tool_turns()
+        assert len(turns) >= 1
+
+    def test_compress_tool_calls_only_tool_results(self):
+        """Compaction works when all commits are tool-related (no final answer)."""
+        import json
+
         t = Tract.open()
         t.system("Agent.")
         t.user("Do something.")
 
-        # Only tool-call + result, no final answer
-        asst = t.assistant(
+        t.assistant(
             "",
             metadata={"tool_calls": [
-                {"id": "call_1", "type": "function",
-                 "function": {"name": "fn", "arguments": "{}"}},
+                {"id": "call_1", "name": "fn", "arguments": {}},
             ]},
         )
-        tr = t.tool_result("call_1", "fn", "result data")
+        t.tool_result("call_1", "fn", "result data")
 
-        mock = MockLLMClient(responses=["Tool summary."])
+        mock = MockLLMClient(responses=[json.dumps(["Compacted result."])])
         t.configure_llm(mock)
 
-        # Should still work — preserve=None since no non-tool commit found
-        result = t.compress_tool_calls(
-            [asst.commit_hash, tr.commit_hash],
-        )
-        assert isinstance(result, CompressResult)
+        from tract.models.compression import ToolCompactResult
+        result = t.compress_tool_calls()
+        assert isinstance(result, ToolCompactResult)
+        assert result.turn_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1152,50 +1166,62 @@ class TestCompressToolCallsAutoDetect:
 
     def test_auto_detect_all_turns(self):
         """compress_tool_calls() without commits auto-detects all tool turns."""
+        import json
+        from tract.models.compression import ToolCompactResult
+
         with Tract.open() as t:
-            t._llm_client = MockLLMClient(["Tool summary."])
+            t._llm_client = MockLLMClient([json.dumps(["Tool summary."])])
             t.system("test")
             # Simulate a tool-calling turn
             t.assistant(
                 "",
                 metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
             )
-            t.tool_result("c1", "grep", "verbose grep output " * 20)
+            tr = t.tool_result("c1", "grep", "verbose grep output " * 20)
             t.assistant("The answer is 42.")
             # Auto-detect: no commits arg
             result = t.compress_tool_calls()
-            assert result.source_commits  # Some commits were compressed
+            assert isinstance(result, ToolCompactResult)
+            assert result.source_commits == (tr.commit_hash,)
+            assert len(result.edit_commits) == 1
+            assert result.turn_count == 1
 
     def test_auto_detect_by_name(self):
-        """name= filter only selects matching tool turns for compression."""
+        """name= filter only selects matching tool turns for compaction."""
+        import json
+        from tract.models.compression import ToolCompactResult
+
         with Tract.open() as t:
-            t._llm_client = MockLLMClient(["Grep summary."])
+            t._llm_client = MockLLMClient([json.dumps(["Grep summary."])])
             t.system("test")
             # grep turn
-            grep_asst = t.assistant(
+            t.assistant(
                 "",
                 metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
             )
             grep_result = t.tool_result("c1", "grep", "verbose grep output " * 20)
             # read_file turn
-            read_asst = t.assistant(
+            t.assistant(
                 "",
                 metadata={"tool_calls": [{"id": "c2", "name": "read_file", "arguments": {}}]},
             )
             read_result = t.tool_result("c2", "read_file", "file content " * 20)
-            # Only compress grep turns
+            # Only compact grep turns
             result = t.compress_tool_calls(name="grep")
-            # Source commits should only contain the grep turn hashes
-            grep_hashes = {grep_asst.commit_hash, grep_result.commit_hash}
-            assert set(result.source_commits) == grep_hashes
-            # read_file hashes should NOT be in source commits
-            assert read_asst.commit_hash not in result.source_commits
+            assert isinstance(result, ToolCompactResult)
+            # source_commits should only contain the grep tool result hash
+            assert result.source_commits == (grep_result.commit_hash,)
+            assert "grep" in result.tool_names
+            # read_file hash should NOT be in source commits
             assert read_result.commit_hash not in result.source_commits
 
     def test_explicit_commits_still_works(self):
-        """Passing explicit commits= preserves original behavior."""
+        """Passing explicit commits= scopes compaction to matching turns."""
+        import json
+        from tract.models.compression import ToolCompactResult
+
         with Tract.open() as t:
-            t._llm_client = MockLLMClient(["Compressed."])
+            t._llm_client = MockLLMClient([json.dumps(["Compacted."])])
             t.system("test")
             asst = t.assistant(
                 "",
@@ -1206,4 +1232,6 @@ class TestCompressToolCallsAutoDetect:
             result = t.compress_tool_calls(
                 [asst.commit_hash, tr.commit_hash, answer.commit_hash],
             )
-            assert result.source_commits
+            assert isinstance(result, ToolCompactResult)
+            assert result.source_commits == (tr.commit_hash,)
+            assert len(result.edit_commits) == 1

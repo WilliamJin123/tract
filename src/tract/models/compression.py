@@ -34,6 +34,34 @@ class CompressResult:
     new_head: str
 
 
+@dataclass(frozen=True)
+class ToolCompactResult:
+    """Result of a tool-call compaction operation.
+
+    Unlike :class:`CompressResult` (which collapses commits into summaries),
+    tool compaction uses EDIT commits to shorten each tool result in-place,
+    preserving commit structure, roles, and metadata.
+    """
+
+    edit_commits: tuple[str, ...]
+    """Hashes of the new EDIT commits (one per compacted result)."""
+
+    source_commits: tuple[str, ...]
+    """Hashes of the original tool result commits that were compacted."""
+
+    original_tokens: int
+    """Total tokens of the original tool results before compaction."""
+
+    compacted_tokens: int
+    """Total tokens of the compacted tool results."""
+
+    tool_names: tuple[str, ...]
+    """Unique tool names involved in the compacted turns."""
+
+    turn_count: int
+    """Number of tool turns that were compacted."""
+
+
 @dataclass
 class PendingCompression:
     """A compression that has been planned but not yet committed.
