@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from tract.hooks.gc import PendingGC
     from tract.hooks.merge import PendingMerge
     from tract.hooks.rebase import PendingRebase
+    from tract.hooks.tool_result import PendingToolResult
     from tract.models.branch import BranchInfo
     from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning
     from tract.models.merge import ImportResult, MergeResult, RebaseResult
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
     from tract.orchestrator.loop import Orchestrator
     from tract.orchestrator.models import OrchestratorResult
     from tract.policy.evaluator import PolicyEvaluator
+    from tract.models.config import ToolSummarizationConfig
     from tract.storage.schema import CommitRow
     from tract.storage.sqlite import SqlitePolicyRepository
 
@@ -182,6 +184,7 @@ class Tract:
         self._active_tools: list[dict] | None = None
         self._hooks: dict[str, Callable] = {}
         self._in_hook: bool = False
+        self._tool_summarization_config: ToolSummarizationConfig | None = None
 
     @classmethod
     def open(
@@ -956,34 +959,299 @@ class Tract:
         name: str,
         content: str,
         *,
+        edit: str | None = None,
         message: str | None = None,
         metadata: dict | None = None,
-    ) -> CommitInfo:
+        review: bool = False,
+    ) -> CommitInfo | PendingToolResult:
         """Commit a tool execution result.
 
         Shorthand for committing a tool result message in OpenAI-compatible
         format.  The ``tool_call_id`` links this result back to the
         :class:`ToolCall` that requested it.
 
+        Three-tier routing determines what happens:
+        1. ``review=True``: Returns :class:`PendingToolResult` to the caller.
+        2. Hook registered (``t.on("tool_result", handler)``): Fires handler.
+        3. No hook: Commits directly (original behavior).
+
+        When ``edit=`` is set, the hook is bypassed (the user already decided
+        what to write).
+
         Args:
             tool_call_id: The ID from the originating ToolCall.
             name: The function/tool name.
             content: The result text.
+            edit: If set, the commit hash of a previous tool result to replace.
+                Uses EDIT operation instead of APPEND. The original is preserved
+                in history for provenance. Bypasses the hook system.
             message: Optional commit message (auto-generated if omitted).
             metadata: Optional extra metadata (tool_call_id and name are
                 added automatically).
+            review: If True, return :class:`PendingToolResult` for manual
+                review instead of auto-committing.
 
         Returns:
-            :class:`CommitInfo` for the new commit.
+            :class:`CommitInfo` (if committed) or :class:`PendingToolResult`
+            (if ``review=True`` or hook leaves it unresolved).
         """
+        from tract.hooks.tool_result import PendingToolResult
         from tract.models.content import DialogueContent
 
-        meta = {**(metadata or {}), "tool_call_id": tool_call_id, "name": name}
-        return self.commit(
-            DialogueContent(role="tool", text=content),
-            message=message or f"tool result: {name}",
-            metadata=meta,
+        # If this is an edit, bypass the hook (user already decided)
+        if edit is not None:
+            meta = {**(metadata or {}), "tool_call_id": tool_call_id, "name": name}
+            return self.commit(
+                DialogueContent(role="tool", text=content),
+                operation=CommitOperation.EDIT,
+                edit_target=edit,
+                message=message or f"tool result: {name}",
+                metadata=meta,
+            )
+
+        # Build the execute function for the pending
+        def _execute(pending: PendingToolResult) -> CommitInfo:
+            meta = {**(metadata or {}), "tool_call_id": pending.tool_call_id, "name": pending.tool_name}
+            if pending.original_content is not None:
+                meta["summarized_from_length"] = len(pending.original_content)
+            return self.commit(
+                DialogueContent(role="tool", text=pending.content),
+                message=message or f"tool result: {pending.tool_name}",
+                metadata=meta,
+            )
+
+        # Create the pending
+        pending = PendingToolResult(
+            operation="tool_result",
+            tract=self,
+            tool_call_id=tool_call_id,
+            tool_name=name,
+            content=content,
+            token_count=self._token_counter.count_text(content),
         )
+        pending._execute_fn = _execute
+
+        # Three-tier routing: review > hook > auto-approve
+        if review:
+            return pending
+
+        has_hook = "tool_result" in self._hooks or "*" in self._hooks
+        if has_hook and not self._in_hook:
+            self._fire_hook(pending)
+            if pending.status == "approved":
+                return pending._result
+            elif pending.status == "rejected":
+                return pending
+            return pending  # Unresolved
+
+        # No hook: auto-commit
+        pending.approve()
+        return pending._result
+
+    def configure_tool_summarization(
+        self,
+        instructions: dict[str, str] | None = None,
+        *,
+        auto_threshold: int | None = None,
+        default_instructions: str | None = None,
+    ) -> None:
+        """Configure automatic tool result summarization.
+
+        Sets up a ``tool_result`` hook that summarizes results based on
+        per-tool instructions and/or token count thresholds. This is
+        syntactic sugar over writing a hook handler manually.
+
+        Args:
+            instructions: Per-tool summarization instructions. Keys are
+                tool names, values are instruction strings passed to the
+                summarization LLM. For example::
+
+                    {"grep": "summarize to matching filenames only",
+                     "bash": "preserve exit code and last 10 lines"}
+
+            auto_threshold: Token count threshold. Tool results exceeding
+                this count are automatically summarized (using per-tool
+                instructions if available, or ``default_instructions``).
+                Results under the threshold pass through unchanged.
+            default_instructions: Fallback instructions for tools not
+                listed in ``instructions`` but over the threshold.
+
+        Example::
+
+            t.configure_tool_summarization(
+                instructions={
+                    "grep": "summarize to filenames and line numbers",
+                    "read_file": "keep first 20 lines, summarize rest",
+                },
+                auto_threshold=500,
+            )
+        """
+        from tract.models.config import ToolSummarizationConfig
+
+        self._tool_summarization_config = ToolSummarizationConfig(
+            instructions=instructions or {},
+            auto_threshold=auto_threshold,
+            default_instructions=default_instructions,
+        )
+
+        def _auto_handler(pending: PendingToolResult) -> None:
+            config = self._tool_summarization_config
+            if config is None:
+                pending.approve()
+                return
+
+            tool_instructions = config.instructions.get(pending.tool_name)
+
+            if tool_instructions:
+                pending.summarize(instructions=tool_instructions)
+                pending.approve()
+            elif config.auto_threshold and pending.token_count > config.auto_threshold:
+                pending.summarize(instructions=config.default_instructions)
+                pending.approve()
+            else:
+                pending.approve()
+
+        self.on("tool_result", _auto_handler)
+
+    # ------------------------------------------------------------------
+    # Tool query API
+    # ------------------------------------------------------------------
+
+    def find_tool_results(
+        self,
+        name: str | None = None,
+        after: str | None = None,
+    ) -> list[CommitInfo]:
+        """Find tool result commits on the current branch.
+
+        Walks the commit history and returns commits where
+        ``metadata["tool_call_id"]`` exists (indicating a tool result).
+
+        Args:
+            name: If set, only return results where ``metadata["name"]``
+                matches this value.
+            after: If set, only return results that come after this commit
+                hash in history (exclusive). "After" means more recent.
+
+        Returns:
+            List of :class:`CommitInfo` for matching tool result commits,
+            in chronological order (oldest first).
+        """
+        entries = self.log(limit=10000)
+        entries.reverse()  # oldest-first
+
+        results = []
+        after_found = after is None  # if no after filter, include all
+
+        for ci in entries:
+            if not after_found:
+                if ci.commit_hash == after:
+                    after_found = True
+                continue
+
+            meta = ci.metadata or {}
+            if "tool_call_id" not in meta:
+                continue
+            if name is not None and meta.get("name") != name:
+                continue
+            results.append(ci)
+
+        return results
+
+    def find_tool_calls(
+        self,
+        name: str | None = None,
+    ) -> list[CommitInfo]:
+        """Find assistant commits that requested tool calls.
+
+        Walks the commit history and returns commits where
+        ``metadata["tool_calls"]`` exists (indicating the assistant
+        requested one or more tool calls).
+
+        Args:
+            name: If set, only return commits where at least one tool
+                call in ``metadata["tool_calls"]`` has a matching name.
+
+        Returns:
+            List of :class:`CommitInfo` for matching assistant commits,
+            in chronological order (oldest first).
+        """
+        entries = self.log(limit=10000)
+        entries.reverse()  # oldest-first
+
+        results = []
+        for ci in entries:
+            meta = ci.metadata or {}
+            tool_calls = meta.get("tool_calls")
+            if not tool_calls:
+                continue
+            if name is not None:
+                # Check if any tool call matches the name
+                names = [tc.get("name", "") for tc in tool_calls]
+                if name not in names:
+                    continue
+            results.append(ci)
+
+        return results
+
+    def find_tool_turns(
+        self,
+        name: str | None = None,
+    ) -> list["ToolTurn"]:
+        """Find paired tool-call + tool-result commit groups.
+
+        Walks the branch, matches tool results to their originating
+        assistant tool-call message by ``tool_call_id``. Returns
+        :class:`ToolTurn` instances with the call and its result(s)
+        grouped together.
+
+        Args:
+            name: If set, only return turns where at least one tool
+                in the turn matches this name.
+
+        Returns:
+            List of :class:`ToolTurn` in chronological order.
+        """
+        from tract.protocols import ToolTurn
+
+        entries = self.log(limit=10000)
+        entries.reverse()  # oldest-first
+
+        # Build index: tool_call_id -> list of result CommitInfos
+        result_index: dict[str, list[CommitInfo]] = {}
+        for ci in entries:
+            meta = ci.metadata or {}
+            tcid = meta.get("tool_call_id")
+            if tcid:
+                result_index.setdefault(tcid, []).append(ci)
+
+        # Walk tool-call commits and pair with their results
+        turns = []
+        for ci in entries:
+            meta = ci.metadata or {}
+            tool_calls_data = meta.get("tool_calls")
+            if not tool_calls_data:
+                continue
+
+            # Gather results for this tool call commit
+            all_results = []
+            turn_names = []
+            for tc in tool_calls_data:
+                tc_id = tc.get("id", "")
+                tc_name = tc.get("name", "")
+                turn_names.append(tc_name)
+                all_results.extend(result_index.get(tc_id, []))
+
+            if name is not None and name not in turn_names:
+                continue
+
+            turns.append(ToolTurn(
+                call=ci,
+                results=all_results,
+                tool_names=turn_names,
+            ))
+
+        return turns
 
     # ------------------------------------------------------------------
     # Conversation layer (chat/generate)
@@ -3074,11 +3342,14 @@ class Tract:
             system_prompt: Completely replaces the **system message** of the
                 summarization LLM call (``DEFAULT_SUMMARIZE_SYSTEM``). This
                 controls the LLM's persona and behavioral guidelines. When
-                ``None``, the built-in system prompt is used. To extend rather
-                than replace, import the default and concatenate::
+                ``None``, the built-in neutral default is used. Built-in
+                variants for common use cases::
 
-                    from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM
-                    t.compress(..., system_prompt=DEFAULT_SUMMARIZE_SYSTEM + "\\nAlso use bullet points.")
+                    from tract.prompts.summarize import (
+                        DEFAULT_SUMMARIZE_SYSTEM,        # neutral (default)
+                        CONVERSATION_SUMMARIZE_SYSTEM,   # full-conversation recap
+                        TOOL_SUMMARIZE_SYSTEM,           # tool-call sequences
+                    )
 
                 Stored in provenance for auditability.
             model: Override model for LLM summarization.
@@ -3279,6 +3550,105 @@ class Tract:
             CompressResult with committed compression details.
         """
         return self._finalize_compression(pending)
+
+    def compress_tool_calls(
+        self,
+        commits: list[str] | None = None,
+        *,
+        name: str | None = None,
+        preserve_answer: bool = True,
+        target_tokens: int | None = None,
+        instructions: str | None = None,
+        system_prompt: str | None = None,
+        review: bool = False,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        llm_config: LLMConfig | None = None,
+        triggered_by: str | None = None,
+    ) -> CompressResult | PendingCompress:
+        """Compress tool-call sequences while preserving the final answer.
+
+        A convenience wrapper around :meth:`compress` tuned for the common
+        pattern of an agentic tool-calling loop: one or more rounds of
+        assistant tool-call messages and tool results, followed by a final
+        assistant answer.  The verbose intermediate messages are compressed
+        into a concise summary of what tools were called and what they found,
+        while the final answer is preserved verbatim.
+
+        Uses :data:`TOOL_SUMMARIZE_SYSTEM` as the default system prompt
+        (instead of the general-purpose ``DEFAULT_SUMMARIZE_SYSTEM``).
+
+        Args:
+            commits: Commit hashes covering the tool-calling sequence.
+                When ``None`` (default), uses :meth:`find_tool_turns` to
+                auto-detect all tool-call commits on the current branch.
+                When explicit, should include tool-call assistant messages,
+                tool results, and (when ``preserve_answer=True``) the final
+                assistant answer.
+            name: Filter to compress only tool turns involving this tool
+                name.  Only used when ``commits`` is ``None`` (auto-detect
+                mode).  Passed to :meth:`find_tool_turns`.
+            preserve_answer: When True (default), the last non-tool-call
+                assistant commit in ``commits`` is automatically preserved
+                verbatim.  Set to False if all commits should be compressed.
+            target_tokens: Target token count for the compressed summary.
+            instructions: Extra guidance appended to the summarization
+                prompt (same as ``compress(instructions=)``).
+            system_prompt: Override the tool-call system prompt.  When None,
+                uses ``TOOL_SUMMARIZE_SYSTEM``.
+            review: If True, return :class:`PendingCompress` for manual
+                review instead of auto-committing.
+            model: Override model for LLM summarization.
+            temperature: Override temperature for LLM summarization.
+            max_tokens: Override max_tokens for LLM summarization.
+            llm_config: Full LLMConfig override for this call.
+            triggered_by: Optional provenance string.
+
+        Returns:
+            :class:`CompressResult` (if auto-approved) or
+            :class:`PendingCompress` (if ``review=True``).
+
+        Raises:
+            CompressionError: If no commits found or other compression
+                errors.
+        """
+        from tract.prompts.summarize import TOOL_SUMMARIZE_SYSTEM
+
+        # Auto-detect tool commits when no explicit list given
+        if commits is None:
+            turns = self.find_tool_turns(name=name)
+            commits = [h for turn in turns for h in turn.all_hashes]
+
+        # Auto-detect the final answer to preserve
+        preserve: list[str] | None = None
+        if preserve_answer and commits:
+            # Walk commits in reverse to find the last assistant message
+            # that is NOT a tool-call message (i.e. the final answer)
+            for h in reversed(commits):
+                ci = self.get_commit(h)
+                if ci is None:
+                    continue
+                meta = ci.metadata or {}
+                is_tool_call = "tool_calls" in meta
+                is_tool_result = "tool_call_id" in meta
+                if not is_tool_call and not is_tool_result:
+                    preserve = [h]
+                    break
+
+        return self.compress(
+            commits=commits,
+            preserve=preserve,
+            target_tokens=target_tokens,
+            instructions=instructions,
+            system_prompt=system_prompt if system_prompt is not None else TOOL_SUMMARIZE_SYSTEM,
+            review=review,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            llm_config=llm_config,
+            triggered_by=triggered_by,
+        )
 
     def gc(
         self,
@@ -3971,14 +4341,14 @@ class Tract:
     # Hook system
     # ------------------------------------------------------------------
 
-    _HOOKABLE_OPS: set[str] = {"compress", "gc", "rebase", "merge", "policy"}
+    _HOOKABLE_OPS: set[str] = {"compress", "gc", "rebase", "merge", "policy", "tool_result"}
 
     def on(self, operation: str, handler: Callable) -> None:
         """Register a hook handler for an operation.
 
         Args:
             operation: Operation name ("compress", "gc", "rebase", "merge",
-                "policy", or "*" for catch-all).
+                "policy", "tool_result", or "*" for catch-all).
             handler: Callable that takes a Pending subclass. Handler calls
                 methods on the Pending (approve, reject, edit_summary, etc.).
 

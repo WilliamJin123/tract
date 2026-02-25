@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import enum
 import types
-from dataclasses import dataclass, fields as dc_fields
+from dataclasses import dataclass, field, fields as dc_fields
 from typing import Callable, Literal, Optional
 
 # Supported comparison operators for query_by_config.
@@ -227,3 +227,24 @@ class OperationClients:
     merge: object | None = None
     compress: object | None = None
     orchestrate: object | None = None
+
+
+@dataclass(frozen=True)
+class ToolSummarizationConfig:
+    """Configuration for automatic tool result summarization.
+
+    Used by :meth:`Tract.configure_tool_summarization` to set up
+    a tool_result hook that summarizes results based on per-tool
+    instructions and/or token count thresholds.
+
+    Attributes:
+        instructions: Per-tool summarization instructions. Keys are tool
+            names, values are instruction strings passed to the LLM.
+        auto_threshold: Token count threshold. Results exceeding this
+            are automatically summarized.
+        default_instructions: Fallback instructions for tools not in
+            the ``instructions`` dict but over the threshold.
+    """
+    instructions: dict[str, str] = field(default_factory=dict)
+    auto_threshold: int | None = None
+    default_instructions: str | None = None

@@ -306,6 +306,30 @@ class ChatResponse:
         pprint_chat_response(self, max_chars=max_chars)
 
 
+@dataclass(frozen=True)
+class ToolTurn:
+    """A paired tool-call assistant message and its tool result(s)."""
+
+    call: CommitInfo
+    results: list[CommitInfo]
+    tool_names: list[str]
+
+    @property
+    def all_hashes(self) -> list[str]:
+        """All commit hashes in this turn (call + results)."""
+        return [self.call.commit_hash] + [r.commit_hash for r in self.results]
+
+    @property
+    def result_hashes(self) -> list[str]:
+        """Just the result commit hashes."""
+        return [r.commit_hash for r in self.results]
+
+    @property
+    def total_tokens(self) -> int:
+        """Total tokens across call and all results."""
+        return self.call.token_count + sum(r.token_count for r in self.results)
+
+
 @runtime_checkable
 class TokenCounter(Protocol):
     """Protocol for pluggable token counting."""

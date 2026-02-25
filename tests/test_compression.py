@@ -17,6 +17,7 @@ from tract import (
     InstructionContent,
     PendingCompress,
     PendingCompression,
+    PendingToolResult,
     Priority,
     Tract,
     TraceError,
@@ -681,3 +682,528 @@ class TestStackedCompression:
         # Approve should fail because HEAD changed
         with pytest.raises(CompressionError, match="HEAD changed"):
             pending.approve()
+
+
+# ===========================================================================
+# 7. Prompt variants tests
+# ===========================================================================
+
+
+class TestPromptVariants:
+    """Tests for summarization system prompt variants."""
+
+    def test_default_prompt_is_neutral(self):
+        """DEFAULT_SUMMARIZE_SYSTEM should not mention 'conversation history'."""
+        from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM
+
+        assert isinstance(DEFAULT_SUMMARIZE_SYSTEM, str)
+        assert len(DEFAULT_SUMMARIZE_SYSTEM) > 50
+        assert "Previously in this conversation" not in DEFAULT_SUMMARIZE_SYSTEM
+
+    def test_conversation_prompt_has_prefix(self):
+        """CONVERSATION_SUMMARIZE_SYSTEM should use 'Previously in this conversation:'."""
+        from tract.prompts.summarize import CONVERSATION_SUMMARIZE_SYSTEM
+
+        assert "Previously in this conversation:" in CONVERSATION_SUMMARIZE_SYSTEM
+        assert "conversation history" in CONVERSATION_SUMMARIZE_SYSTEM
+
+    def test_tool_prompt_mentions_tool_calls(self):
+        """TOOL_SUMMARIZE_SYSTEM should be tuned for tool-call compression."""
+        from tract.prompts.summarize import TOOL_SUMMARIZE_SYSTEM
+
+        assert "tool" in TOOL_SUMMARIZE_SYSTEM.lower()
+        assert "outcomes" in TOOL_SUMMARIZE_SYSTEM.lower()
+
+    def test_all_prompts_exportable(self):
+        """All prompt variants should be importable from tract."""
+        from tract import (
+            DEFAULT_SUMMARIZE_SYSTEM,
+            CONVERSATION_SUMMARIZE_SYSTEM,
+            TOOL_SUMMARIZE_SYSTEM,
+        )
+
+        assert all(isinstance(p, str) for p in [
+            DEFAULT_SUMMARIZE_SYSTEM,
+            CONVERSATION_SUMMARIZE_SYSTEM,
+            TOOL_SUMMARIZE_SYSTEM,
+        ])
+
+
+# ===========================================================================
+# 8. compress_tool_calls() tests
+# ===========================================================================
+
+
+class TestCompressToolCalls:
+    """Tests for the compress_tool_calls() convenience method."""
+
+    def _build_tool_call_tract(self):
+        """Build a tract with a realistic tool-call sequence.
+
+        Returns (tract, intermediate_hashes, answer_hash).
+        """
+        t = Tract.open()
+        t.system("You are a search agent.")
+        t.user("Find the hidden comment.")
+
+        intermediate = []
+
+        # Turn 1: assistant calls a tool
+        asst1 = t.assistant(
+            "",
+            metadata={"tool_calls": [
+                {"id": "call_1", "type": "function",
+                 "function": {"name": "search", "arguments": '{"q": "DISCOVERY"}'}},
+            ]},
+        )
+        intermediate.append(asst1.commit_hash)
+
+        # Turn 1: tool result
+        tr1 = t.tool_result("call_1", "search", "file.py:36: # DISCOVERY: some text")
+        intermediate.append(tr1.commit_hash)
+
+        # Turn 2: final answer (no tool_calls)
+        answer = t.assistant(
+            "Found it! The comment is at file.py line 36: '# DISCOVERY: some text'. "
+            "It means that tool calls are just commits."
+        )
+
+        return t, intermediate, answer.commit_hash
+
+    def test_compress_tool_calls_basic(self):
+        """compress_tool_calls() compresses intermediates and preserves answer."""
+        t, intermediate, answer_hash = self._build_tool_call_tract()
+        all_hashes = intermediate + [answer_hash]
+
+        mock = MockLLMClient(responses=["Tools: searched for DISCOVERY, found at line 36."])
+        t.configure_llm(mock)
+
+        result = t.compress_tool_calls(all_hashes, target_tokens=50)
+
+        assert isinstance(result, CompressResult)
+        assert len(result.summary_commits) >= 1
+
+        # The final answer should survive in compiled context
+        ctx = t.compile()
+        messages = ctx.to_dicts()
+        # Last message should be the preserved answer
+        assert "Found it!" in messages[-1]["content"]
+
+    def test_compress_tool_calls_uses_tool_prompt(self):
+        """compress_tool_calls() should use TOOL_SUMMARIZE_SYSTEM by default."""
+        from tract.prompts.summarize import TOOL_SUMMARIZE_SYSTEM
+
+        t, intermediate, answer_hash = self._build_tool_call_tract()
+        all_hashes = intermediate + [answer_hash]
+
+        mock = MockLLMClient(responses=["Summary of tool calls."])
+        t.configure_llm(mock)
+
+        t.compress_tool_calls(all_hashes)
+
+        # The mock captures the messages sent to LLM — the system message
+        # should be TOOL_SUMMARIZE_SYSTEM
+        assert mock.last_messages is not None
+        system_msg = mock.last_messages[0]
+        assert system_msg["role"] == "system"
+        assert system_msg["content"] == TOOL_SUMMARIZE_SYSTEM
+
+    def test_compress_tool_calls_custom_system_prompt(self):
+        """system_prompt= overrides the default tool prompt."""
+        t, intermediate, answer_hash = self._build_tool_call_tract()
+        all_hashes = intermediate + [answer_hash]
+
+        mock = MockLLMClient(responses=["Custom summary."])
+        t.configure_llm(mock)
+
+        custom = "You are a custom summarizer."
+        t.compress_tool_calls(all_hashes, system_prompt=custom)
+
+        system_msg = mock.last_messages[0]
+        assert system_msg["content"] == custom
+
+    def test_compress_tool_calls_preserve_false(self):
+        """preserve_answer=False compresses everything including the answer."""
+        t, intermediate, answer_hash = self._build_tool_call_tract()
+        all_hashes = intermediate + [answer_hash]
+
+        mock = MockLLMClient(responses=["Everything compressed."])
+        t.configure_llm(mock)
+
+        result = t.compress_tool_calls(all_hashes, preserve_answer=False)
+
+        assert isinstance(result, CompressResult)
+        # All commits should be compressed (none preserved)
+        ctx = t.compile()
+        messages = ctx.to_dicts()
+        # The answer text should NOT appear verbatim
+        assert not any("Found it!" in m.get("content", "") for m in messages)
+
+    def test_compress_tool_calls_review_mode(self):
+        """review=True returns PendingCompress instead of auto-committing."""
+        t, intermediate, answer_hash = self._build_tool_call_tract()
+        all_hashes = intermediate + [answer_hash]
+
+        mock = MockLLMClient(responses=["Summary."])
+        t.configure_llm(mock)
+
+        pending = t.compress_tool_calls(all_hashes, review=True)
+        assert isinstance(pending, PendingCompress)
+
+    def test_compress_tool_calls_only_tool_messages(self):
+        """When all commits are tool-related, preserve_answer finds nothing to preserve."""
+        t = Tract.open()
+        t.system("Agent.")
+        t.user("Do something.")
+
+        # Only tool-call + result, no final answer
+        asst = t.assistant(
+            "",
+            metadata={"tool_calls": [
+                {"id": "call_1", "type": "function",
+                 "function": {"name": "fn", "arguments": "{}"}},
+            ]},
+        )
+        tr = t.tool_result("call_1", "fn", "result data")
+
+        mock = MockLLMClient(responses=["Tool summary."])
+        t.configure_llm(mock)
+
+        # Should still work — preserve=None since no non-tool commit found
+        result = t.compress_tool_calls(
+            [asst.commit_hash, tr.commit_hash],
+        )
+        assert isinstance(result, CompressResult)
+
+
+# ---------------------------------------------------------------------------
+# tool_result(edit=) parameter
+# ---------------------------------------------------------------------------
+
+
+class TestToolResultEdit:
+    """Tests for tool_result(edit=) parameter."""
+
+    def test_tool_result_edit_basic(self):
+        """Edit replaces content, original in history."""
+        with Tract.open() as t:
+            original = t.tool_result("call_1", "grep", "200 lines of verbose output")
+            edited = t.tool_result(
+                "call_1", "grep", "config.py:42: DATABASE_URL=...",
+                edit=original.commit_hash,
+            )
+            assert edited.commit_hash != original.commit_hash
+            # Compiled context shows the edited version
+            ctx = t.compile()
+            tool_msgs = [m for m in ctx.messages if m.role == "tool"]
+            assert len(tool_msgs) == 1
+            assert "DATABASE_URL" in tool_msgs[0].content
+
+    def test_tool_result_edit_preserves_metadata(self):
+        """tool_call_id and name survive in the edit."""
+        with Tract.open() as t:
+            original = t.tool_result("call_1", "grep", "verbose output")
+            edited = t.tool_result(
+                "call_1", "grep", "concise",
+                edit=original.commit_hash,
+            )
+            ci = t.get_commit(edited.commit_hash)
+            assert ci.metadata["tool_call_id"] == "call_1"
+            assert ci.metadata["name"] == "grep"
+
+    def test_tool_result_edit_compiled_shows_new(self):
+        """compile() serves the edited version."""
+        with Tract.open() as t:
+            t.system("test")
+            original = t.tool_result("call_1", "read", "this is old content")
+            t.tool_result(
+                "call_1", "read", "this is new content",
+                edit=original.commit_hash,
+            )
+            ctx = t.compile()
+            tool_msgs = [m for m in ctx.messages if m.role == "tool"]
+            assert len(tool_msgs) == 1
+            assert tool_msgs[0].content == "this is new content"
+
+    def test_tool_result_edit_log_shows_both(self):
+        """log() shows both the original and edit commits."""
+        with Tract.open() as t:
+            original = t.tool_result("call_1", "grep", "verbose")
+            edited = t.tool_result(
+                "call_1", "grep", "concise",
+                edit=original.commit_hash,
+            )
+            log_entries = t.log(limit=10)
+            hashes = [e.commit_hash for e in log_entries]
+            assert edited.commit_hash in hashes
+            # Original should be accessible via get_commit even if not in the main chain
+            orig_ci = t.get_commit(original.commit_hash)
+            assert orig_ci is not None
+
+
+class TestPendingToolResult:
+    """Tests for PendingToolResult hook system."""
+
+    def test_hook_fires_on_tool_result(self):
+        """Handler receives PendingToolResult."""
+        received = []
+
+        def handler(pending):
+            received.append(pending)
+            pending.approve()
+
+        with Tract.open() as t:
+            t.on("tool_result", handler)
+            t.tool_result("c1", "grep", "verbose output")
+            assert len(received) == 1
+            assert received[0].tool_name == "grep"
+            assert received[0].content == "verbose output"
+
+    def test_hook_edit_result(self):
+        """Handler edits content, commit has new content."""
+
+        def handler(pending):
+            pending.edit_result("concise output")
+            pending.approve()
+
+        with Tract.open() as t:
+            t.on("tool_result", handler)
+            ci = t.tool_result("c1", "grep", "verbose output")
+            content = t.get_content(ci)
+            assert content == "concise output"
+
+    def test_hook_reject(self):
+        """Handler rejects, returns PendingToolResult not CommitInfo."""
+
+        def handler(pending):
+            pending.reject("too verbose")
+
+        with Tract.open() as t:
+            t.on("tool_result", handler)
+            result = t.tool_result("c1", "grep", "verbose")
+            assert isinstance(result, PendingToolResult)
+            assert result.status == "rejected"
+
+    def test_hook_no_fire_on_edit(self):
+        """edit= bypasses the hook."""
+        fired = []
+
+        def handler(pending):
+            fired.append(True)
+            pending.approve()
+
+        with Tract.open() as t:
+            t.on("tool_result", handler)
+            orig = t.tool_result("c1", "grep", "verbose")
+            fired.clear()  # Reset after first hook fire
+            t.tool_result("c1", "grep", "edited", edit=orig.commit_hash)
+            assert len(fired) == 0  # Hook did NOT fire for edit
+
+    def test_hook_passthrough(self):
+        """Handler approves without changes."""
+
+        def handler(pending):
+            pending.approve()
+
+        with Tract.open() as t:
+            t.on("tool_result", handler)
+            ci = t.tool_result("c1", "grep", "original content")
+            content = t.get_content(ci)
+            assert content == "original content"
+
+    def test_hook_carries_token_count(self):
+        """PendingToolResult has token_count set."""
+        received = []
+
+        def handler(pending):
+            received.append(pending)
+            pending.approve()
+
+        with Tract.open() as t:
+            t.on("tool_result", handler)
+            t.tool_result("c1", "grep", "some text with a few tokens")
+            assert received[0].token_count > 0
+
+    def test_no_hook_commits_directly(self):
+        """Without handler, commits directly as before."""
+        with Tract.open() as t:
+            ci = t.tool_result("c1", "grep", "direct output")
+            assert ci.commit_hash  # Got a CommitInfo back
+            content = t.get_content(ci)
+            assert content == "direct output"
+
+    def test_hook_summarize(self):
+        """Handler calls summarize(), LLM runs, original preserved."""
+        class MockLLM:
+            def chat(self, messages, **kwargs):
+                return {"choices": [{"message": {"content": "LLM-summarized"}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+
+        def handler(pending):
+            pending.summarize(instructions="keep filenames only")
+            assert pending.original_content == "verbose grep output with many lines"
+            assert pending.content == "LLM-summarized"
+            pending.approve()
+
+        with Tract.open() as t:
+            t._llm_client = MockLLM()
+            t.on("tool_result", handler)
+            ci = t.tool_result("c1", "grep", "verbose grep output with many lines")
+            content = t.get_content(ci)
+            assert content == "LLM-summarized"
+
+    def test_review_returns_pending(self):
+        """review=True returns PendingToolResult without committing."""
+        with Tract.open() as t:
+            pending = t.tool_result("c1", "grep", "verbose", review=True)
+            assert isinstance(pending, PendingToolResult)
+            assert pending.status == "pending"
+            # Can approve manually
+            ci = pending.approve()
+            assert ci.commit_hash
+
+
+class TestToolSummarizationConfig:
+    """Tests for configure_tool_summarization()."""
+
+    def test_config_per_tool_instructions(self):
+        """Tool with instructions gets summarized."""
+        class MockLLM:
+            def chat(self, messages, **kwargs):
+                return {"choices": [{"message": {"content": "summarized grep output"}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+
+        with Tract.open() as t:
+            t._llm_client = MockLLM()
+            t.configure_tool_summarization(
+                instructions={"grep": "summarize to filenames only"},
+            )
+            ci = t.tool_result("c1", "grep", "a]" * 500)  # verbose
+            content = t.get_content(ci)
+            assert content == "summarized grep output"
+
+    def test_config_auto_threshold(self):
+        """Results over threshold get summarized."""
+        class MockLLM:
+            def chat(self, messages, **kwargs):
+                return {"choices": [{"message": {"content": "auto-summarized"}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+
+        with Tract.open() as t:
+            t._llm_client = MockLLM()
+            t.configure_tool_summarization(auto_threshold=10)
+            # Short content should pass through
+            ci_short = t.tool_result("c1", "grep", "hi")
+            content_short = t.get_content(ci_short)
+            assert content_short == "hi"
+            # Long content should get summarized
+            ci_long = t.tool_result("c2", "grep", "very verbose " * 100)
+            content_long = t.get_content(ci_long)
+            assert content_long == "auto-summarized"
+
+    def test_config_under_threshold_passthrough(self):
+        """Small results pass through unchanged."""
+        with Tract.open() as t:
+            t.configure_tool_summarization(auto_threshold=1000)
+            ci = t.tool_result("c1", "grep", "small result")
+            content = t.get_content(ci)
+            assert content == "small result"
+
+    def test_config_default_instructions(self):
+        """Unlisted tools use default_instructions when over threshold."""
+        received_instructions = []
+        class MockLLM:
+            def chat(self, messages, **kwargs):
+                # Capture the user prompt to check instructions
+                received_instructions.append(messages[-1]["content"])
+                return {"choices": [{"message": {"content": "default-summarized"}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+
+        with Tract.open() as t:
+            t._llm_client = MockLLM()
+            t.configure_tool_summarization(
+                instructions={"grep": "filenames only"},
+                auto_threshold=10,
+                default_instructions="be concise",
+            )
+            ci = t.tool_result("c1", "unknown_tool", "verbose " * 100)
+            content = t.get_content(ci)
+            assert content == "default-summarized"
+            assert "be concise" in received_instructions[0]
+
+    def test_config_override_with_custom_handler(self):
+        """User can replace the auto handler with a custom one."""
+        with Tract.open() as t:
+            t.configure_tool_summarization(
+                instructions={"grep": "filenames only"},
+            )
+            # Override with custom handler
+            def custom(pending):
+                pending.edit_result("custom edited")
+                pending.approve()
+            t.on("tool_result", custom)
+            ci = t.tool_result("c1", "grep", "verbose")
+            content = t.get_content(ci)
+            assert content == "custom edited"
+
+
+class TestCompressToolCallsAutoDetect:
+    """Tests for compress_tool_calls() with auto-detect (no explicit commits)."""
+
+    def test_auto_detect_all_turns(self):
+        """compress_tool_calls() without commits auto-detects all tool turns."""
+        with Tract.open() as t:
+            t._llm_client = MockLLMClient(["Tool summary."])
+            t.system("test")
+            # Simulate a tool-calling turn
+            t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+            t.tool_result("c1", "grep", "verbose grep output " * 20)
+            t.assistant("The answer is 42.")
+            # Auto-detect: no commits arg
+            result = t.compress_tool_calls()
+            assert result.source_commits  # Some commits were compressed
+
+    def test_auto_detect_by_name(self):
+        """name= filter only selects matching tool turns for compression."""
+        with Tract.open() as t:
+            t._llm_client = MockLLMClient(["Grep summary."])
+            t.system("test")
+            # grep turn
+            grep_asst = t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+            grep_result = t.tool_result("c1", "grep", "verbose grep output " * 20)
+            # read_file turn
+            read_asst = t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c2", "name": "read_file", "arguments": {}}]},
+            )
+            read_result = t.tool_result("c2", "read_file", "file content " * 20)
+            # Only compress grep turns
+            result = t.compress_tool_calls(name="grep")
+            # Source commits should only contain the grep turn hashes
+            grep_hashes = {grep_asst.commit_hash, grep_result.commit_hash}
+            assert set(result.source_commits) == grep_hashes
+            # read_file hashes should NOT be in source commits
+            assert read_asst.commit_hash not in result.source_commits
+            assert read_result.commit_hash not in result.source_commits
+
+    def test_explicit_commits_still_works(self):
+        """Passing explicit commits= preserves original behavior."""
+        with Tract.open() as t:
+            t._llm_client = MockLLMClient(["Compressed."])
+            t.system("test")
+            asst = t.assistant(
+                "",
+                metadata={"tool_calls": [{"id": "c1", "name": "grep", "arguments": {}}]},
+            )
+            tr = t.tool_result("c1", "grep", "verbose " * 20)
+            answer = t.assistant("answer")
+            result = t.compress_tool_calls(
+                [asst.commit_hash, tr.commit_hash, answer.commit_hash],
+            )
+            assert result.source_commits

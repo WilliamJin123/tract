@@ -28,6 +28,7 @@ from tract.hooks.pending import Pending
 from tract.hooks.policy import PendingPolicy
 from tract.hooks.rebase import PendingRebase
 from tract.hooks.retry import auto_retry
+from tract.hooks.tool_result import PendingToolResult
 from tract.hooks.validation import HookRejection, ValidationResult
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "PendingRebase",
     "PendingMerge",
     "PendingPolicy",
+    "PendingToolResult",
     "GuidanceMixin",
     "ValidationResult",
     "HookRejection",

@@ -29,7 +29,7 @@ from tract.models.commit import CommitInfo, CommitOperation
 from tract.models.annotations import Priority, PriorityAnnotation, RetentionCriteria
 
 # Configuration
-from tract.models.config import TractConfig, TokenBudgetConfig, BudgetAction, LLMConfig, Operator, OperationConfigs, OperationClients
+from tract.models.config import TractConfig, TokenBudgetConfig, BudgetAction, LLMConfig, Operator, OperationConfigs, OperationClients, ToolSummarizationConfig
 
 # Protocols and output types
 from tract.protocols import (
@@ -41,6 +41,7 @@ from tract.protocols import (
     TokenUsage,
     ChatResponse,
     ToolCall,
+    ToolTurn,
 )
 
 # Branch model
@@ -60,10 +61,14 @@ from tract.models.merge import (
 from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning
 
 # Hook system
-from tract.hooks import Pending, PendingCompress, ValidationResult, HookRejection
+from tract.hooks import Pending, PendingCompress, PendingToolResult, ValidationResult, HookRejection
 
-# Compression prompts (for extending the default system prompt)
-from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM
+# Compression prompts (for extending or selecting system prompts)
+from tract.prompts.summarize import (
+    DEFAULT_SUMMARIZE_SYSTEM,
+    CONVERSATION_SUMMARIZE_SYSTEM,
+    TOOL_SUMMARIZE_SYSTEM,
+)
 
 # Policy engine
 from tract.policy import Policy, PolicyEvaluator
@@ -173,6 +178,7 @@ __all__ = [
     "Operator",
     "OperationConfigs",
     "OperationClients",
+    "ToolSummarizationConfig",
     # Protocols
     "TokenCounter",
     "ContextCompiler",
@@ -182,6 +188,7 @@ __all__ = [
     "TokenUsage",
     "ChatResponse",
     "ToolCall",
+    "ToolTurn",
     # Branch model
     "BranchInfo",
     # Merge models
@@ -246,9 +253,12 @@ __all__ = [
     "PendingCompression",
     "ReorderWarning",
     "DEFAULT_SUMMARIZE_SYSTEM",
+    "CONVERSATION_SUMMARIZE_SYSTEM",
+    "TOOL_SUMMARIZE_SYSTEM",
     # Hook system
     "Pending",
     "PendingCompress",
+    "PendingToolResult",
     "ValidationResult",
     "HookRejection",
     # Multi-agent / session
