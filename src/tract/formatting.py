@@ -239,6 +239,7 @@ _ROLE_STYLES: dict[str, tuple[str, str]] = {
     "user": ("User", "blue"),
     "assistant": ("Assistant", "green"),
     "tool": ("Tool Result", "magenta"),
+    "reasoning": ("Reasoning", "dim cyan"),
 }
 
 def _inline_markdown(text: str) -> str:
@@ -271,6 +272,7 @@ _ROLE_COLORS: dict[str, str] = {
     "user": "blue",
     "assistant": "green",
     "tool": "magenta",
+    "reasoning": "dim cyan",
 }
 
 

@@ -60,7 +60,7 @@ DEFAULT_TYPE_PRIORITIES: dict[str, Priority] = {
     "instruction": Priority.PINNED,
     "dialogue": Priority.NORMAL,
     "tool_io": Priority.NORMAL,
-    "reasoning": Priority.NORMAL,
+    "reasoning": Priority.SKIP,
     "artifact": Priority.NORMAL,
     "output": Priority.NORMAL,
     "freeform": Priority.NORMAL,

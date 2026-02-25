@@ -245,3 +245,62 @@ class OpenAIClient:
             or None if not present.
         """
         return response.get("usage")
+
+    @staticmethod
+    def extract_reasoning(response: dict) -> tuple[str, str] | None:
+        """Extract reasoning/thinking content from a response dict.
+
+        Checks multiple provider formats in priority order:
+
+        1. Parsed field: ``response["choices"][0]["message"]["reasoning"]``
+           (Cerebras parsed mode)
+        2. OpenAI reasoning_content:
+           ``response["choices"][0]["message"]["reasoning_content"]`` (o1/o3)
+        3. Anthropic thinking blocks: ``response["content"]`` list with
+           ``type="thinking"`` blocks
+        4. ``<think>`` tags: Regex extraction from content text
+
+        Returns:
+            Tuple of (reasoning_text, format_name) if reasoning found,
+            or None if no reasoning detected.
+        """
+        import re
+
+        try:
+            message = response["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError):
+            message = None
+
+        if message is not None:
+            # 1. Cerebras parsed field
+            reasoning = message.get("reasoning")
+            if reasoning:
+                return (reasoning, "parsed")
+
+            # 2. OpenAI o1/o3 reasoning_content
+            reasoning_content = message.get("reasoning_content")
+            if reasoning_content:
+                return (reasoning_content, "reasoning_content")
+
+        # 3. Anthropic thinking blocks
+        content_blocks = response.get("content")
+        if isinstance(content_blocks, list):
+            thinking_parts = []
+            for block in content_blocks:
+                if isinstance(block, dict) and block.get("type") == "thinking":
+                    thinking_text = block.get("thinking", "")
+                    if thinking_text:
+                        thinking_parts.append(thinking_text)
+            if thinking_parts:
+                return ("\n\n".join(thinking_parts), "anthropic")
+
+        # 4. <think> tags in content
+        if message is not None:
+            content = message.get("content", "") or ""
+            think_match = re.search(
+                r"<think>(.*?)</think>", content, re.DOTALL
+            )
+            if think_match:
+                return (think_match.group(1).strip(), "think_tags")
+
+        return None

@@ -3556,98 +3556,173 @@ class Tract:
         commits: list[str] | None = None,
         *,
         name: str | None = None,
-        preserve_answer: bool = True,
         target_tokens: int | None = None,
         instructions: str | None = None,
         system_prompt: str | None = None,
-        review: bool = False,
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         llm_config: LLMConfig | None = None,
         triggered_by: str | None = None,
-    ) -> CompressResult | PendingCompress:
-        """Compress tool-call sequences while preserving the final answer.
+    ) -> "ToolCompactResult":
+        """Compact tool-call sequences using EDIT commits.
 
-        A convenience wrapper around :meth:`compress` tuned for the common
-        pattern of an agentic tool-calling loop: one or more rounds of
-        assistant tool-call messages and tool results, followed by a final
-        assistant answer.  The verbose intermediate messages are compressed
-        into a concise summary of what tools were called and what they found,
-        while the final answer is preserved verbatim.
+        Sends the full tool-calling sequence to the LLM for holistic
+        context, then applies per-result summaries as EDIT commits.
+        This preserves commit structure, tool roles, metadata
+        (``tool_call_id``, ``name``), and keeps tool turns queryable
+        via :meth:`find_tool_turns`.
 
-        Uses :data:`TOOL_SUMMARIZE_SYSTEM` as the default system prompt
-        (instead of the general-purpose ``DEFAULT_SUMMARIZE_SYSTEM``).
+        For bulk compression that collapses commits into a single
+        summary (losing structure), use :meth:`compress` directly.
 
         Args:
-            commits: Commit hashes covering the tool-calling sequence.
-                When ``None`` (default), uses :meth:`find_tool_turns` to
-                auto-detect all tool-call commits on the current branch.
-                When explicit, should include tool-call assistant messages,
-                tool results, and (when ``preserve_answer=True``) the final
-                assistant answer.
-            name: Filter to compress only tool turns involving this tool
-                name.  Only used when ``commits`` is ``None`` (auto-detect
-                mode).  Passed to :meth:`find_tool_turns`.
-            preserve_answer: When True (default), the last non-tool-call
-                assistant commit in ``commits`` is automatically preserved
-                verbatim.  Set to False if all commits should be compressed.
-            target_tokens: Target token count for the compressed summary.
-            instructions: Extra guidance appended to the summarization
-                prompt (same as ``compress(instructions=)``).
-            system_prompt: Override the tool-call system prompt.  When None,
-                uses ``TOOL_SUMMARIZE_SYSTEM``.
-            review: If True, return :class:`PendingCompress` for manual
-                review instead of auto-committing.
-            model: Override model for LLM summarization.
-            temperature: Override temperature for LLM summarization.
-            max_tokens: Override max_tokens for LLM summarization.
+            commits: Optional commit hashes to scope which turns to
+                compact.  When ``None`` (default), uses
+                :meth:`find_tool_turns` to auto-detect all tool-call
+                turns on the current branch.  When explicit, only turns
+                whose hashes overlap with this list are compacted.
+            name: Filter to compact only turns involving this tool name.
+                Passed to :meth:`find_tool_turns`.
+            target_tokens: Target token count per compacted result.
+            instructions: Extra guidance appended to the compaction
+                prompt.
+            system_prompt: Override the compaction system prompt.
+            model: Override model for LLM compaction.
+            temperature: Override temperature for LLM compaction.
+            max_tokens: Override max_tokens for LLM compaction.
             llm_config: Full LLMConfig override for this call.
             triggered_by: Optional provenance string.
 
         Returns:
-            :class:`CompressResult` (if auto-approved) or
-            :class:`PendingCompress` (if ``review=True``).
+            :class:`ToolCompactResult` with edit commit details.
 
         Raises:
-            CompressionError: If no commits found or other compression
-                errors.
+            CompressionError: If no tool turns found or LLM returns
+                malformed response.
         """
-        from tract.prompts.summarize import TOOL_SUMMARIZE_SYSTEM
+        import json as _json
 
-        # Auto-detect tool commits when no explicit list given
-        if commits is None:
-            turns = self.find_tool_turns(name=name)
-            commits = [h for turn in turns for h in turn.all_hashes]
+        from tract.exceptions import CompressionError
+        from tract.models.compression import ToolCompactResult
+        from tract.operations.compression import build_role_label
+        from tract.prompts.summarize import (
+            TOOL_COMPACT_SYSTEM,
+            build_tool_compact_prompt,
+        )
 
-        # Auto-detect the final answer to preserve
-        preserve: list[str] | None = None
-        if preserve_answer and commits:
-            # Walk commits in reverse to find the last assistant message
-            # that is NOT a tool-call message (i.e. the final answer)
-            for h in reversed(commits):
-                ci = self.get_commit(h)
-                if ci is None:
-                    continue
-                meta = ci.metadata or {}
-                is_tool_call = "tool_calls" in meta
-                is_tool_result = "tool_call_id" in meta
-                if not is_tool_call and not is_tool_result:
-                    preserve = [h]
-                    break
+        # 1. Find tool turns
+        turns = self.find_tool_turns(name=name)
 
-        return self.compress(
-            commits=commits,
-            preserve=preserve,
+        # Scope to explicit commits if provided
+        if commits is not None:
+            commit_set = set(commits)
+            turns = [
+                turn for turn in turns
+                if any(h in commit_set for h in turn.all_hashes)
+            ]
+
+        if not turns:
+            raise CompressionError("No tool turns found to compact")
+
+        # 2. Collect tool results to compact and build sequence text
+        results_to_compact: list[CommitInfo] = []
+        parts: list[str] = []
+
+        for turn in turns:
+            # Add assistant tool-calling message for context
+            call_meta = turn.call.metadata or {}
+            call_text = self.get_content(turn.call) or ""
+            parts.append(f"{build_role_label('assistant', call_meta)}: {call_text}")
+
+            # Add each tool result (these will be compacted)
+            for r in turn.results:
+                r_meta = r.metadata or {}
+                r_text = self.get_content(r) or ""
+                parts.append(f"{build_role_label('tool', r_meta)}: {r_text}")
+                results_to_compact.append(r)
+
+        if not results_to_compact:
+            raise CompressionError("No tool results found to compact")
+
+        sequence_text = "\n".join(parts)
+
+        # 3. Build prompt and call LLM
+        prompt = build_tool_compact_prompt(
+            sequence_text,
+            result_count=len(results_to_compact),
             target_tokens=target_tokens,
             instructions=instructions,
-            system_prompt=system_prompt if system_prompt is not None else TOOL_SUMMARIZE_SYSTEM,
-            review=review,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            llm_config=llm_config,
-            triggered_by=triggered_by,
+        )
+        sys_prompt = (
+            system_prompt if system_prompt is not None else TOOL_COMPACT_SYSTEM
+        )
+
+        # Resolve LLM config and client
+        llm_kwargs: dict = {}
+        if any(v is not None for v in (model, temperature, max_tokens, llm_config)):
+            resolved = self._resolve_llm_config(
+                "compress", model=model, temperature=temperature,
+                max_tokens=max_tokens, llm_config=llm_config,
+            )
+            if resolved:
+                llm_kwargs = resolved.to_llm_kwargs()
+
+        llm = self._resolve_llm_client("compress")
+        response = llm.chat(
+            [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            **llm_kwargs,
+        )
+
+        # 4. Parse per-result summaries from LLM response
+        raw_content = response["choices"][0]["message"]["content"]
+        try:
+            summaries = _json.loads(raw_content)
+        except (_json.JSONDecodeError, TypeError) as exc:
+            raise CompressionError(
+                f"LLM returned invalid JSON for tool compaction: {exc}\n"
+                f"Response: {raw_content[:200]}"
+            ) from exc
+
+        if not isinstance(summaries, list) or len(summaries) != len(results_to_compact):
+            raise CompressionError(
+                f"Expected {len(results_to_compact)} summaries, "
+                f"got {len(summaries) if isinstance(summaries, list) else type(summaries).__name__}"
+            )
+
+        # 5. Apply each summary as an EDIT commit
+        original_tokens = 0
+        compacted_tokens = 0
+        edit_commits: list[str] = []
+        source_commits: list[str] = []
+
+        for result_ci, summary in zip(results_to_compact, summaries):
+            r_meta = result_ci.metadata or {}
+            original_tokens += result_ci.token_count
+            source_commits.append(result_ci.commit_hash)
+
+            edited = self.tool_result(
+                tool_call_id=r_meta.get("tool_call_id", ""),
+                name=r_meta.get("name", ""),
+                content=str(summary),
+                edit=result_ci.commit_hash,
+            )
+            compacted_tokens += edited.token_count
+            edit_commits.append(edited.commit_hash)
+
+        # 6. Return result
+        all_tool_names = sorted({n for turn in turns for n in turn.tool_names})
+
+        return ToolCompactResult(
+            edit_commits=tuple(edit_commits),
+            source_commits=tuple(source_commits),
+            original_tokens=original_tokens,
+            compacted_tokens=compacted_tokens,
+            tool_names=tuple(all_tool_names),
+            turn_count=len(turns),
         )
 
     def gc(

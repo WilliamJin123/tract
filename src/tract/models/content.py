@@ -55,6 +55,7 @@ class ReasoningContent(BaseModel):
 
     content_type: Literal["reasoning"] = "reasoning"
     text: str
+    format: Literal["parsed", "raw", "think_tags", "anthropic"] = "parsed"
 
 
 class ArtifactContent(BaseModel):
@@ -199,7 +200,7 @@ BUILTIN_TYPE_HINTS: dict[str, ContentTypeHints] = {
         compression_priority=30,
     ),
     "reasoning": ContentTypeHints(
-        default_priority="normal",
+        default_priority="skip",
         default_role="assistant",
         compression_priority=40,
     ),

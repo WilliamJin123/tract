@@ -288,6 +288,8 @@ class ChatResponse:
     commit_info: CommitInfo
     generation_config: LLMConfig
     prompt: str | None = None
+    reasoning: str | None = None
+    reasoning_commit: CommitInfo | None = None
     tool_calls: list[ToolCall] | None = None
     raw_response: dict | None = None
 
@@ -358,6 +360,7 @@ class ContextCompiler(Protocol):
         at_time: datetime | None = None,
         at_commit: str | None = None,
         include_edit_annotations: bool = False,
+        include_reasoning: bool = False,
     ) -> CompiledContext:
         """Compile commits into structured messages for LLM consumption."""
         ...

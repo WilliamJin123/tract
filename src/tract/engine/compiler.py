@@ -72,6 +72,7 @@ class DefaultContextCompiler:
         at_time: datetime | None = None,
         at_commit: str | None = None,
         include_edit_annotations: bool = False,
+        include_reasoning: bool = False,
     ) -> CompiledContext:
         """Compile commits into structured messages for LLM consumption.
 
@@ -82,6 +83,9 @@ class DefaultContextCompiler:
             at_commit: Only include commits up to and including this commit hash.
             include_edit_annotations: If True, append '[edited]' marker to
                 content that was replaced by an edit.
+            include_reasoning: If True, promote reasoning commits from
+                default SKIP to NORMAL priority so they appear in output.
+                Explicit annotations always take precedence.
 
         Returns:
             CompiledContext with messages, token count, and metadata.
@@ -102,7 +106,7 @@ class DefaultContextCompiler:
         edit_map = self._build_edit_map(commits, at_time=at_time)
 
         # Step 3: Build priority map
-        priority_map = self._build_priority_map(commits, at_time=at_time)
+        priority_map = self._build_priority_map(commits, at_time=at_time, include_reasoning=include_reasoning)
 
         # Step 4: Build effective commit list
         effective_commits = self._build_effective_commits(commits, edit_map, priority_map)
@@ -271,11 +275,16 @@ class DefaultContextCompiler:
         commits: list[CommitRow],
         *,
         at_time: datetime | None = None,
+        include_reasoning: bool = False,
     ) -> dict[str, Priority]:
         """Build map of commit_hash -> effective priority.
 
         Uses annotations if available, otherwise falls back to
         DEFAULT_TYPE_PRIORITIES based on content_type.
+
+        When include_reasoning is True, reasoning commits that would
+        get default SKIP priority are promoted to NORMAL instead.
+        Explicit annotations always take precedence.
         """
         commit_hashes = [c.commit_hash for c in commits]
         annotations = self._annotation_repo.batch_get_latest(commit_hashes)
@@ -291,9 +300,13 @@ class DefaultContextCompiler:
             if annotation is not None:
                 priority_map[c.commit_hash] = annotation.priority
             else:
-                priority_map[c.commit_hash] = DEFAULT_TYPE_PRIORITIES.get(
+                default = DEFAULT_TYPE_PRIORITIES.get(
                     c.content_type, Priority.NORMAL
                 )
+                # Promote reasoning SKIP -> NORMAL when include_reasoning is set
+                if include_reasoning and c.content_type == "reasoning" and default == Priority.SKIP:
+                    default = Priority.NORMAL
+                priority_map[c.commit_hash] = default
 
         return priority_map
 
