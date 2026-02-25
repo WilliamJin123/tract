@@ -1,26 +1,15 @@
-"""Tool Query and Audit
+"""Query API
 
 Find, filter, and inspect tool-related commits across a conversation.
-Use the query API to answer questions like "which tools were called?",
-"how many tokens did grep results consume?", and "which tool turns
-are worth compressing?"  Then act on the answers — bulk-edit verbose
-results, selectively compress by tool name, or export an audit log.
+Use find_tool_turns(), find_tool_results(), and find_tool_calls() to
+answer questions like "which tools were called?" and "how many tokens
+did grep results consume?"
 
-No LLM required for the query and edit operations (Parts 1-2).
-Part 3 uses an LLM for selective compression by tool name.
-
-Part 1: Query API — find_tool_results(), find_tool_calls(), find_tool_turns()
-Part 2: Surgical edits — tool_result(edit=) to trim verbose results
-Part 3: Selective compression — compress_tool_calls(name=) to compress
-        only specific tool types while leaving others untouched
-
-Each part uses its own Tract instance for clarity.
+No LLM required — all query operations work offline.
 
 Demonstrates: find_tool_results(name=, after=), find_tool_calls(name=),
               find_tool_turns(name=), ToolTurn (all_hashes, result_hashes,
-              total_tokens, tool_names), tool_result(edit=) for surgical
-              replacement, compress_tool_calls(name=) for selective
-              compression, token accounting before/after edits
+              total_tokens, tool_names), token budget analysis
 """
 
 import os
@@ -192,13 +181,6 @@ def _build_agent_session(t):
     }
 
 
-# =============================================================================
-# Part 1: Query API
-# =============================================================================
-# find_tool_results(), find_tool_calls(), find_tool_turns() let you
-# inspect the tool history without parsing commits manually. ToolTurn
-# pairs each tool-calling assistant message with its result(s).
-
 def part1_query_api():
     print("=" * 60)
     print("Part 1: QUERY API")
@@ -269,163 +251,5 @@ def part1_query_api():
     t.close()
 
 
-# =============================================================================
-# Part 2: Surgical Edits
-# =============================================================================
-# tool_result(edit=hash) replaces a tool result in-place. The original
-# is preserved in history (visible via log()). Use this to trim verbose
-# results after the fact without rerunning the agent.
-
-def part2_surgical_edits():
-    print(f"\n{'=' * 60}")
-    print("Part 2: SURGICAL EDITS (tool_result(edit=))")
-    print("=" * 60)
-    print()
-
-    t = Tract.open()
-    refs = _build_agent_session(t)
-
-    ctx_before = t.compile()
-    print(f"  BEFORE edits: {ctx_before.token_count} tokens, "
-          f"{len(ctx_before.messages)} messages\n")
-
-    # --- Trim verbose grep results ---
-    # Keep only the lines that matter for the bug (thread-related)
-
-    print("  Editing grep results to keep only relevant lines...\n")
-
-    edited_grep1 = t.tool_result(
-        "c1", "grep",
-        "src/auth/login.py:15: def authenticate(username, password):\n"
-        "src/auth/login.py:22:     if not authenticate_ldap(username, password):\n"
-        "src/auth/session.py:45: result = authenticate(user, pw)",
-        edit=refs["grep1"].commit_hash,
-    )
-    print(f"    grep1: {refs['grep1'].token_count} -> {edited_grep1.token_count} tokens")
-
-    edited_grep2 = t.tool_result(
-        "c3", "grep",
-        "src/auth/login.py:11: _failed_attempts = {}  # BUG: not thread-safe\n"
-        "tests/test_concurrent.py:35: # This test intermittently fails due to race",
-        edit=refs["grep2"].commit_hash,
-    )
-    print(f"    grep2: {refs['grep2'].token_count} -> {edited_grep2.token_count} tokens")
-
-    # --- Trim verbose file reads ---
-    # Keep only the key function, not the full file
-
-    print("\n  Editing read_file results to keep only key sections...\n")
-
-    edited_read1 = t.tool_result(
-        "c2", "read_file",
-        "_failed_attempts = {}  # BUG: not thread-safe\n"
-        "\n"
-        "def authenticate(username, password):\n"
-        "    # ... validates against LDAP, records failures\n"
-        "    # Race condition: _failed_attempts is unprotected dict",
-        edit=refs["read1"].commit_hash,
-    )
-    print(f"    read1: {refs['read1'].token_count} -> {edited_read1.token_count} tokens")
-
-    # --- Token accounting ---
-
-    ctx_after = t.compile()
-    saved = ctx_before.token_count - ctx_after.token_count
-    print(f"\n  AFTER edits: {ctx_after.token_count} tokens, "
-          f"{len(ctx_after.messages)} messages")
-    print(f"  Saved {saved} tokens ({saved/ctx_before.token_count*100:.0f}% reduction)\n")
-
-    # --- Originals preserved in history ---
-
-    print("  Originals are preserved — log(include_edits=True) shows both:\n")
-    log = t.log(include_edits=True)
-    edit_count = sum(1 for e in log if e.operation.value == "edit")
-    print(f"    {len(log)} total entries, {edit_count} edits")
-
-    t.close()
-
-
-# =============================================================================
-# Part 3: Selective Compression
-# =============================================================================
-# compress_tool_calls(name=) compresses only specific tool types,
-# leaving others untouched. Useful when grep results are verbose but
-# bash output is already concise.
-
-def part3_selective_compression():
-    if not TRACT_OPENAI_API_KEY:
-        print(f"\n{'=' * 60}")
-        print("Part 3: SKIPPED (no TRACT_OPENAI_API_KEY)")
-        print("=" * 60)
-        return
-
-    print(f"\n{'=' * 60}")
-    print("Part 3: SELECTIVE COMPRESSION (compress_tool_calls(name=))")
-    print("=" * 60)
-    print()
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        refs = _build_agent_session(t)
-
-        ctx_before = t.compile()
-        print(f"  BEFORE: {ctx_before.token_count} tokens\n")
-
-        # --- Compress only grep results ---
-        # bash and read_file results stay untouched
-
-        print("  compress_tool_calls(name='grep') — only grep turns:\n")
-        grep_result = t.compress_tool_calls(
-            name="grep",
-            instructions="One line per file: 'filename: relevant finding'",
-        )
-        print(f"    original_tokens:  {grep_result.original_tokens}")
-        print(f"    compacted_tokens: {grep_result.compacted_tokens}")
-        print(f"    turn_count:       {grep_result.turn_count}")
-        print(f"    tool_names:       {grep_result.tool_names}")
-
-        ctx_after_grep = t.compile()
-        print(f"\n  After grep compression: {ctx_after_grep.token_count} tokens")
-
-        # --- Compress read_file results too ---
-
-        print(f"\n  compress_tool_calls(name='read_file'):\n")
-        read_result = t.compress_tool_calls(
-            name="read_file",
-            instructions="Summarize the file's purpose and key findings in 1-2 lines.",
-        )
-        print(f"    original_tokens:  {read_result.original_tokens}")
-        print(f"    compacted_tokens: {read_result.compacted_tokens}")
-        print(f"    turn_count:       {read_result.turn_count}")
-
-        ctx_after_both = t.compile()
-        total_saved = ctx_before.token_count - ctx_after_both.token_count
-        print(f"\n  AFTER all selective compressions: {ctx_after_both.token_count} tokens")
-        print(f"  Total saved: {total_saved} tokens\n")
-
-        # --- bash results were untouched ---
-
-        print("  bash results were never compressed (already concise):")
-        bash_results = t.find_tool_results(name="bash")
-        for r in bash_results:
-            content = t.get_content(r.commit_hash)
-            preview = content[:60] if isinstance(content, str) else str(content)[:60]
-            print(f"    {r.token_count} tokens: {preview}...")
-
-        # --- Final context ---
-
-        print(f"\n  Final context:\n")
-        ctx_after_both.pprint(style="compact")
-
-
-def main():
-    part1_query_api()
-    part2_surgical_edits()
-    part3_selective_compression()
-
-
 if __name__ == "__main__":
-    main()
+    part1_query_api()
