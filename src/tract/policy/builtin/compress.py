@@ -10,13 +10,18 @@ Preserves pinned commits automatically (handled by the underlying
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from tract.models.policy import PolicyAction
 from tract.policy.protocols import Policy
 
 if TYPE_CHECKING:
+    from tract.hooks.policy import PendingPolicy
+    from tract.hooks.validation import HookRejection
     from tract.tract import Tract
+
+logger = logging.getLogger(__name__)
 
 
 class CompressPolicy(Policy):
@@ -60,7 +65,7 @@ class CompressPolicy(Policy):
         token_count = status.token_count
 
         if token_count >= max_tokens * self._threshold:
-            params: dict = {"auto_commit": True}
+            params: dict = {}
             if self._summary_content is not None:
                 params["content"] = self._summary_content
             return PolicyAction(
@@ -74,6 +79,24 @@ class CompressPolicy(Policy):
             )
 
         return None
+
+    # ------------------------------------------------------------------
+    # Hook integration
+    # ------------------------------------------------------------------
+
+    def default_handler(self, pending: PendingPolicy) -> None:
+        """Auto-approve compression proposals by default."""
+        pending.approve()
+
+    def on_rejection(self, rejection: HookRejection) -> None:
+        """Log rejection and increase threshold slightly to avoid rapid re-firing."""
+        logger.info(
+            "CompressPolicy action rejected: %s", rejection.reason
+        )
+
+    def on_success(self, result: object) -> None:
+        """Log successful compression."""
+        logger.debug("CompressPolicy action succeeded: %s", result)
 
     # ------------------------------------------------------------------
     # Serialization

@@ -512,7 +512,6 @@ def _handle_compress(
         from_commit=from_commit,
         to_commit=to_commit,
         instructions=instructions,
-        auto_commit=True,
     )
     # CompressResult has original_tokens, compressed_tokens, source_commits, summary_commits
     return (

@@ -27,13 +27,13 @@ from tract.orchestrator import (
     OrchestratorConfig,
     OrchestratorResult,
     OrchestratorState,
-    ProposalDecision,
-    ProposalResponse,
     StepResult,
     ToolCall,
+    ToolCallDecision,
+    ToolCallReview,
     TriggerConfig,
-    auto_approve,
-    reject_all,
+    auto_approve_tool_call,
+    reject_all_tool_call,
 )
 
 
@@ -210,14 +210,14 @@ class TestOrchestratorAutonomous:
 
 class TestOrchestratorCollaborativeApprove:
     def test_orchestrator_collaborative_approve(self, tract_with_commits):
-        """Ceiling=COLLABORATIVE, on_proposal=auto_approve. Verify approved and executed."""
+        """Ceiling=COLLABORATIVE, on_tool_call=auto_approve_tool_call. Verify approved and executed."""
         mock_llm = make_mock_llm([
             tool_call_response("status", {}, call_id="call_s"),
             no_tool_call_response(),
         ])
         config = OrchestratorConfig(
             autonomy_ceiling=AutonomyLevel.COLLABORATIVE,
-            on_proposal=auto_approve,
+            on_tool_call=auto_approve_tool_call,
         )
         orch = Orchestrator(
             tract_with_commits,
@@ -228,8 +228,7 @@ class TestOrchestratorCollaborativeApprove:
 
         assert len(result.steps) == 1
         assert result.steps[0].success is True
-        assert result.steps[0].proposal is not None
-        assert result.steps[0].proposal.decision == ProposalDecision.APPROVED
+        assert result.steps[0].review_decision == ToolCallDecision.APPROVED.value
 
 
 # ---------------------------------------------------------------------------
@@ -239,14 +238,14 @@ class TestOrchestratorCollaborativeApprove:
 
 class TestOrchestratorCollaborativeReject:
     def test_orchestrator_collaborative_reject(self, tract_with_commits):
-        """Ceiling=COLLABORATIVE, on_proposal=reject_all. Step NOT executed."""
+        """Ceiling=COLLABORATIVE, on_tool_call=reject_all_tool_call. Step NOT executed."""
         mock_llm = make_mock_llm([
             tool_call_response("status", {}, call_id="call_r"),
             no_tool_call_response(),
         ])
         config = OrchestratorConfig(
             autonomy_ceiling=AutonomyLevel.COLLABORATIVE,
-            on_proposal=reject_all,
+            on_tool_call=reject_all_tool_call,
         )
         orch = Orchestrator(
             tract_with_commits,
@@ -257,8 +256,7 @@ class TestOrchestratorCollaborativeReject:
 
         assert len(result.steps) == 1
         assert result.steps[0].success is False
-        assert result.steps[0].proposal is not None
-        assert result.steps[0].proposal.decision == ProposalDecision.REJECTED
+        assert result.steps[0].review_decision == ToolCallDecision.REJECTED.value
 
 
 # ---------------------------------------------------------------------------
@@ -268,13 +266,13 @@ class TestOrchestratorCollaborativeReject:
 
 class TestOrchestratorCollaborativeModify:
     def test_orchestrator_collaborative_modify(self, tract_with_commits):
-        """Ceiling=COLLABORATIVE, on_proposal modifies the tool call. Modified action executed."""
+        """Ceiling=COLLABORATIVE, on_tool_call modifies the tool call. Modified action executed."""
 
-        def modify_to_log(proposal):
-            return ProposalResponse(
-                decision=ProposalDecision.MODIFIED,
+        def modify_to_log(tool_call):
+            return ToolCallReview(
+                decision=ToolCallDecision.MODIFIED,
                 modified_action=ToolCall(
-                    id=proposal.recommended_action.id,
+                    id=tool_call.id,
                     name="log",
                     arguments={"limit": 2},
                 ),
@@ -286,7 +284,7 @@ class TestOrchestratorCollaborativeModify:
         ])
         config = OrchestratorConfig(
             autonomy_ceiling=AutonomyLevel.COLLABORATIVE,
-            on_proposal=modify_to_log,
+            on_tool_call=modify_to_log,
         )
         orch = Orchestrator(
             tract_with_commits,
@@ -299,10 +297,7 @@ class TestOrchestratorCollaborativeModify:
         assert result.steps[0].success is True
         # The executed tool call should be the modified one (log, not status)
         assert result.steps[0].tool_call.name == "log"
-        assert result.steps[0].proposal is not None
-        assert result.steps[0].proposal.decision == ProposalDecision.MODIFIED
-        assert result.steps[0].proposal.modified_action is not None
-        assert result.steps[0].proposal.modified_action.name == "log"
+        assert result.steps[0].review_decision == ToolCallDecision.MODIFIED.value
         assert "2 commits" in result.steps[0].result_output
 
 
@@ -779,17 +774,17 @@ class TestTriggerAutonomy:
         """Ceiling=AUTONOMOUS but trigger autonomy=COLLABORATIVE.
 
         Effective autonomy should be min(AUTONOMOUS, COLLABORATIVE) = COLLABORATIVE.
-        With auto_approve callback, the tool call should be proposed then approved.
+        With auto_approve_tool_call callback, the tool call should be reviewed then approved.
         """
         t = Tract.open(str(tmp_path / "trig_autonomy.db"))
         try:
             t.commit(InstructionContent(text="sys"), message="c1")
 
-            proposals_seen = []
+            reviews_seen = []
 
-            def track_proposals(proposal):
-                proposals_seen.append(proposal)
-                return auto_approve(proposal)
+            def track_reviews(tool_call):
+                reviews_seen.append(tool_call)
+                return auto_approve_tool_call(tool_call)
 
             mock_llm = make_mock_llm([
                 tool_call_response("status", {}, call_id="call_ta"),
@@ -801,7 +796,7 @@ class TestTriggerAutonomy:
                     on_commit_count=1,
                     autonomy=AutonomyLevel.COLLABORATIVE,
                 ),
-                on_proposal=track_proposals,
+                on_tool_call=track_reviews,
             )
             t.configure_orchestrator(config=config, llm_callable=mock_llm)
 
@@ -811,9 +806,8 @@ class TestTriggerAutonomy:
             )
 
             # Despite AUTONOMOUS ceiling, trigger autonomy forces COLLABORATIVE,
-            # so proposals should have been created
-            assert len(proposals_seen) >= 1
-            assert proposals_seen[0].decision == ProposalDecision.APPROVED
+            # so reviews should have been created
+            assert len(reviews_seen) >= 1
         finally:
             t.close()
 
@@ -834,10 +828,10 @@ class TestTriggerAutonomy:
         # run() with no trigger_autonomy -- uses ceiling (AUTONOMOUS)
         result = orch.run()
 
-        # AUTONOMOUS = direct execution, no proposals
+        # AUTONOMOUS = direct execution, no review
         assert len(result.steps) == 1
         assert result.steps[0].success is True
-        assert result.steps[0].proposal is None
+        assert result.steps[0].review_decision == ""
 
     def test_trigger_autonomy_manual_overrides_autonomous(self, tract_with_commits):
         """Trigger autonomy=MANUAL overrides ceiling=AUTONOMOUS. All skipped."""
@@ -866,11 +860,11 @@ class TestTriggerAutonomy:
 
         min(COLLABORATIVE, AUTONOMOUS) = COLLABORATIVE.
         """
-        proposals_seen = []
+        reviews_seen = []
 
-        def track(proposal):
-            proposals_seen.append(proposal)
-            return auto_approve(proposal)
+        def track(tool_call):
+            reviews_seen.append(tool_call)
+            return auto_approve_tool_call(tool_call)
 
         mock_llm = make_mock_llm([
             tool_call_response("status", {}, call_id="call_higher"),
@@ -878,7 +872,7 @@ class TestTriggerAutonomy:
         ])
         config = OrchestratorConfig(
             autonomy_ceiling=AutonomyLevel.COLLABORATIVE,
-            on_proposal=track,
+            on_tool_call=track,
         )
         orch = Orchestrator(
             tract_with_commits,
@@ -888,8 +882,8 @@ class TestTriggerAutonomy:
         result = orch.run(trigger_autonomy=AutonomyLevel.AUTONOMOUS)
 
         # COLLABORATIVE ceiling wins (it's lower)
-        assert len(proposals_seen) >= 1
-        assert result.steps[0].proposal is not None
+        assert len(reviews_seen) >= 1
+        assert result.steps[0].review_decision == ToolCallDecision.APPROVED.value
 
 
 # ---------------------------------------------------------------------------
@@ -898,13 +892,13 @@ class TestTriggerAutonomy:
 
 
 class TestTopLevelExports:
-    def test_proposal_decision_importable(self):
-        """ProposalDecision is importable from tract."""
-        from tract import ProposalDecision as PD
+    def test_tool_call_decision_importable(self):
+        """ToolCallDecision is importable from tract."""
+        from tract import ToolCallDecision as TCD
 
-        assert PD.APPROVED == "approved"
-        assert PD.REJECTED == "rejected"
-        assert PD.MODIFIED == "modified"
+        assert TCD.APPROVED == "approved"
+        assert TCD.REJECTED == "rejected"
+        assert TCD.MODIFIED == "modified"
 
     def test_tool_call_importable(self):
         """ToolCall is importable from tract."""

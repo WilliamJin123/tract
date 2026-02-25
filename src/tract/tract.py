@@ -52,6 +52,10 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
     from sqlalchemy.orm import Session
 
+    from tract.hooks.compress import PendingCompress
+    from tract.hooks.gc import PendingGC
+    from tract.hooks.merge import PendingMerge
+    from tract.hooks.rebase import PendingRebase
     from tract.models.branch import BranchInfo
     from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning
     from tract.models.merge import ImportResult, MergeResult, RebaseResult
@@ -176,6 +180,8 @@ class Tract:
         self._operation_configs: OperationConfigs = OperationConfigs()
         self._operation_clients: OperationClients = OperationClients()
         self._active_tools: list[dict] | None = None
+        self._hooks: dict[str, Callable] = {}
+        self._in_hook: bool = False
 
     @classmethod
     def open(
@@ -2574,14 +2580,24 @@ class Tract:
         strategy: str = "auto",
         no_ff: bool = False,
         auto_commit: bool = False,
+        review: bool = False,
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         llm_config: LLMConfig | None = None,
         delete_branch: bool = False,
         message: str | None = None,
-    ) -> MergeResult:
+        triggered_by: str | None = None,
+    ) -> MergeResult | PendingMerge:
         """Merge a source branch into the current branch.
+
+        Fast-forward and clean merges proceed without hooks. Only the
+        conflict path supports hook interception.
+
+        Three-tier routing for conflict merges:
+        1. ``review=True``: Returns :class:`PendingMerge` to the caller.
+        2. Hook registered (``t.on("merge", handler)``): Fires the handler.
+        3. No hook: Auto-approves if resolutions available, else returns result.
 
         Args:
             source_branch: Name of the branch to merge.
@@ -2590,6 +2606,9 @@ class Tract:
             strategy: ``"auto"`` (default) or ``"semantic"``.
             no_ff: If True, always create a merge commit (no fast-forward).
             auto_commit: If True, auto-commit even with resolved conflicts.
+                Kept for backward compatibility; ``review=False`` with a
+                resolver achieves the same with hook support.
+            review: If True, return PendingMerge for conflict review.
             model: Override model for the default resolver.
             temperature: Override temperature for the default resolver.
             max_tokens: Override max_tokens for the default resolver.
@@ -2597,10 +2616,13 @@ class Tract:
             delete_branch: If True, delete the source branch after merge.
             message: Optional merge commit message. If not provided, a
                 default message is generated.
+            triggered_by: Optional provenance string.
 
         Returns:
-            :class:`MergeResult` describing the outcome.
+            :class:`MergeResult` (fast-forward, clean, or approved conflict) or
+            :class:`PendingMerge` (if ``review=True`` and conflicts exist).
         """
+        from tract.hooks.merge import PendingMerge as _PendingMerge
         from tract.models.merge import MergeResult
         from tract.operations.merge import merge_branches
 
@@ -2642,19 +2664,92 @@ class Tract:
             no_ff=no_ff,
         )
 
-        # Auto-commit resolved conflicts
-        if (
-            auto_commit
-            and result.merge_type == "conflict"
-            and result.resolutions
-            and len(result.resolutions) >= len(result.conflicts)
-        ):
-            return self.commit_merge(result, message=message)
+        # Fast-forward and clean merges: no hook interception
+        if result.merge_type in ("fast_forward", "clean"):
+            self._session.commit()
 
-        # Persist any changes (branch pointer moves, merge commits)
+            if delete_branch and (result.committed or result.merge_type == "fast_forward"):
+                from tract.operations.branch import delete_branch as _delete_branch
+
+                _delete_branch(
+                    source_branch,
+                    self._tract_id,
+                    self._ref_repo,
+                    self._commit_repo,
+                    self._parent_repo,
+                    force=True,
+                )
+                self._session.commit()
+
+            self._cache.clear()
+            return result
+
+        # Conflict path: build PendingMerge if resolutions available
+        if result.merge_type == "conflict" and result.resolutions:
+            current_branch = self._ref_repo.get_current_branch(self._tract_id) or ""
+
+            pending = _PendingMerge(
+                operation="merge",
+                tract=self,
+                resolutions=dict(result.resolutions),
+                source_branch=source_branch,
+                target_branch=current_branch,
+                conflicts=list(result.conflicts),
+                triggered_by=triggered_by,
+            )
+
+            # Store MergeResult for execute phase
+            pending._merge_result = result  # type: ignore[attr-defined]
+            pending._message = message  # type: ignore[attr-defined]
+            pending._delete_branch = delete_branch  # type: ignore[attr-defined]
+
+            # Set execute function
+            def _execute_merge_fn(p: _PendingMerge) -> MergeResult:
+                # Update resolutions on the merge result from the (possibly edited) pending
+                p._merge_result.resolutions = dict(p.resolutions)  # type: ignore[attr-defined]
+                committed_result = self.commit_merge(
+                    p._merge_result,  # type: ignore[attr-defined]
+                    message=p._message,  # type: ignore[attr-defined]
+                )
+                if p._delete_branch:  # type: ignore[attr-defined]
+                    from tract.operations.branch import delete_branch as _delete_branch
+
+                    _delete_branch(
+                        source_branch,
+                        self._tract_id,
+                        self._ref_repo,
+                        self._commit_repo,
+                        self._parent_repo,
+                        force=True,
+                    )
+                    self._session.commit()
+                p._committed_result = committed_result  # type: ignore[attr-defined]
+                return committed_result
+
+            pending._execute_fn = _execute_merge_fn
+
+            # Auto-commit backward compatibility
+            if auto_commit and len(result.resolutions) >= len(result.conflicts):
+                return self.commit_merge(result, message=message)
+
+            # Three-tier routing for conflict path:
+            if review:
+                return pending
+
+            has_hook = "merge" in self._hooks or "*" in self._hooks
+            if has_hook and not self._in_hook:
+                self._fire_hook(pending)
+                if pending.status == "approved" and hasattr(pending, "_committed_result"):
+                    return pending._committed_result  # type: ignore[attr-defined]
+                return pending
+
+            # No hook: auto-approve if all conflicts resolved
+            if len(result.resolutions) >= len(result.conflicts):
+                return pending.approve()
+
+        # Conflict without resolutions (no resolver): return as-is
         self._session.commit()
 
-        # Delete source branch if requested and merge was committed
         if delete_branch and (result.committed or result.merge_type == "fast_forward"):
             from tract.operations.branch import delete_branch as _delete_branch
 
@@ -2668,9 +2763,7 @@ class Tract:
             )
             self._session.commit()
 
-        # Clear compile cache (merge changes HEAD)
         self._cache.clear()
-
         return result
 
     def commit_merge(
@@ -2811,51 +2904,121 @@ class Tract:
         target_branch: str,
         *,
         resolver: object | None = None,
-    ) -> RebaseResult:
+        review: bool = False,
+        triggered_by: str | None = None,
+    ) -> RebaseResult | PendingRebase:
         """Rebase the current branch onto a target branch.
 
         Replays current branch's commits on top of the target branch tip,
         producing new commits with new hashes.
+
+        Three-tier routing determines what happens after planning:
+        1. ``review=True``: Returns :class:`PendingRebase` to the caller.
+        2. Hook registered (``t.on("rebase", handler)``): Fires the handler.
+        3. No hook: Auto-approves (executes immediately).
 
         Args:
             target_branch: Name of the branch to rebase onto.
             resolver: Optional resolver for semantic safety warnings.
                 Falls back to ``self._default_resolver`` if configured
                 via :meth:`configure_llm`.
+            review: If True, return PendingRebase for manual review.
+            triggered_by: Optional provenance string.
 
         Returns:
-            :class:`RebaseResult` describing the outcome.
+            :class:`RebaseResult` (if auto-approved or hook approves) or
+            :class:`PendingRebase` (if ``review=True``).
 
         Raises:
             RebaseError: On merge commits in range, resolver abort, etc.
             SemanticSafetyError: If safety warnings and no resolver.
         """
+        from tract.hooks.rebase import PendingRebase as _PendingRebase
         from tract.models.merge import RebaseResult
-        from tract.operations.rebase import rebase as _rebase
+        from tract.operations.rebase import execute_rebase, plan_rebase
 
         # Determine resolver
         effective_resolver = resolver
         if effective_resolver is None:
             effective_resolver = getattr(self, "_default_resolver", None)
 
-        result = _rebase(
+        # Plan phase: determine what to replay and check safety
+        plan = plan_rebase(
             tract_id=self._tract_id,
             target_branch=target_branch,
             commit_repo=self._commit_repo,
             ref_repo=self._ref_repo,
             parent_repo=self._parent_repo,
-            blob_repo=self._blob_repo,
-            commit_engine=self._commit_engine,
             resolver=effective_resolver,
-            event_repo=self._event_repo,
         )
 
-        self._session.commit()
+        if plan is None:
+            # Nothing to rebase
+            current_tip = self._ref_repo.get_head(self._tract_id)
+            return RebaseResult(new_head=current_tip or "")
 
-        # Clear compile cache (rebase changes HEAD and commit hashes)
-        self._cache.clear()
+        commits_to_replay, target_tip, warnings, current_branch, current_tip = plan
 
-        return result
+        # Build PendingRebase
+        pending = _PendingRebase(
+            operation="rebase",
+            tract=self,
+            replay_plan=[c.commit_hash for c in commits_to_replay],
+            target_base=target_tip,
+            warnings=warnings,
+            triggered_by=triggered_by,
+        )
+
+        # Store full CommitRow list for execute phase
+        pending._commit_rows = commits_to_replay  # type: ignore[attr-defined]
+        pending._current_branch = current_branch  # type: ignore[attr-defined]
+        pending._current_tip = current_tip  # type: ignore[attr-defined]
+
+        # Set execute function
+        def _execute_rebase_fn(p: _PendingRebase) -> RebaseResult:
+            # Filter commit rows to match the (possibly modified) replay plan
+            remaining_hashes = set(p.replay_plan)
+            rows_to_replay = [
+                c for c in p._commit_rows  # type: ignore[attr-defined]
+                if c.commit_hash in remaining_hashes
+            ]
+            # Maintain original order
+            hash_order = {h: i for i, h in enumerate(p.replay_plan)}
+            rows_to_replay.sort(key=lambda c: hash_order.get(c.commit_hash, 0))
+
+            result = execute_rebase(
+                tract_id=self._tract_id,
+                commits_to_replay=rows_to_replay,
+                target_tip=p.target_base,
+                current_branch=p._current_branch,  # type: ignore[attr-defined]
+                current_tip=p._current_tip,  # type: ignore[attr-defined]
+                commit_repo=self._commit_repo,
+                ref_repo=self._ref_repo,
+                parent_repo=self._parent_repo,
+                blob_repo=self._blob_repo,
+                commit_engine=self._commit_engine,
+                event_repo=self._event_repo,
+                warnings=p.warnings,
+            )
+            self._session.commit()
+            self._cache.clear()
+            p._rebase_result = result  # type: ignore[attr-defined]
+            return result
+
+        pending._execute_fn = _execute_rebase_fn
+
+        # Three-tier routing:
+        if review:
+            return pending
+
+        has_hook = "rebase" in self._hooks or "*" in self._hooks
+        if has_hook and not self._in_hook:
+            self._fire_hook(pending)
+            if pending.status == "approved" and hasattr(pending, "_rebase_result"):
+                return pending._rebase_result  # type: ignore[attr-defined]
+            return pending
+
+        return pending.approve()
 
     def compress(
         self,
@@ -2865,7 +3028,7 @@ class Tract:
         to_commit: str | None = None,
         target_tokens: int | None = None,
         preserve: list[str] | None = None,
-        auto_commit: bool = True,
+        review: bool = False,
         content: str | None = None,
         instructions: str | None = None,
         system_prompt: str | None = None,
@@ -2875,14 +3038,21 @@ class Tract:
         llm_config: LLMConfig | None = None,
         validator: Callable[[str], tuple[bool, str | None]] | None = None,
         max_retries: int = 3,
-    ) -> CompressResult | PendingCompression:
+        triggered_by: str | None = None,
+        two_stage: bool | None = None,
+    ) -> CompressResult | PendingCompress:
         """Compress commit chains into summaries.
 
-        Supports three modes:
+        Supports two content modes:
         - **Manual** (``content`` provided): Uses your text as the summary.
         - **LLM** (``configure_llm()`` called): Uses LLM for summarization.
-        - **Collaborative** (``auto_commit=False``): Returns PendingCompression
-          for review; call ``.approve()`` or :meth:`approve_compression` to finalize.
+
+        Three-tier routing determines what happens after summaries are generated:
+        1. ``review=True``: Returns :class:`PendingCompress` to the caller
+           for manual inspection and approval.
+        2. Hook registered (``t.on("compress", handler)``): Fires the hook
+           handler with the :class:`PendingCompress`; handler decides.
+        3. No hook: Auto-approves (commits immediately).
 
         PINNED commits survive verbatim. SKIP commits are excluded.
         Original commits remain in DB (non-destructive).
@@ -2893,7 +3063,8 @@ class Tract:
             to_commit: End of range (inclusive).
             target_tokens: Target token count for summaries.
             preserve: Hashes to treat as temporarily PINNED.
-            auto_commit: If True, commit immediately.
+            review: If True, return PendingCompress for manual review
+                instead of auto-committing or firing hooks.
             content: Manual summary text (bypasses LLM).
             instructions: Extra guidance appended to the **user message** of the
                 summarization LLM call (the default prompt is preserved). This
@@ -2918,9 +3089,19 @@ class Tract:
                 Takes the summary text, returns (ok, diagnosis). When provided,
                 each LLM summarization is wrapped with retry_with_steering.
             max_retries: Maximum retry attempts when validator is set (default 3).
+            triggered_by: Optional provenance string (e.g. "policy:auto_compress").
+                Passed to the PendingCompress for policy feedback routing.
+            two_stage: When True and LLM is available, generate guidance first
+                (what should the summary focus on?) then generate summaries using
+                that guidance. The guidance is stored on PendingCompress and is
+                editable via edit_guidance(). When None, uses the per-operation
+                config default. When False, uses one-shot summarization.
+                Full two-stage flow is a TODO -- parameter is threaded through
+                but the guidance generation step is not yet wired.
 
         Returns:
-            :class:`CompressResult` or :class:`PendingCompression`.
+            :class:`CompressResult` (if auto-approved or hook approves) or
+            :class:`PendingCompress` (if ``review=True``).
 
         Raises:
             DetachedHeadError: If HEAD is detached.
@@ -2928,7 +3109,7 @@ class Tract:
             LLMConfigError: If explicit LLM params given without client.
             RetryExhaustedError: If all retry attempts fail validation.
         """
-        from tract.models.compression import PendingCompression as _PendingCompression
+        from tract.hooks.compress import PendingCompress as _PendingCompress
         from tract.operations.compression import compress_range
 
         # Guard: detached HEAD blocks compression
@@ -2964,64 +3145,76 @@ class Tract:
             max_tokens=max_tokens, llm_config=llm_config,
         ) if llm_client is not None else {}
 
-        # Use savepoint for atomic rollback on partial failure
-        nested = self._session.begin_nested()
-        try:
-            result = compress_range(
-                tract_id=self._tract_id,
-                commit_repo=self._commit_repo,
-                blob_repo=self._blob_repo,
-                annotation_repo=self._annotation_repo,
-                ref_repo=self._ref_repo,
-                commit_engine=self._commit_engine,
-                token_counter=self._token_counter,
-                event_repo=self._event_repo,
-                parent_repo=self._parent_repo,
-                commits=commits,
-                from_commit=from_commit,
-                to_commit=to_commit,
-                target_tokens=target_tokens,
-                preserve=preserve,
-                auto_commit=auto_commit,
-                llm_client=llm_client,
-                llm_kwargs=llm_kwargs,
-                generation_config=llm_kwargs if llm_kwargs else None,
-                content=content,
-                instructions=instructions,
-                system_prompt=system_prompt,
-                type_registry=self._custom_type_registry,
-                validator=validator,
-                max_retries=max_retries,
-            )
-        except Exception:
-            nested.rollback()
-            raise
+        # compress_range() always returns PendingCompress now
+        pending = compress_range(
+            tract_id=self._tract_id,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            annotation_repo=self._annotation_repo,
+            ref_repo=self._ref_repo,
+            commit_engine=self._commit_engine,
+            token_counter=self._token_counter,
+            event_repo=self._event_repo,
+            parent_repo=self._parent_repo,
+            commits=commits,
+            from_commit=from_commit,
+            to_commit=to_commit,
+            target_tokens=target_tokens,
+            preserve=preserve,
+            llm_client=llm_client,
+            llm_kwargs=llm_kwargs,
+            generation_config=llm_kwargs if llm_kwargs else None,
+            content=content,
+            instructions=instructions,
+            system_prompt=system_prompt,
+            type_registry=self._custom_type_registry,
+            validator=validator,
+            max_retries=max_retries,
+            triggered_by=triggered_by,
+        )
 
-        if isinstance(result, _PendingCompression):
-            # No DB writes in collaborative path; rollback the unnecessary savepoint
-            nested.rollback()
-            # Set the commit function for later approval
-            result._commit_fn = self._finalize_compression
-            return result
+        # Wire the PendingCompress to this Tract instance
+        pending.tract = self  # type: ignore[assignment]
+        pending._execute_fn = self._finalize_compression
 
-        # Auto-commit mode: persist to DB
-        self._session.commit()
+        # Store two_stage flag on the pending for future wiring.
+        # TODO: When two_stage is True and LLM is available, generate guidance
+        # first (using prompts/guidance.py), store on pending.guidance, then
+        # generate summaries using that guidance in the prompt.
+        pending._two_stage = two_stage  # type: ignore[attr-defined]
 
-        # Clear compile cache
-        self._cache.clear()
+        # Three-tier routing:
+        # 1. review=True: return to caller for manual inspection
+        if review:
+            return pending
 
-        return result
+        # 2. Hook registered: fire the hook handler
+        has_hook = "compress" in self._hooks or "*" in self._hooks
+        if has_hook and not self._in_hook:
+            self._fire_hook(pending)
+            # After hook fires, the pending may be approved (result committed),
+            # rejected, or still pending (unresolved handler).
+            # If approved, _finalize_compression was called and the result is
+            # stored on pending._compress_result by our wrapper.
+            if pending.status == "approved" and hasattr(pending, "_compress_result"):
+                return pending._compress_result  # type: ignore[attr-defined]
+            # Otherwise return the pending for caller to inspect
+            return pending
+
+        # 3. No hook: auto-execute (call approve directly to get CompressResult)
+        return pending.approve()
 
     def _finalize_compression(
-        self, pending: PendingCompression
+        self, pending: PendingCompress | PendingCompression,
     ) -> CompressResult:
         """Finalize a pending compression by creating commits.
 
-        Called by PendingCompression.approve() via the _commit_fn closure,
-        or directly by approve_compression().
+        Called by PendingCompress.approve() via the _execute_fn closure,
+        or directly by approve_compression(). Accepts both the new
+        PendingCompress and the deprecated PendingCompression.
 
         Args:
-            pending: The PendingCompression to finalize.
+            pending: The PendingCompress (or PendingCompression) to finalize.
 
         Returns:
             CompressResult with committed compression details.
@@ -3065,15 +3258,22 @@ class Tract:
 
         self._session.commit()
         self._cache.clear()
+
+        # Store result on the pending for hook callers to retrieve
+        pending._compress_result = result  # type: ignore[attr-defined]
+
         return result
 
     def approve_compression(
-        self, pending: PendingCompression
+        self, pending: PendingCompress | PendingCompression,
     ) -> CompressResult:
         """Finalize a pending compression (alternative to pending.approve()).
 
+        Accepts both the new PendingCompress and the deprecated
+        PendingCompression for backward compatibility.
+
         Args:
-            pending: The PendingCompression to finalize.
+            pending: The PendingCompress (or PendingCompression) to finalize.
 
         Returns:
             CompressResult with committed compression details.
@@ -3086,11 +3286,18 @@ class Tract:
         orphan_retention_days: int = 7,
         archive_retention_days: int | None = None,
         branch: str | None = None,
-    ) -> GCResult:
+        review: bool = False,
+        triggered_by: str | None = None,
+    ) -> GCResult | PendingGC:
         """Garbage-collect unreachable commits.
 
         Removes commits not reachable from any branch tip, subject to
         configurable retention policies.
+
+        Three-tier routing determines what happens after planning:
+        1. ``review=True``: Returns :class:`PendingGC` to the caller.
+        2. Hook registered (``t.on("gc", handler)``): Fires the handler.
+        3. No hook: Auto-approves (executes immediately).
 
         Args:
             orphan_retention_days: Days before orphaned commits become
@@ -3100,16 +3307,19 @@ class Tract:
                 means archives are never removed.
             branch: If set, only check this branch for reachability.
                 WARNING: commits reachable from other branches may be removed.
+            review: If True, return PendingGC for manual review.
+            triggered_by: Optional provenance string.
 
         Returns:
-            :class:`GCResult` with removal counts and duration.
+            :class:`GCResult` (if auto-approved or hook approves) or
+            :class:`PendingGC` (if ``review=True``).
 
         Raises:
             CompressionError: If compression repository is not available.
         """
         from tract.exceptions import CompressionError
-        from tract.models.compression import GCResult as _GCResult
-        from tract.operations.compression import gc as _gc
+        from tract.hooks.gc import PendingGC as _PendingGC
+        from tract.operations.compression import execute_gc, plan_gc
 
         if self._event_repo is None:
             raise CompressionError("Compression repository not available")
@@ -3117,21 +3327,64 @@ class Tract:
         if self._parent_repo is None:
             raise CompressionError("Parent repository not available")
 
-        result = _gc(
+        # Plan phase: determine which commits to remove
+        commits_to_remove, tokens_to_free = plan_gc(
             tract_id=self._tract_id,
             commit_repo=self._commit_repo,
             ref_repo=self._ref_repo,
             parent_repo=self._parent_repo,
-            blob_repo=self._blob_repo,
             event_repo=self._event_repo,
             orphan_retention_days=orphan_retention_days,
             archive_retention_days=archive_retention_days,
             branch=branch,
         )
 
-        self._cache.clear()
-        self._session.commit()
-        return result
+        # Build PendingGC
+        pending = _PendingGC(
+            operation="gc",
+            tract=self,
+            commits_to_remove=[c.commit_hash for c in commits_to_remove],
+            tokens_to_free=tokens_to_free,
+            triggered_by=triggered_by,
+        )
+
+        # Store the full CommitRow list for execute phase
+        pending._commit_rows = commits_to_remove  # type: ignore[attr-defined]
+
+        # Set execute function
+        def _execute_gc_fn(p: _PendingGC) -> GCResult:
+            # Filter commit rows to match the (possibly modified) hash list
+            remaining_hashes = set(p.commits_to_remove)
+            rows_to_remove = [
+                c for c in p._commit_rows  # type: ignore[attr-defined]
+                if c.commit_hash in remaining_hashes
+            ]
+            result = execute_gc(
+                tract_id=self._tract_id,
+                commits_to_remove=rows_to_remove,
+                commit_repo=self._commit_repo,
+                blob_repo=self._blob_repo,
+                event_repo=self._event_repo,
+            )
+            self._cache.clear()
+            self._session.commit()
+            p._gc_result = result  # type: ignore[attr-defined]
+            return result
+
+        pending._execute_fn = _execute_gc_fn
+
+        # Three-tier routing:
+        if review:
+            return pending
+
+        has_hook = "gc" in self._hooks or "*" in self._hooks
+        if has_hook and not self._in_hook:
+            self._fire_hook(pending)
+            if pending.status == "approved" and hasattr(pending, "_gc_result"):
+                return pending._gc_result  # type: ignore[attr-defined]
+            return pending
+
+        return pending.approve()
 
     def record_usage(
         self,
@@ -3713,6 +3966,91 @@ class Tract:
 
             if isinstance(self._orchestrator, _Orchestrator):
                 self._orchestrator.pause()  # type: ignore[union-attr]
+
+    # ------------------------------------------------------------------
+    # Hook system
+    # ------------------------------------------------------------------
+
+    _HOOKABLE_OPS: set[str] = {"compress", "gc", "rebase", "merge", "policy"}
+
+    def on(self, operation: str, handler: Callable) -> None:
+        """Register a hook handler for an operation.
+
+        Args:
+            operation: Operation name ("compress", "gc", "rebase", "merge",
+                "policy", or "*" for catch-all).
+            handler: Callable that takes a Pending subclass. Handler calls
+                methods on the Pending (approve, reject, edit_summary, etc.).
+
+        Raises:
+            ValueError: If operation is not hookable.
+        """
+        if operation != "*" and operation not in self._HOOKABLE_OPS:
+            raise ValueError(
+                f"Cannot hook '{operation}': not a hookable operation. "
+                f"Hookable operations: {', '.join(sorted(self._HOOKABLE_OPS))}"
+            )
+        self._hooks[operation] = handler
+
+    def off(self, operation: str) -> None:
+        """Remove a hook handler for an operation.
+
+        Args:
+            operation: Operation name to remove the handler for.
+        """
+        self._hooks.pop(operation, None)
+
+    @property
+    def hooks(self) -> dict[str, Callable]:
+        """Currently registered hook handlers (copy)."""
+        return dict(self._hooks)
+
+    def _fire_hook(self, pending: object) -> None:
+        """Route a Pending through the hook system.
+
+        Three-tier routing:
+        1. Specific hook for this operation
+        2. Catch-all ``"*"`` hook
+        3. Auto-approve (no hook)
+
+        Recursion guard: if already inside a hook handler, auto-approve.
+        This prevents direct recursion (compress -> hook -> compress) and
+        indirect cycles (compress -> hook -> gc -> hook -> compress).
+
+        Unresolved handler guard: if the handler returns without calling
+        approve() or reject(), emit a warning.
+
+        Args:
+            pending: A Pending subclass instance with `operation` and `status`
+                attributes, and `approve()` method.
+        """
+        import warnings
+
+        # Recursion guard
+        if self._in_hook:
+            pending.approve()  # type: ignore[union-attr]
+            return
+
+        # Find handler: specific > catch-all > auto-approve
+        handler = self._hooks.get(pending.operation) or self._hooks.get("*")  # type: ignore[union-attr]
+
+        if handler is None:
+            pending.approve()  # type: ignore[union-attr]
+            return
+
+        self._in_hook = True
+        try:
+            handler(pending)
+        finally:
+            self._in_hook = False
+
+        # Unresolved handler guard
+        if pending.status == "pending":  # type: ignore[union-attr]
+            warnings.warn(
+                f"Hook handler for '{pending.operation}' returned without calling "  # type: ignore[union-attr]
+                f"approve() or reject(). The pending operation remains unresolved.",
+                stacklevel=2,
+            )
 
     def close(self) -> None:
         """Close the session and dispose the engine."""

@@ -11,7 +11,7 @@ import click
 @click.option("--to", "to_commit", default=None, help="End of range (inclusive).")
 @click.option("--content", "manual_content", default=None, help="Manual summary text (bypasses LLM).")
 @click.option("--instructions", default=None, help="Extra guidance appended to the summarization prompt.")
-@click.option("--edit", "do_edit", is_flag=True, help="Review and edit summaries in $EDITOR before committing.")
+@click.option("--review", "do_review", is_flag=True, help="Review and edit summaries in $EDITOR before committing.")
 @click.option("--preserve", multiple=True, help="Commit hashes to treat as PINNED (repeatable).")
 @click.pass_context
 def compress(
@@ -21,13 +21,13 @@ def compress(
     to_commit: str | None,
     manual_content: str | None,
     instructions: str | None,
-    do_edit: bool,
+    do_review: bool,
     preserve: tuple[str, ...],
 ) -> None:
     """Compress commit chains into summaries.
 
     Uses LLM summarization by default. Pass --content for manual mode.
-    Use --edit to review and edit each summary in $EDITOR before committing.
+    Use --review to review and edit each summary in $EDITOR before committing.
     """
     from tract.cli import _tract_session
     from tract.cli.formatting import format_compress_result
@@ -47,9 +47,9 @@ def compress(
         if preserve:
             kwargs["preserve"] = list(preserve)
 
-        if do_edit:
-            # Collaborative mode: LLM drafts, user edits in $EDITOR
-            kwargs["auto_commit"] = False
+        if do_review:
+            # Review mode: LLM drafts, user edits in $EDITOR
+            kwargs["review"] = True
             pending = t.compress(**kwargs)
 
             console.print(

@@ -5,6 +5,13 @@ actions based on autonomy level, and logs audit entries for every evaluation.
 
 Recursion guard: if a policy's action triggers compile() or commit(),
 the evaluator will not re-enter evaluate() (same pattern as Tract._in_batch).
+
+Phase 2 integration: collaborative mode now routes through the hook system
+via PendingPolicy. The old PolicyProposal / on_proposal callback pattern
+is replaced. Three-tier handler precedence:
+    1. User hook (t.on("policy", handler)) -- highest priority
+    2. Policy.default_handler() -- policy-specific review logic
+    3. Auto-approve -- if no hook and no default_handler override
 """
 
 from __future__ import annotations
@@ -15,12 +22,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from tract.models.annotations import Priority
-from tract.models.policy import EvaluationResult, PolicyAction, PolicyProposal
+from tract.models.policy import EvaluationResult, PolicyAction
 from tract.policy.protocols import Policy
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tract.hooks.policy import PendingPolicy
+    from tract.hooks.validation import HookRejection
     from tract.storage.schema import PolicyProposalRow
     from tract.storage.sqlite import SqlitePolicyRepository
     from tract.tract import Tract
@@ -33,14 +42,13 @@ class PolicyEvaluator:
 
     Supports the full autonomy spectrum:
     - **autonomous**: executes actions immediately
-    - **collaborative**: creates proposals for user approval
+    - **collaborative**: creates PendingPolicy, routes through hook system
     - **manual/supervised**: skips execution, logs only
 
     Features:
     - Priority-sorted evaluation (lower priority runs first)
     - Recursion guard (prevents infinite loops from policies triggering compile/commit)
     - Cooldown tracking (prevents rapid re-firing)
-    - Pending proposal deduplication (skips if pending proposal exists for same policy)
     - Audit logging (every evaluation logged to DB if policy_repo available)
     """
 
@@ -49,7 +57,7 @@ class PolicyEvaluator:
         tract: Tract,
         policies: list[Policy] | None = None,
         policy_repo: SqlitePolicyRepository | None = None,
-        on_proposal: Callable[[PolicyProposal], None] | None = None,
+        on_proposal: Callable | None = None,
         cooldown_seconds: float = 0,
     ) -> None:
         self._tract = tract
@@ -57,7 +65,7 @@ class PolicyEvaluator:
             policies or [], key=lambda p: p.priority
         )
         self._policy_repo = policy_repo
-        self._on_proposal = on_proposal
+        self._on_proposal = on_proposal  # Kept for backward compatibility
         self._paused: bool = False
         self._evaluating: bool = False
         self._last_fired: dict[str, datetime] = {}
@@ -122,7 +130,7 @@ class PolicyEvaluator:
         # Filter policies matching this trigger
         matching = [p for p in self._policies if p.trigger == trigger]
 
-        # Get pending proposal policy names (for dedup)
+        # Get pending proposal policy names (for dedup) -- backward compat
         pending_names: set[str] = set()
         if self._policy_repo is not None:
             pending_rows = self._policy_repo.get_pending_proposals(
@@ -191,13 +199,7 @@ class PolicyEvaluator:
             if action.autonomy == "autonomous":
                 result = self._execute_action(policy, action)
             elif action.autonomy == "collaborative":
-                proposal = self._create_proposal(policy, action)
-                result = EvaluationResult(
-                    policy_name=policy.name,
-                    triggered=True,
-                    action=action,
-                    outcome="proposed",
-                )
+                result = self._handle_collaborative(policy, action)
             else:
                 # manual / supervised -- skip execution
                 result = EvaluationResult(
@@ -236,6 +238,11 @@ class PolicyEvaluator:
                 action.action_type,
                 commit_hash,
             )
+            # Notify policy of success
+            try:
+                policy.on_success(commit_hash)
+            except Exception:
+                pass  # Don't let on_success errors break the flow
             return EvaluationResult(
                 policy_name=policy.name,
                 triggered=True,
@@ -298,69 +305,146 @@ class PolicyEvaluator:
         raise ValueError(f"Unknown action_type: {action.action_type}")
 
     # ------------------------------------------------------------------
-    # Proposal management
+    # Collaborative mode -- hook system integration
     # ------------------------------------------------------------------
 
-    def _create_proposal(
+    def _handle_collaborative(
         self, policy: Policy, action: PolicyAction
-    ) -> PolicyProposal:
-        """Create a PolicyProposal for collaborative mode."""
-        proposal_id = uuid.uuid4().hex
-        now = datetime.now()
+    ) -> EvaluationResult:
+        """Handle collaborative mode via PendingPolicy + hook system.
 
-        proposal = PolicyProposal(
-            proposal_id=proposal_id,
+        Three-tier handler precedence:
+        1. User hook (t.on("policy", handler))
+        2. Policy.default_handler()
+        3. Auto-approve
+        """
+        from tract.hooks.policy import PendingPolicy
+
+        pending = PendingPolicy(
+            operation="policy",
+            tract=self._tract,
             policy_name=policy.name,
-            action=action,
-            created_at=now,
+            action_type=action.action_type,
+            action_params=dict(action.params),
+            reason=action.reason,
+            triggered_by=f"policy:{policy.name}",
         )
 
-        # Set the execute function
-        def _execute_fn(p: PolicyProposal) -> object:
-            result = self._dispatch_action(p.action)
-            p.status = "executed"
-            if self._policy_repo is not None:
-                self._policy_repo.update_proposal_status(
-                    p.proposal_id, "executed", datetime.now()
+        # Set execute function to dispatch the action
+        def _execute_fn(p: PendingPolicy) -> object:
+            result = self._dispatch_action(
+                PolicyAction(
+                    action_type=p.action_type,
+                    params=dict(p.action_params),
+                    reason=p.reason,
+                    autonomy="collaborative",
                 )
-                self._tract._session.commit()
+            )
             return result
 
-        proposal._execute_fn = _execute_fn
+        pending._execute_fn = _execute_fn
 
-        # Set the reject function
-        def _reject_fn(p: PolicyProposal, reason: str = "") -> None:
-            p.status = "rejected"
-            if self._policy_repo is not None:
-                self._policy_repo.update_proposal_status(
-                    p.proposal_id, "rejected", datetime.now()
-                )
-                self._tract._session.commit()
-
-        proposal._reject_fn = _reject_fn
-
-        # Persist to DB if repo available
+        # Also persist proposal to DB for backward compatibility
         if self._policy_repo is not None:
             from tract.storage.schema import PolicyProposalRow
 
             row = PolicyProposalRow(
-                proposal_id=proposal_id,
+                proposal_id=pending.pending_id,
                 tract_id=self._tract.tract_id,
                 policy_name=policy.name,
                 action_type=action.action_type,
                 action_params_json=action.params,
                 reason=action.reason,
                 status="pending",
-                created_at=now,
+                created_at=datetime.now(),
             )
             self._policy_repo.save_proposal(row)
             self._tract._session.commit()
 
-        # Call the on_proposal callback if set
-        if self._on_proposal is not None:
-            self._on_proposal(proposal)
+        # Three-tier routing for policy:
+        # 1. User hook (t.on("policy", handler))
+        has_user_hook = (
+            "policy" in self._tract._hooks or "*" in self._tract._hooks
+        )
 
-        return proposal
+        if has_user_hook and not self._tract._in_hook:
+            # User hook takes precedence
+            self._tract._fire_hook(pending)
+        else:
+            # 2. Policy.default_handler()
+            try:
+                policy.default_handler(pending)
+            except Exception as exc:
+                logger.error(
+                    "Policy '%s' default_handler raised: %s", policy.name, exc
+                )
+                if pending.status == "pending":
+                    pending.reject(f"default_handler error: {exc}")
+
+        # Backward compatibility: call on_proposal callback if set
+        if self._on_proposal is not None and pending.status == "pending":
+            try:
+                self._on_proposal(pending)
+            except Exception:
+                pass
+
+        # Route feedback based on outcome
+        if pending.status == "approved":
+            # Update DB if persisted
+            if self._policy_repo is not None:
+                self._policy_repo.update_proposal_status(
+                    pending.pending_id, "executed", datetime.now()
+                )
+                self._tract._session.commit()
+            # Notify policy of success
+            try:
+                policy.on_success(getattr(pending, "_result", None))
+            except Exception:
+                pass
+            return EvaluationResult(
+                policy_name=policy.name,
+                triggered=True,
+                action=action,
+                outcome="executed",
+            )
+
+        if pending.status == "rejected":
+            # Update DB if persisted
+            if self._policy_repo is not None:
+                self._policy_repo.update_proposal_status(
+                    pending.pending_id, "rejected", datetime.now()
+                )
+                self._tract._session.commit()
+            # Notify policy of rejection
+            from tract.hooks.validation import HookRejection
+
+            rejection = HookRejection(
+                reason=pending.rejection_reason or "",
+                pending=pending,
+                rejection_source="hook",
+            )
+            try:
+                policy.on_rejection(rejection)
+            except Exception:
+                pass
+            return EvaluationResult(
+                policy_name=policy.name,
+                triggered=True,
+                action=action,
+                outcome="proposed",  # Still "proposed" for backward compat
+            )
+
+        # Still pending (handler didn't resolve) -- treat as proposed
+        return EvaluationResult(
+            policy_name=policy.name,
+            triggered=True,
+            action=action,
+            outcome="proposed",
+        )
+
+    # ------------------------------------------------------------------
+    # Legacy proposal management (backward compatibility)
+    # ------------------------------------------------------------------
 
     def approve_proposal(self, proposal_id: str) -> object:
         """Approve and execute a pending proposal.
@@ -435,12 +519,15 @@ class PolicyEvaluator:
 
         raise PolicyExecutionError("No policy repository configured")
 
-    def get_pending_proposals(self) -> list[PolicyProposal]:
-        """Get all pending proposals, with reconstructed execute functions.
+    def get_pending_proposals(self) -> list:
+        """Get all pending proposals.
 
         Returns:
-            List of PolicyProposal domain objects with functional _execute_fn.
+            List of PolicyProposal objects with status="pending".
+            Kept for backward compatibility.
         """
+        from tract.models.policy import PolicyProposal
+
         if self._policy_repo is None:
             return []
 
@@ -468,23 +555,20 @@ class PolicyEvaluator:
 
     def _reconstruct_proposal_fn(
         self, row: PolicyProposalRow
-    ) -> Callable[[PolicyProposal], object]:
-        """Build a closure from a stored proposal row for deferred execution.
-
-        Enables proposals loaded from DB after restart to remain approvable.
-        """
+    ) -> Callable:
+        """Build a closure from a stored proposal row for deferred execution."""
         action = PolicyAction(
             action_type=row.action_type,
             params=row.action_params_json or {},
             reason=row.reason or "",
         )
 
-        def _execute_fn(p: PolicyProposal) -> object:
+        def _execute_fn(p: object) -> object:
             result = self._dispatch_action(action)
-            p.status = "executed"
+            p.status = "executed"  # type: ignore[attr-defined]
             if self._policy_repo is not None:
                 self._policy_repo.update_proposal_status(
-                    p.proposal_id, "executed", datetime.now()
+                    p.proposal_id, "executed", datetime.now()  # type: ignore[attr-defined]
                 )
                 self._tract._session.commit()
             return result
@@ -493,14 +577,14 @@ class PolicyEvaluator:
 
     def _reconstruct_reject_fn(
         self, row: PolicyProposalRow
-    ) -> Callable[[PolicyProposal, str], None]:
+    ) -> Callable:
         """Build a reject closure from a stored proposal row."""
 
-        def _reject_fn(p: PolicyProposal, reason: str = "") -> None:
-            p.status = "rejected"
+        def _reject_fn(p: object, reason: str = "") -> None:
+            p.status = "rejected"  # type: ignore[attr-defined]
             if self._policy_repo is not None:
                 self._policy_repo.update_proposal_status(
-                    p.proposal_id, "rejected", datetime.now()
+                    p.proposal_id, "rejected", datetime.now()  # type: ignore[attr-defined]
                 )
                 self._tract._session.commit()
 

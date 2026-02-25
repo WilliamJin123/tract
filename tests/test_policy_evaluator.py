@@ -46,7 +46,12 @@ from tract import (
 
 
 class DummyPolicy(Policy):
-    """Configurable test policy."""
+    """Configurable test policy.
+
+    By default, default_handler does nothing (leaves pending unresolved)
+    so tests can verify the proposal lifecycle. Set auto_approve_default=True
+    to use the ABC's auto-approve behavior.
+    """
 
     def __init__(
         self,
@@ -55,12 +60,14 @@ class DummyPolicy(Policy):
         trigger: str = "compile",
         action: PolicyAction | None = None,
         should_raise: Exception | None = None,
+        auto_approve_default: bool = False,
     ):
         self._name = name
         self._priority = priority
         self._trigger = trigger
         self._action = action
         self._should_raise = should_raise
+        self._auto_approve_default = auto_approve_default
         self.evaluate_count = 0
 
     @property
@@ -80,6 +87,11 @@ class DummyPolicy(Policy):
         if self._should_raise:
             raise self._should_raise
         return self._action
+
+    def default_handler(self, pending) -> None:
+        """Override: leave pending unresolved by default for test control."""
+        if self._auto_approve_default:
+            pending.approve()
 
 
 class RecursivePolicy(Policy):

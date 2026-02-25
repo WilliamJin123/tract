@@ -51,16 +51,23 @@ from tract.policy.builtin.pin import PinPolicy
 
 
 class CountingPolicy(Policy):
-    """Test helper that counts evaluations and returns configurable action."""
+    """Test helper that counts evaluations and returns configurable action.
+
+    default_handler does nothing (leaves pending unresolved) to preserve
+    the proposal-based test workflow. Set auto_approve_default=True to
+    use auto-approve behavior.
+    """
 
     def __init__(
         self, name: str = "counter", priority: int = 100,
         trigger: str = "compile", action: PolicyAction | None = None,
+        auto_approve_default: bool = False,
     ):
         self._name = name
         self._priority = priority
         self._trigger = trigger
         self._action = action
+        self._auto_approve_default = auto_approve_default
         self.count = 0
 
     @property
@@ -78,6 +85,11 @@ class CountingPolicy(Policy):
     def evaluate(self, tract: Tract) -> PolicyAction | None:
         self.count += 1
         return self._action
+
+    def default_handler(self, pending) -> None:
+        """Leave pending unresolved by default for test control."""
+        if self._auto_approve_default:
+            pending.approve()
 
 
 # ---------------------------------------------------------------------------
@@ -138,11 +150,19 @@ class TestAutoCompressOnCompile:
         config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=10))
         t = Tract.open(":memory:", config=config)
         try:
-            proposals: list[PolicyProposal] = []
+            proposals = []
+
+            # Register a policy hook that captures but doesn't approve/reject
+            # This overrides the policy's default_handler auto-approve
+            def policy_hook(pending):
+                proposals.append(pending)
+                # Leave pending unresolved to test proposal creation
+
+            t.on("policy", policy_hook)
+
             compress_policy = CompressPolicy(threshold=0.5, summary_content="Compressed")
             t.configure_policies(
                 policies=[compress_policy],
-                on_proposal=lambda p: proposals.append(p),
             )
 
             # Commit enough to exceed threshold
@@ -358,13 +378,19 @@ class TestMultiplePoliciesCompose:
         config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=10))
         t = Tract.open(":memory:", config=config)
         try:
-            proposals: list[PolicyProposal] = []
+            proposals = []
+
+            # Register a policy hook to capture proposals without auto-approving
+            def policy_hook(pending):
+                proposals.append(pending)
+
+            t.on("policy", policy_hook)
+
             pin = PinPolicy()
             compress = CompressPolicy(threshold=0.5, summary_content="Summary")
 
             t.configure_policies(
                 policies=[compress, pin],  # Deliberately reverse order
-                on_proposal=lambda p: proposals.append(p),
             )
 
             # Commit instruction (triggers pin, which is commit-triggered)

@@ -2,6 +2,11 @@
 
 Provides AutonomyLevel, OrchestratorState, TriggerConfig, and
 OrchestratorConfig for configuring the context management orchestrator.
+
+Autonomy levels map to hook configurations:
+- AUTONOMOUS: no hooks (auto-approve everything)
+- COLLABORATIVE: on_tool_call callback reviews each tool call
+- MANUAL: all tool calls skipped
 """
 
 from __future__ import annotations
@@ -12,9 +17,9 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from tract.orchestrator.models import (
-        OrchestratorProposal,
-        ProposalResponse,
         StepResult,
+        ToolCall,
+        ToolCallReview,
     )
 
 
@@ -23,6 +28,12 @@ class AutonomyLevel(str, enum.Enum):
 
     Controls how much independence the orchestrator has in executing
     context management actions.
+
+    - ``MANUAL``: All tool calls are skipped.
+    - ``COLLABORATIVE``: Tool calls go through the ``on_tool_call``
+      review callback before execution.
+    - ``AUTONOMOUS``: Tool calls execute directly; hookable operations
+      are still gated by Tract's hook system.
     """
 
     MANUAL = "manual"
@@ -88,7 +99,9 @@ class OrchestratorConfig:
         temperature: LLM temperature for orchestrator calls.
         max_tokens: Maximum tokens for LLM response in orchestrator calls.
         extra_llm_kwargs: Additional LLM kwargs (top_p, seed, etc.) forwarded to client.chat().
-        on_proposal: Callback invoked when the orchestrator proposes an action.
+        on_tool_call: Callback invoked in collaborative mode to review a
+            tool call. Takes a ToolCall, returns a ToolCallReview.
+            Replaces the old ``on_proposal`` callback.
         on_step: Callback invoked after each orchestrator step completes.
     """
 
@@ -102,5 +115,5 @@ class OrchestratorConfig:
     temperature: float = 0.0
     max_tokens: int | None = None
     extra_llm_kwargs: dict | None = None
-    on_proposal: Callable[[OrchestratorProposal], ProposalResponse] | None = None
+    on_tool_call: Callable[[ToolCall], ToolCallReview] | None = None
     on_step: Callable[[StepResult], None] | None = None

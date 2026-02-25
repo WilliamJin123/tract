@@ -75,7 +75,6 @@ class TestCompressPolicy:
             assert action.action_type == "compress"
             assert action.autonomy == "collaborative"
             assert "exceeds 90%" in action.reason
-            assert action.params["auto_commit"] is True
             assert action.params["content"] == "Summary"
         finally:
             t.close()

@@ -17,6 +17,7 @@ from tract.models.policy import PolicyAction
 from tract.policy.protocols import Policy
 
 if TYPE_CHECKING:
+    from tract.hooks.policy import PendingPolicy
     from tract.tract import Tract
 
 
@@ -93,6 +94,14 @@ class ArchivePolicy(Policy):
             )
 
         return None
+
+    # ------------------------------------------------------------------
+    # Hook integration
+    # ------------------------------------------------------------------
+
+    def default_handler(self, pending: PendingPolicy) -> None:
+        """Auto-approve archive proposals."""
+        pending.approve()
 
     # ------------------------------------------------------------------
     # Serialization

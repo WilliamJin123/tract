@@ -38,6 +38,11 @@ class CompressResult:
 class PendingCompression:
     """A compression that has been planned but not yet committed.
 
+    .. deprecated::
+        Use :class:`tract.hooks.compress.PendingCompress` instead.
+        This class is kept for backward compatibility with existing tests
+        and will be removed in a future version.
+
     Mutable: users can edit summaries before approving.
     The _commit_fn is set internally by Tract and should not be
     set by users directly.

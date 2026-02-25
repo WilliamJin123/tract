@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 from tract.models.policy import PolicyAction
 
 if TYPE_CHECKING:
+    from tract.hooks.policy import PendingPolicy
+    from tract.hooks.validation import HookRejection
     from tract.tract import Tract
 
 
@@ -66,3 +68,46 @@ class Policy(ABC):
     def trigger(self) -> str:
         """When this policy evaluates: 'compile' or 'commit'. Default 'compile'."""
         return "compile"
+
+    # ------------------------------------------------------------------
+    # Hook integration (Phase 2)
+    # ------------------------------------------------------------------
+
+    def default_handler(self, pending: PendingPolicy) -> None:
+        """Override for policy-specific review logic.
+
+        Called when a collaborative policy action is routed through the
+        hook system and no user hook is registered for "policy". This
+        provides a policy-specific default behavior (e.g., auto-approve
+        with specific conditions, add cooldown logic).
+
+        Overridden by user hooks (``t.on("policy", handler)``).
+
+        Args:
+            pending: The PendingPolicy to approve, reject, or modify.
+        """
+        pending.approve()
+
+    def on_rejection(self, rejection: HookRejection) -> None:
+        """Adapt behavior after a hook rejection.
+
+        Called when the hook handler (or default_handler) rejects the
+        policy action. Policies can use this for cooldown, parameter
+        adjustment, or other adaptive behavior.
+
+        Args:
+            rejection: Structured rejection information.
+        """
+        pass
+
+    def on_success(self, result: object) -> None:
+        """Learn from successful execution.
+
+        Called when the policy action is approved and executed
+        successfully. Policies can use this for logging, statistics,
+        or adjusting future behavior.
+
+        Args:
+            result: The result of executing the action.
+        """
+        pass

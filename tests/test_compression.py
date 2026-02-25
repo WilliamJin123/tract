@@ -15,6 +15,7 @@ from tract import (
     CompressionError,
     DialogueContent,
     InstructionContent,
+    PendingCompress,
     PendingCompression,
     Priority,
     Tract,
@@ -67,7 +68,7 @@ from tests.conftest import make_tract_with_commits
 
 
 class TestAutonomousMode:
-    """Tests for LLM-based autonomous compression (auto_commit=True)."""
+    """Tests for LLM-based autonomous compression (default, no review)."""
 
     def test_compress_all_normal_commits(self):
         """Compress 5 normal commits into a summary."""
@@ -194,16 +195,16 @@ class TestAutonomousMode:
 class TestCollaborativeMode:
     """Tests for LLM compression with review before commit."""
 
-    def test_compress_auto_commit_false(self):
-        """auto_commit=False returns PendingCompression with summaries."""
+    def test_compress_review_true(self):
+        """review=True returns PendingCompress with summaries."""
         t, hashes = make_tract_with_commits(5)
 
         mock = MockLLMClient()
         t.configure_llm(mock)
 
-        result = t.compress(auto_commit=False)
+        result = t.compress(review=True)
 
-        assert isinstance(result, PendingCompression)
+        assert isinstance(result, PendingCompress)
         assert len(result.summaries) >= 1
         assert len(result.source_commits) == 5
         assert result.original_tokens > 0
@@ -216,8 +217,8 @@ class TestCollaborativeMode:
         mock = MockLLMClient(responses=["Original summary"])
         t.configure_llm(mock)
 
-        pending = t.compress(auto_commit=False)
-        assert isinstance(pending, PendingCompression)
+        pending = t.compress(review=True)
+        assert isinstance(pending, PendingCompress)
 
         # Edit the summary
         pending.edit_summary(0, "Edited summary text")
@@ -240,8 +241,8 @@ class TestCollaborativeMode:
         mock = MockLLMClient()
         t.configure_llm(mock)
 
-        pending = t.compress(auto_commit=False)
-        assert isinstance(pending, PendingCompression)
+        pending = t.compress(review=True)
+        assert isinstance(pending, PendingCompress)
 
         result = pending.approve()
 
@@ -257,8 +258,8 @@ class TestCollaborativeMode:
         mock = MockLLMClient()
         t.configure_llm(mock)
 
-        pending = t.compress(auto_commit=False)
-        assert isinstance(pending, PendingCompression)
+        pending = t.compress(review=True)
+        assert isinstance(pending, PendingCompress)
 
         result = t.approve_compression(pending)
 
@@ -671,8 +672,8 @@ class TestStackedCompression:
         t.configure_llm(mock)
 
         # Plan compression (collaborative mode)
-        pending = t.compress(auto_commit=False)
-        assert isinstance(pending, PendingCompression)
+        pending = t.compress(review=True)
+        assert isinstance(pending, PendingCompress)
 
         # Add a new commit, changing HEAD
         t.commit(DialogueContent(role="user", text="Sneaky new commit"))

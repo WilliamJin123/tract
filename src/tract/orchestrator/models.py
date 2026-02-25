@@ -1,8 +1,12 @@
-"""Orchestrator result and proposal models.
+"""Orchestrator result and step models.
 
-Provides ToolCall, ProposalDecision, OrchestratorProposal,
-ProposalResponse, StepResult, and OrchestratorResult for the
-orchestrator's proposal-review-execute loop.
+Provides ToolCall, ToolCallDecision, StepResult, and OrchestratorResult
+for the orchestrator's hook-based tool-calling loop.
+
+Note: OrchestratorProposal, ProposalResponse, and ProposalDecision have
+been removed in favour of the unified hook system. Collaborative-mode
+review is now handled by a simple ``on_tool_call`` callback that returns
+a ToolCallDecision.
 """
 
 from __future__ import annotations
@@ -28,39 +32,27 @@ class ToolCall:
     arguments: dict = field(default_factory=dict)
 
 
-class ProposalDecision(str, enum.Enum):
-    """Decision outcomes for an orchestrator proposal."""
+class ToolCallDecision(str, enum.Enum):
+    """Decision outcomes for an orchestrator tool-call review.
+
+    Replaces the old ProposalDecision enum. Used by the
+    ``on_tool_call`` callback to signal approve/reject/modify.
+    """
 
     APPROVED = "approved"
     REJECTED = "rejected"
     MODIFIED = "modified"
 
 
-@dataclass
-class OrchestratorProposal:
-    """A proposed action from the orchestrator awaiting review.
-
-    Mutable: the decision field changes as the proposal is
-    approved, rejected, or modified.
-    """
-
-    proposal_id: str
-    recommended_action: ToolCall
-    reasoning: str
-    alternatives: list[ToolCall] = field(default_factory=list)
-    context_summary: str = ""
-    decision: ProposalDecision | str = "pending"
-    modified_action: ToolCall | None = None
-
-
 @dataclass(frozen=True)
-class ProposalResponse:
-    """Response to an orchestrator proposal from a callback.
+class ToolCallReview:
+    """Response from a tool-call review callback.
 
-    Frozen: once a callback decides, the response is immutable.
+    Replaces the old ProposalResponse dataclass. Returned by the
+    ``on_tool_call`` callback in collaborative mode.
     """
 
-    decision: ProposalDecision
+    decision: ToolCallDecision
     modified_action: ToolCall | None = None
     reason: str = ""
 
@@ -77,7 +69,7 @@ class StepResult:
     result_output: str = ""
     result_error: str = ""
     success: bool = True
-    proposal: OrchestratorProposal | None = None
+    review_decision: str = ""
 
 
 @dataclass(frozen=True)

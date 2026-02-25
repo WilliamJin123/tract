@@ -59,6 +59,9 @@ from tract.models.merge import (
 # Compression models
 from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning
 
+# Hook system
+from tract.hooks import Pending, PendingCompress, ValidationResult, HookRejection
+
 # Compression prompts (for extending the default system prompt)
 from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM
 
@@ -89,15 +92,19 @@ from tract.orchestrator import (
     AutonomyLevel,
     OrchestratorState,
     TriggerConfig,
-    OrchestratorProposal,
-    ProposalDecision,
-    ProposalResponse,
+    ToolCallDecision,
+    ToolCallReview,
     StepResult,
     OrchestratorResult,
     auto_approve,
     log_and_approve,
     cli_prompt,
     reject_all,
+    auto_approve_tool_call,
+    log_and_approve_tool_call,
+    reject_all_tool_call,
+    make_log_handler,
+    make_reject_handler,
 )
 
 # Tool tracking
@@ -239,6 +246,11 @@ __all__ = [
     "PendingCompression",
     "ReorderWarning",
     "DEFAULT_SUMMARIZE_SYSTEM",
+    # Hook system
+    "Pending",
+    "PendingCompress",
+    "ValidationResult",
+    "HookRejection",
     # Multi-agent / session
     "Session",
     "SessionContent",
@@ -258,13 +270,17 @@ __all__ = [
     "AutonomyLevel",
     "OrchestratorState",
     "TriggerConfig",
-    "OrchestratorProposal",
-    "ProposalDecision",
-    "ProposalResponse",
+    "ToolCallDecision",
+    "ToolCallReview",
     "StepResult",
     "OrchestratorResult",
     "auto_approve",
     "log_and_approve",
     "cli_prompt",
     "reject_all",
+    "auto_approve_tool_call",
+    "log_and_approve_tool_call",
+    "reject_all_tool_call",
+    "make_log_handler",
+    "make_reject_handler",
 ]

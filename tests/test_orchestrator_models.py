@@ -1,4 +1,4 @@
-"""Tests for orchestrator config, models, callbacks, and prompts."""
+"""Tests for orchestrator config, models, hook templates, and prompts."""
 
 from __future__ import annotations
 
@@ -11,17 +11,16 @@ from tract.exceptions import OrchestratorError, TraceError
 from tract.orchestrator import (
     AutonomyLevel,
     OrchestratorConfig,
-    OrchestratorProposal,
     OrchestratorResult,
     OrchestratorState,
-    ProposalDecision,
-    ProposalResponse,
     StepResult,
     ToolCall,
+    ToolCallDecision,
+    ToolCallReview,
     TriggerConfig,
-    auto_approve,
-    log_and_approve,
-    reject_all,
+    auto_approve_tool_call,
+    log_and_approve_tool_call,
+    reject_all_tool_call,
 )
 from tract.prompts.orchestrator import (
     ORCHESTRATOR_SYSTEM_PROMPT,
@@ -36,18 +35,8 @@ from tract.prompts.orchestrator import (
 
 @pytest.fixture()
 def sample_tool_call() -> ToolCall:
-    """A simple ToolCall for use in proposal tests."""
+    """A simple ToolCall for use in review tests."""
     return ToolCall(id="tc-1", name="compress", arguments={"threshold": 0.8})
-
-
-@pytest.fixture()
-def sample_proposal(sample_tool_call: ToolCall) -> OrchestratorProposal:
-    """A simple OrchestratorProposal for callback tests."""
-    return OrchestratorProposal(
-        proposal_id="prop-1",
-        recommended_action=sample_tool_call,
-        reasoning="Token usage is high",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -73,11 +62,11 @@ class TestOrchestratorState:
         assert OrchestratorState.STOPPED == "stopped"
 
 
-class TestProposalDecision:
-    def test_proposal_decision_enum_values(self) -> None:
-        assert ProposalDecision.APPROVED == "approved"
-        assert ProposalDecision.REJECTED == "rejected"
-        assert ProposalDecision.MODIFIED == "modified"
+class TestToolCallDecision:
+    def test_tool_call_decision_enum_values(self) -> None:
+        assert ToolCallDecision.APPROVED == "approved"
+        assert ToolCallDecision.REJECTED == "rejected"
+        assert ToolCallDecision.MODIFIED == "modified"
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +85,7 @@ class TestOrchestratorConfig:
         assert config.task_context is None
         assert config.triggers is None
         assert config.model is None
-        assert config.on_proposal is None
+        assert config.on_tool_call is None
         assert config.on_step is None
 
     def test_orchestrator_config_mutable(self) -> None:
@@ -146,38 +135,14 @@ class TestToolCall:
         assert tc.arguments == {}
 
 
-class TestOrchestratorProposal:
-    def test_orchestrator_proposal_mutable(
-        self, sample_tool_call: ToolCall
-    ) -> None:
-        proposal = OrchestratorProposal(
-            proposal_id="p-1",
-            recommended_action=sample_tool_call,
-            reasoning="test",
-        )
-        assert proposal.decision == "pending"
-        proposal.decision = ProposalDecision.APPROVED
-        assert proposal.decision == ProposalDecision.APPROVED
-
-    def test_proposal_defaults(self, sample_tool_call: ToolCall) -> None:
-        proposal = OrchestratorProposal(
-            proposal_id="p-1",
-            recommended_action=sample_tool_call,
-            reasoning="test",
-        )
-        assert proposal.alternatives == []
-        assert proposal.context_summary == ""
-        assert proposal.modified_action is None
-
-
-class TestProposalResponse:
-    def test_proposal_response_frozen(self) -> None:
-        resp = ProposalResponse(decision=ProposalDecision.APPROVED)
+class TestToolCallReview:
+    def test_tool_call_review_frozen(self) -> None:
+        resp = ToolCallReview(decision=ToolCallDecision.APPROVED)
         with pytest.raises(dataclasses.FrozenInstanceError):
-            resp.decision = ProposalDecision.REJECTED  # type: ignore[misc]
+            resp.decision = ToolCallDecision.REJECTED  # type: ignore[misc]
 
-    def test_proposal_response_defaults(self) -> None:
-        resp = ProposalResponse(decision=ProposalDecision.REJECTED)
+    def test_tool_call_review_defaults(self) -> None:
+        resp = ToolCallReview(decision=ToolCallDecision.REJECTED)
         assert resp.modified_action is None
         assert resp.reason == ""
 
@@ -195,7 +160,7 @@ class TestStepResult:
         assert sr.result_output == ""
         assert sr.result_error == ""
         assert sr.success is True
-        assert sr.proposal is None
+        assert sr.review_decision == ""
 
 
 class TestOrchestratorResult:
@@ -231,31 +196,30 @@ class TestOrchestratorResult:
 
 
 # ---------------------------------------------------------------------------
-# Callback tests
+# Tool-call review callback tests
 # ---------------------------------------------------------------------------
 
 
-class TestCallbacks:
-    def test_auto_approve_callback(
-        self, sample_proposal: OrchestratorProposal
+class TestToolCallReviewCallbacks:
+    def test_auto_approve_tool_call_callback(
+        self, sample_tool_call: ToolCall
     ) -> None:
-        response = auto_approve(sample_proposal)
-        assert response.decision == ProposalDecision.APPROVED
+        response = auto_approve_tool_call(sample_tool_call)
+        assert response.decision == ToolCallDecision.APPROVED
 
-    def test_log_and_approve_callback(
-        self, sample_proposal: OrchestratorProposal, caplog: pytest.LogCaptureFixture
+    def test_log_and_approve_tool_call_callback(
+        self, sample_tool_call: ToolCall, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.INFO, logger="tract.orchestrator.callbacks"):
-            response = log_and_approve(sample_proposal)
-        assert response.decision == ProposalDecision.APPROVED
-        assert "prop-1" in caplog.text
+        with caplog.at_level(logging.INFO, logger="tract.hooks.templates.orchestrator"):
+            response = log_and_approve_tool_call(sample_tool_call)
+        assert response.decision == ToolCallDecision.APPROVED
         assert "compress" in caplog.text
 
-    def test_reject_all_callback(
-        self, sample_proposal: OrchestratorProposal
+    def test_reject_all_tool_call_callback(
+        self, sample_tool_call: ToolCall
     ) -> None:
-        response = reject_all(sample_proposal)
-        assert response.decision == ProposalDecision.REJECTED
+        response = reject_all_tool_call(sample_tool_call)
+        assert response.decision == ToolCallDecision.REJECTED
         assert response.reason == "Auto-rejected"
 
 

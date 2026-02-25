@@ -1,10 +1,13 @@
 """Compression operations for Trace.
 
 Implements context compression: summarizing commit chains into shorter
-summaries to fit token budgets. Supports three autonomy modes:
-- Autonomous (LLM summarization with auto-commit)
-- Collaborative (LLM summarization, review before commit)
-- Manual (user-provided summary text)
+summaries to fit token budgets. compress_range() always returns a
+PendingCompress -- the Tract layer handles routing (auto-approve,
+hook, or return to caller).
+
+Content modes:
+- LLM (llm_client provided): uses LLM for summarization
+- Manual (content provided): uses user text as summary
 
 PINNED commits survive compression verbatim. SKIP commits are ignored.
 Original commits remain in DB as unreachable (non-destructive).
@@ -22,6 +25,7 @@ from typing import TYPE_CHECKING
 from tract.exceptions import CompressionError
 from tract.models.annotations import Priority, RetentionCriteria
 from tract.models.commit import CommitOperation
+from tract.hooks.compress import PendingCompress
 from tract.models.compression import CompressResult, GCResult, PendingCompression
 from tract.models.content import DialogueContent
 from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM, build_summarize_prompt
@@ -428,7 +432,6 @@ def compress_range(
     to_commit: str | None = None,
     target_tokens: int | None = None,
     preserve: list[str] | None = None,
-    auto_commit: bool = True,
     llm_client: LLMClient | None = None,
     content: str | None = None,
     instructions: str | None = None,
@@ -438,14 +441,18 @@ def compress_range(
     type_registry: dict[str, type] | None = None,
     validator: object | None = None,
     max_retries: int = 3,
-) -> CompressResult | PendingCompression:
+    triggered_by: str | None = None,
+) -> PendingCompress:
     """Core compression operation.
 
     Compresses a range of commits into summaries, preserving PINNED commits
-    and ignoring SKIP commits. Supports three modes:
+    and ignoring SKIP commits. Always returns a PendingCompress -- the caller
+    (Tract.compress) decides whether to auto-execute, fire a hook, or return
+    it to the user for review.
+
+    Supports two content modes:
     - Manual (content provided): uses user text as summary
     - LLM (llm_client provided): uses LLM for summarization
-    - Error: neither provided
 
     Args:
         tract_id: Tract identifier.
@@ -462,7 +469,6 @@ def compress_range(
         to_commit: Optional range end (inclusive).
         target_tokens: Optional target token count for summaries.
         preserve: Optional list of hashes to treat as PINNED.
-        auto_commit: If True, commit immediately. If False, return PendingCompression.
         llm_client: Optional LLM client for summarization.
         content: Optional manual summary text (bypasses LLM).
         instructions: Optional LLM instructions.
@@ -470,9 +476,10 @@ def compress_range(
         llm_kwargs: Optional per-operation LLM config (model, temperature, etc.).
         generation_config: Optional generation config to record on summary commits.
         type_registry: Optional custom content type registry.
+        triggered_by: Optional provenance string (e.g. "policy:auto_compress").
 
     Returns:
-        CompressResult (if auto_commit=True) or PendingCompression (if auto_commit=False).
+        PendingCompress with all state needed for finalization.
 
     Raises:
         CompressionError: On various error conditions.
@@ -637,54 +644,33 @@ def compress_range(
     original_tokens = sum(c.token_count for c in compressible_commits)
     estimated_tokens = sum(token_counter.count_text(s) for s in summaries)
 
-    # h. Collaborative mode: return PendingCompression
-    if not auto_commit:
-        pending = PendingCompression(
-            summaries=summaries,
-            source_commits=[c.commit_hash for c in compressible_commits],
-            preserved_commits=[c.commit_hash for c in pinned_commits],
-            original_tokens=original_tokens,
-            estimated_tokens=estimated_tokens,
-        )
-        # Store context needed for later commit
-        pending._range_commits = range_commits
-        pending._pinned_commits = pinned_commits
-        pending._normal_commits = compressible_commits
-        pending._pinned_hashes = pinned_hashes
-        pending._skip_hashes = skip_hashes
-        pending._groups = groups
-        pending._branch_name = branch_name
-        pending._target_tokens = target_tokens
-        pending._instructions = instructions
-        pending._system_prompt = system_prompt
-        pending._head_hash = head_hash
-        pending._generation_config = generation_config
-        return pending
-
-    # i. Autonomous mode: commit immediately
-    return _commit_compression(
-        tract_id=tract_id,
-        commit_repo=commit_repo,
-        blob_repo=blob_repo,
-        ref_repo=ref_repo,
-        commit_engine=commit_engine,
-        token_counter=token_counter,
-        event_repo=event_repo,
+    # h. Always build and return PendingCompress -- the caller (Tract.compress)
+    #    handles three-tier routing: review=True returns to caller, hook fires
+    #    handler, no hook auto-approves.
+    pending = PendingCompress(
+        operation="compress",
+        tract=None,  # type: ignore[arg-type]  # Set by Tract.compress() before routing
         summaries=summaries,
-        range_commits=range_commits,
-        pinned_commits=pinned_commits,
-        normal_commits=compressible_commits,
-        pinned_hashes=pinned_hashes,
-        skip_hashes=skip_hashes,
-        groups=groups,
+        source_commits=[c.commit_hash for c in compressible_commits],
+        preserved_commits=[c.commit_hash for c in pinned_commits],
         original_tokens=original_tokens,
-        target_tokens=target_tokens,
-        instructions=instructions,
-        system_prompt=system_prompt,
-        branch_name=branch_name,
-        type_registry=type_registry,
-        generation_config=generation_config,
+        estimated_tokens=estimated_tokens,
+        triggered_by=triggered_by,
     )
+    # Store context needed for later commit by _finalize_compression
+    pending._range_commits = range_commits
+    pending._pinned_commits = pinned_commits
+    pending._normal_commits = compressible_commits
+    pending._pinned_hashes = pinned_hashes
+    pending._skip_hashes = skip_hashes
+    pending._groups = groups
+    pending._branch_name = branch_name
+    pending._target_tokens = target_tokens
+    pending._instructions = instructions
+    pending._system_prompt = system_prompt
+    pending._head_hash = head_hash
+    pending._generation_config = generation_config
+    return pending
 
 
 def _commit_compression(
@@ -1024,6 +1010,131 @@ def _normalize_dt(dt: datetime) -> datetime:
     return dt
 
 
+def plan_gc(
+    tract_id: str,
+    commit_repo: CommitRepository,
+    ref_repo: RefRepository,
+    parent_repo: CommitParentRepository,
+    event_repo: OperationEventRepository,
+    *,
+    orphan_retention_days: int = 7,
+    archive_retention_days: int | None = None,
+    branch: str | None = None,
+) -> tuple[list[CommitRow], int]:
+    """Plan phase of garbage collection -- determine what to remove.
+
+    Finds all commits not reachable from any branch tip (or a specific
+    branch), then identifies eligible ones based on age and archive status.
+
+    Args:
+        tract_id: Tract identifier.
+        commit_repo: Commit repository.
+        ref_repo: Ref repository.
+        parent_repo: Commit parent repository.
+        event_repo: Operation event repository for archive status checks.
+        orphan_retention_days: Days before orphans become eligible for removal.
+        archive_retention_days: If set, days before archived commits become
+            eligible for removal. None means archives are never removed.
+        branch: If set, only this branch's reachability is considered.
+
+    Returns:
+        Tuple of (commits_to_remove, tokens_to_free).
+    """
+    # a. Find reachable commits
+    reachable = _get_all_reachable(
+        tract_id, ref_repo, commit_repo, parent_repo, branch=branch,
+    )
+
+    # b. Find all commits in tract
+    all_commits = commit_repo.get_all(tract_id)
+
+    # c. Compute unreachable
+    unreachable = [c for c in all_commits if c.commit_hash not in reachable]
+
+    # d. Classify and apply retention
+    now = _normalize_dt(datetime.now(timezone.utc))
+    commits_to_remove: list[CommitRow] = []
+    tokens_to_free = 0
+
+    for commit in unreachable:
+        is_archive = event_repo.is_source_of(commit.commit_hash)
+        created = _normalize_dt(commit.created_at)
+        age_days = (now - created).total_seconds() / 86400
+
+        if is_archive:
+            if archive_retention_days is not None and age_days >= archive_retention_days:
+                commits_to_remove.append(commit)
+                tokens_to_free += commit.token_count
+        else:
+            if age_days >= orphan_retention_days:
+                commits_to_remove.append(commit)
+                tokens_to_free += commit.token_count
+
+    return commits_to_remove, tokens_to_free
+
+
+def execute_gc(
+    tract_id: str,
+    commits_to_remove: list[CommitRow],
+    commit_repo: CommitRepository,
+    blob_repo: BlobRepository,
+    event_repo: OperationEventRepository,
+) -> GCResult:
+    """Execute phase of garbage collection -- actually delete commits.
+
+    Args:
+        tract_id: Tract identifier.
+        commits_to_remove: List of CommitRow objects to delete.
+        commit_repo: Commit repository.
+        blob_repo: Blob repository.
+        event_repo: Operation event repository.
+
+    Returns:
+        GCResult with removal counts and duration.
+    """
+    import time
+
+    start = time.monotonic()
+
+    blobs_removed = 0
+    tokens_freed = 0
+    source_commits_removed = 0
+
+    for commit in commits_to_remove:
+        content_hash = commit.content_hash
+        tokens_freed += commit.token_count
+
+        # Track archive status before deleting provenance
+        if event_repo.is_source_of(commit.commit_hash):
+            source_commits_removed += 1
+
+        # Clean up operation event provenance
+        event_repo.delete_commit(commit.commit_hash)
+
+        # Delete the commit
+        commit_repo.delete(commit.commit_hash)
+
+        # Try to delete the blob if no other commit references it
+        if blob_repo.delete_if_orphaned(content_hash):
+            blobs_removed += 1
+
+    # Clean up orphaned OperationEvent records (no sources AND no results left)
+    all_event_ids = event_repo.get_all_ids(tract_id)
+    for eid in all_event_ids:
+        if not event_repo.get_commits(eid, "source") and not event_repo.get_commits(eid, "result"):
+            event_repo.delete_event(eid)
+
+    duration = time.monotonic() - start
+
+    return GCResult(
+        commits_removed=len(commits_to_remove),
+        blobs_removed=blobs_removed,
+        tokens_freed=tokens_freed,
+        source_commits_removed=source_commits_removed,
+        duration_seconds=duration,
+    )
+
+
 def gc(
     tract_id: str,
     commit_repo: CommitRepository,
@@ -1067,72 +1178,12 @@ def gc(
         conversation-scale data (hundreds to low thousands of commits) but
         may need optimization for very large tracts.
     """
-    import time
-
-    start = time.monotonic()
-
-    # a. Find reachable commits
-    reachable = _get_all_reachable(
-        tract_id, ref_repo, commit_repo, parent_repo, branch=branch,
+    commits_to_remove, _ = plan_gc(
+        tract_id, commit_repo, ref_repo, parent_repo, event_repo,
+        orphan_retention_days=orphan_retention_days,
+        archive_retention_days=archive_retention_days,
+        branch=branch,
     )
-
-    # b. Find all commits in tract
-    all_commits = commit_repo.get_all(tract_id)
-
-    # c. Compute unreachable
-    unreachable = [c for c in all_commits if c.commit_hash not in reachable]
-
-    # d. Classify and apply retention
-    now = _normalize_dt(datetime.now(timezone.utc))
-    commits_to_remove = []
-    source_commits_removed = 0
-
-    for commit in unreachable:
-        is_archive = event_repo.is_source_of(commit.commit_hash)
-        created = _normalize_dt(commit.created_at)
-        age_days = (now - created).total_seconds() / 86400
-
-        if is_archive:
-            # Archive: only remove if archive_retention_days is set and old enough
-            if archive_retention_days is not None and age_days >= archive_retention_days:
-                commits_to_remove.append(commit)
-                source_commits_removed += 1
-            # Otherwise: preserve (skip)
-        else:
-            # Orphan: remove if old enough
-            if age_days >= orphan_retention_days:
-                commits_to_remove.append(commit)
-
-    # e. Delete eligible commits
-    blobs_removed = 0
-    tokens_freed = 0
-
-    for commit in commits_to_remove:
-        content_hash = commit.content_hash
-        tokens_freed += commit.token_count
-
-        # Clean up operation event provenance
-        event_repo.delete_commit(commit.commit_hash)
-
-        # Delete the commit
-        commit_repo.delete(commit.commit_hash)
-
-        # Try to delete the blob if no other commit references it
-        if blob_repo.delete_if_orphaned(content_hash):
-            blobs_removed += 1
-
-    # f. Clean up orphaned OperationEvent records (no sources AND no results left)
-    all_event_ids = event_repo.get_all_ids(tract_id)
-    for eid in all_event_ids:
-        if not event_repo.get_commits(eid, "source") and not event_repo.get_commits(eid, "result"):
-            event_repo.delete_event(eid)
-
-    duration = time.monotonic() - start
-
-    return GCResult(
-        commits_removed=len(commits_to_remove),
-        blobs_removed=blobs_removed,
-        tokens_freed=tokens_freed,
-        source_commits_removed=source_commits_removed,
-        duration_seconds=duration,
+    return execute_gc(
+        tract_id, commits_to_remove, commit_repo, blob_repo, event_repo,
     )

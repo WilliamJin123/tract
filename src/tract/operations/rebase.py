@@ -275,22 +275,18 @@ def import_commit(
     return result
 
 
-def rebase(
+def plan_rebase(
     tract_id: str,
     target_branch: str,
     commit_repo: CommitRepository,
     ref_repo: RefRepository,
     parent_repo: CommitParentRepository,
-    blob_repo: BlobRepository,
-    commit_engine: CommitEngine,
     *,
     resolver: ResolverCallable | None = None,
-    event_repo: OperationEventRepository | None = None,
-) -> RebaseResult:
-    """Rebase the current branch onto a target branch.
+) -> tuple[list[CommitRow], str, list[RebaseWarning], str, str] | None:
+    """Plan phase of rebase -- determine what to replay and check safety.
 
-    Replays commits from the current branch onto the target branch tip,
-    producing new commits with new hashes and parentage.
+    Returns None if no rebase is needed (already up-to-date).
 
     Args:
         tract_id: The tract identifier.
@@ -298,16 +294,15 @@ def rebase(
         commit_repo: Commit repository.
         ref_repo: Ref repository.
         parent_repo: Parent repository for multi-parent traversal.
-        blob_repo: Blob repository.
-        commit_engine: Commit engine for creating replayed commits.
         resolver: Optional resolver for semantic safety warnings.
 
     Returns:
-        RebaseResult describing the outcome.
+        Tuple of (commits_to_replay, target_tip, warnings, current_branch, current_tip)
+        or None if no rebase needed.
 
     Raises:
-        RebaseError: On merge commits in range, resolver abort, or other errors.
-        SemanticSafetyError: If safety warnings detected and no resolver.
+        RebaseError: On detached HEAD, merge commits in range, resolver abort.
+        SemanticSafetyError: If safety warnings and no resolver.
     """
     # Get current branch
     current_branch = ref_repo.get_current_branch(tract_id)
@@ -327,14 +322,14 @@ def rebase(
 
     # If current tip is already an ancestor of target (or same), nothing to do
     if current_tip == target_tip:
-        return RebaseResult(new_head=current_tip)
+        return None
 
     # Find merge base
     merge_base = find_merge_base(commit_repo, parent_repo, current_tip, target_tip)
 
     # If target is already an ancestor of current (current is ahead), nothing to replay
     if merge_base == target_tip:
-        return RebaseResult(new_head=current_tip)
+        return None
 
     # Collect commits to replay (merge_base..current_tip, chronological order)
     if merge_base is not None:
@@ -344,7 +339,7 @@ def rebase(
         commits_to_replay = list(reversed(list(commit_repo.get_ancestors(current_tip))))
 
     if not commits_to_replay:
-        return RebaseResult(new_head=current_tip)
+        return None
 
     # Pre-flight: block if any commit in replay range has merge parents
     for c in commits_to_replay:
@@ -381,7 +376,7 @@ def rebase(
                     )
                 )
 
-    # Handle warnings
+    # Handle warnings (only if resolver provided)
     if warnings:
         if resolver is None:
             raise SemanticSafetyError(
@@ -396,6 +391,45 @@ def rebase(
                     f"Resolver aborted rebase: {resolution.reasoning}"
                 )
             # "resolved" or "skip" -- continue with the rebase
+
+    return (commits_to_replay, target_tip, warnings, current_branch, current_tip)
+
+
+def execute_rebase(
+    tract_id: str,
+    commits_to_replay: list[CommitRow],
+    target_tip: str,
+    current_branch: str,
+    current_tip: str,
+    commit_repo: CommitRepository,
+    ref_repo: RefRepository,
+    parent_repo: CommitParentRepository,
+    blob_repo: BlobRepository,
+    commit_engine: CommitEngine,
+    *,
+    event_repo: OperationEventRepository | None = None,
+    warnings: list[RebaseWarning] | None = None,
+) -> RebaseResult:
+    """Execute phase of rebase -- replay commits onto target.
+
+    Args:
+        tract_id: The tract identifier.
+        commits_to_replay: Ordered list of CommitRow to replay.
+        target_tip: Hash of the target branch tip.
+        current_branch: Name of the current branch.
+        current_tip: Original tip of the current branch (for rollback).
+        commit_repo: Commit repository.
+        ref_repo: Ref repository.
+        parent_repo: Parent repository.
+        blob_repo: Blob repository.
+        commit_engine: Commit engine for creating replayed commits.
+        event_repo: Optional operation event repository for provenance.
+        warnings: Optional list of warnings from the plan phase.
+
+    Returns:
+        RebaseResult describing the outcome.
+    """
+    original_infos = [_row_to_info(c) for c in commits_to_replay]
 
     # Replay commits atomically
     # Move HEAD to target branch tip (detach)
@@ -443,7 +477,7 @@ def rebase(
             created_at=datetime.now(timezone.utc),
             original_tokens=0,
             compressed_tokens=0,
-            params_json={"target_branch": target_branch},
+            params_json={"target_branch": "rebase"},
         )
         for pos, orig in enumerate(commits_to_replay):
             event_repo.add_commit(event_id, orig.commit_hash, "source", pos)
@@ -453,6 +487,58 @@ def rebase(
     return RebaseResult(
         replayed_commits=replayed_infos,
         original_commits=original_infos,
-        warnings=warnings,
+        warnings=warnings or [],
         new_head=new_head,
+    )
+
+
+def rebase(
+    tract_id: str,
+    target_branch: str,
+    commit_repo: CommitRepository,
+    ref_repo: RefRepository,
+    parent_repo: CommitParentRepository,
+    blob_repo: BlobRepository,
+    commit_engine: CommitEngine,
+    *,
+    resolver: ResolverCallable | None = None,
+    event_repo: OperationEventRepository | None = None,
+) -> RebaseResult:
+    """Rebase the current branch onto a target branch.
+
+    Replays commits from the current branch onto the target branch tip,
+    producing new commits with new hashes and parentage.
+
+    Args:
+        tract_id: The tract identifier.
+        target_branch: Name of the branch to rebase onto.
+        commit_repo: Commit repository.
+        ref_repo: Ref repository.
+        parent_repo: Parent repository for multi-parent traversal.
+        blob_repo: Blob repository.
+        commit_engine: Commit engine for creating replayed commits.
+        resolver: Optional resolver for semantic safety warnings.
+
+    Returns:
+        RebaseResult describing the outcome.
+
+    Raises:
+        RebaseError: On merge commits in range, resolver abort, or other errors.
+        SemanticSafetyError: If safety warnings detected and no resolver.
+    """
+    plan = plan_rebase(
+        tract_id, target_branch, commit_repo, ref_repo, parent_repo,
+        resolver=resolver,
+    )
+
+    if plan is None:
+        current_tip = ref_repo.get_head(tract_id)
+        return RebaseResult(new_head=current_tip or "")
+
+    commits_to_replay, target_tip, warnings, current_branch, current_tip = plan
+
+    return execute_rebase(
+        tract_id, commits_to_replay, target_tip, current_branch, current_tip,
+        commit_repo, ref_repo, parent_repo, blob_repo, commit_engine,
+        event_repo=event_repo, warnings=warnings,
     )

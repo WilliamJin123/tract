@@ -14,13 +14,18 @@ pin any matching commits that were missed.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from tract.models.policy import PolicyAction
 from tract.policy.protocols import Policy
 
 if TYPE_CHECKING:
+    from tract.hooks.policy import PendingPolicy
+    from tract.hooks.validation import HookRejection
     from tract.tract import Tract
+
+logger = logging.getLogger(__name__)
 
 
 class PinPolicy(Policy):
@@ -152,6 +157,18 @@ class PinPolicy(Policy):
                 pinned_hashes.append(commit.commit_hash)
 
         return pinned_hashes
+
+    # ------------------------------------------------------------------
+    # Hook integration
+    # ------------------------------------------------------------------
+
+    def default_handler(self, pending: PendingPolicy) -> None:
+        """Auto-approve pin actions (autonomous by default anyway)."""
+        pending.approve()
+
+    def on_rejection(self, rejection: HookRejection) -> None:
+        """Log pin rejection."""
+        logger.info("PinPolicy action rejected: %s", rejection.reason)
 
     # ------------------------------------------------------------------
     # Serialization

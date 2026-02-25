@@ -3,6 +3,11 @@
 Provides the Orchestrator class that runs a tool-calling loop:
 assess context, send tools + assessment to LLM, execute tool calls,
 repeat until LLM stops or max_steps reached.
+
+The orchestrator no longer has its own proposal system. Hookable
+operations (compress, gc, merge, rebase, policy) are gated by
+Tract's unified hook system. Non-hookable tool calls are gated
+by the ``on_tool_call`` callback in collaborative mode.
 """
 
 from __future__ import annotations
@@ -17,12 +22,11 @@ from typing import TYPE_CHECKING, Any
 from tract.exceptions import OrchestratorError
 from tract.orchestrator.config import AutonomyLevel, OrchestratorState
 from tract.orchestrator.models import (
-    OrchestratorProposal,
     OrchestratorResult,
-    ProposalDecision,
-    ProposalResponse,
     StepResult,
     ToolCall,
+    ToolCallDecision,
+    ToolCallReview,
 )
 
 if TYPE_CHECKING:
@@ -49,6 +53,13 @@ class Orchestrator:
     The orchestrator assesses context health, sends tools and assessment
     to an LLM, executes tool calls (respecting autonomy constraints),
     and repeats until the LLM stops calling tools or max_steps is reached.
+
+    Hookable operations (compress, gc, merge, rebase, policy) are gated
+    automatically by Tract's hook system -- the orchestrator does not
+    need to intercept them separately.
+
+    For non-hookable tool calls in collaborative mode, the
+    ``on_tool_call`` callback on OrchestratorConfig provides review.
 
     Usage::
 
@@ -398,8 +409,10 @@ class Orchestrator:
     def _execute_tool_call(self, tc: ToolCall, step_num: int) -> StepResult:
         """Execute a single tool call respecting autonomy constraints.
 
-        Determines effective autonomy, creates proposals for collaborative
-        mode, and executes or skips based on the autonomy level.
+        Determines effective autonomy and routes accordingly:
+        - MANUAL: skip all tool calls
+        - COLLABORATIVE: invoke on_tool_call callback for review
+        - AUTONOMOUS: execute directly
 
         Args:
             tc: The tool call to execute.
@@ -418,9 +431,10 @@ class Orchestrator:
                 result_output="",
                 result_error="Skipped (manual mode)",
                 success=False,
+                review_decision="skipped",
             )
 
-        # COLLABORATIVE: create proposal and check callback
+        # COLLABORATIVE: review via on_tool_call callback
         if effective == AutonomyLevel.COLLABORATIVE:
             return self._handle_collaborative(tc, step_num)
 
@@ -430,7 +444,7 @@ class Orchestrator:
     def _handle_collaborative(self, tc: ToolCall, step_num: int) -> StepResult:
         """Handle a tool call in collaborative mode.
 
-        Creates a proposal and invokes the on_proposal callback.
+        Invokes the ``on_tool_call`` callback to get a review decision.
         Executes, skips, or modifies based on the callback response.
 
         Args:
@@ -438,43 +452,34 @@ class Orchestrator:
             step_num: The step number.
 
         Returns:
-            StepResult with proposal information.
+            StepResult with review_decision information.
         """
-        proposal = OrchestratorProposal(
-            proposal_id=f"prop-{uuid.uuid4().hex[:8]}",
-            recommended_action=tc,
-            reasoning=f"LLM recommended: {tc.name}",
-        )
-
-        callback = self._config.on_proposal
+        callback = self._config.on_tool_call
         if callback is None:
             # No callback: cannot get approval, skip
-            proposal.decision = ProposalDecision.REJECTED
             return StepResult(
                 step=step_num,
                 tool_call=tc,
                 result_output="",
                 result_error="Skipped (collaborative mode, no callback)",
                 success=False,
-                proposal=proposal,
+                review_decision=ToolCallDecision.REJECTED.value,
             )
 
         try:
-            response = callback(proposal)
+            review = callback(tc)
         except Exception as exc:
-            logger.debug("on_proposal callback error: %s", exc)
-            proposal.decision = ProposalDecision.REJECTED
+            logger.debug("on_tool_call callback error: %s", exc)
             return StepResult(
                 step=step_num,
                 tool_call=tc,
                 result_output="",
                 result_error=f"Callback error: {exc}",
                 success=False,
-                proposal=proposal,
+                review_decision=ToolCallDecision.REJECTED.value,
             )
 
-        if response.decision == ProposalDecision.APPROVED:
-            proposal.decision = ProposalDecision.APPROVED
+        if review.decision == ToolCallDecision.APPROVED:
             result = self._executor.execute(tc.name, tc.arguments)
             return StepResult(
                 step=step_num,
@@ -482,13 +487,11 @@ class Orchestrator:
                 result_output=result.output if result.success else "",
                 result_error=result.error if not result.success else "",
                 success=result.success,
-                proposal=proposal,
+                review_decision=ToolCallDecision.APPROVED.value,
             )
 
-        if response.decision == ProposalDecision.MODIFIED:
-            proposal.decision = ProposalDecision.MODIFIED
-            modified_tc = response.modified_action or tc
-            proposal.modified_action = modified_tc
+        if review.decision == ToolCallDecision.MODIFIED:
+            modified_tc = review.modified_action or tc
             result = self._executor.execute(modified_tc.name, modified_tc.arguments)
             return StepResult(
                 step=step_num,
@@ -496,18 +499,17 @@ class Orchestrator:
                 result_output=result.output if result.success else "",
                 result_error=result.error if not result.success else "",
                 success=result.success,
-                proposal=proposal,
+                review_decision=ToolCallDecision.MODIFIED.value,
             )
 
         # REJECTED
-        proposal.decision = ProposalDecision.REJECTED
         return StepResult(
             step=step_num,
             tool_call=tc,
             result_output="",
-            result_error=f"Rejected: {response.reason}",
+            result_error=f"Rejected: {review.reason}",
             success=False,
-            proposal=proposal,
+            review_decision=ToolCallDecision.REJECTED.value,
         )
 
     def _execute_directly(self, tc: ToolCall, step_num: int) -> StepResult:
