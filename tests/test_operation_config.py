@@ -1313,6 +1313,117 @@ class TestLlmConfigParameter:
 
 
 # ---------------------------------------------------------------------------
+# Extra kwargs pass-through on generate()/chat() (direct **kwargs)
+# ---------------------------------------------------------------------------
+
+class TestExtraKwargsPassThrough:
+    """Tests for passing extra provider-specific kwargs through generate()/chat()."""
+
+    def test_generate_extra_kwargs_forwarded(self):
+        """generate(reasoning_effort='high') forwards to the LLM client."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        t.system("You are helpful")
+        t.user("Hello")
+        resp = t.generate(reasoning_effort="high")
+
+        assert mock.last_kwargs.get("reasoning_effort") == "high"
+        t.close()
+
+    def test_chat_extra_kwargs_forwarded(self):
+        """chat(text, reasoning_effort='high') forwards to the LLM client."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        t.system("You are helpful")
+        resp = t.chat("Hello", reasoning_effort="high")
+
+        assert mock.last_kwargs.get("reasoning_effort") == "high"
+        t.close()
+
+    def test_generate_extra_kwargs_override_llm_config_extra(self):
+        """Call-level kwargs override llm_config.extra for the same key."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        t.system("You are helpful")
+        t.user("Hello")
+        cfg = LLMConfig(extra={"reasoning_effort": "low", "other": "keep"})
+        resp = t.generate(llm_config=cfg, reasoning_effort="high")
+
+        assert mock.last_kwargs.get("reasoning_effort") == "high"
+        assert mock.last_kwargs.get("other") == "keep"
+        t.close()
+
+    def test_generate_extra_kwargs_override_operation_extra(self):
+        """Call-level kwargs override operation-config extra."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+        t.configure_operations(chat=LLMConfig(extra={"reasoning_effort": "low"}))
+
+        t.system("You are helpful")
+        t.user("Hello")
+        resp = t.generate(reasoning_effort="high")
+
+        assert mock.last_kwargs.get("reasoning_effort") == "high"
+        t.close()
+
+    def test_generate_multiple_extra_kwargs(self):
+        """Multiple extra kwargs all arrive at the LLM client."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        t.system("You are helpful")
+        t.user("Hello")
+        resp = t.generate(reasoning_effort="high", top_k=40, custom_flag=True)
+
+        assert mock.last_kwargs.get("reasoning_effort") == "high"
+        assert mock.last_kwargs.get("top_k") == 40
+        assert mock.last_kwargs.get("custom_flag") is True
+        t.close()
+
+    def test_extra_kwargs_recorded_in_generation_config(self):
+        """Extra kwargs appear in ChatResponse.generation_config."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        t.system("You are helpful")
+        t.user("Hello")
+        resp = t.generate(reasoning_effort="high")
+
+        # reasoning_effort should be captured in the generation_config extra
+        assert resp.generation_config.extra is not None
+        assert resp.generation_config.extra.get("reasoning_effort") == "high"
+        t.close()
+
+    def test_chat_extra_kwargs_with_sugar_params(self):
+        """Extra kwargs coexist with sugar params (model, temperature, etc.)."""
+        t = Tract.open()
+        mock = MockLLMClient()
+        t.configure_llm(mock)
+
+        t.system("You are helpful")
+        resp = t.chat(
+            "Hello",
+            model="gpt-4o",
+            temperature=0.5,
+            reasoning_effort="high",
+        )
+
+        assert mock.last_kwargs.get("model") == "gpt-4o"
+        assert mock.last_kwargs.get("temperature") == 0.5
+        assert mock.last_kwargs.get("reasoning_effort") == "high"
+        t.close()
+
+
+# ---------------------------------------------------------------------------
 # Compress error guard tests (Plan 02)
 # ---------------------------------------------------------------------------
 
