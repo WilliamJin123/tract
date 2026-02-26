@@ -25,7 +25,7 @@ TRACT_OPENAI_BASE_URL = os.environ.get("TRACT_OPENAI_BASE_URL", "")
 MODEL_ID = "gpt-oss-120b"
 
 
-def _build_agent_session(t):
+def _build_agent_session(t: Tract):
     """Build a realistic multi-tool agent session for auditing.
 
     Simulates a coding agent that uses grep, read_file, and bash tools

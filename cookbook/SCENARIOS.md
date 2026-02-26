@@ -30,7 +30,10 @@ cookbook/
 │   ├── 07_rebase_and_import.py      # import_commit (cherry-pick), rebase
 │   ├── 08_gc_and_reorder.py         # gc, archive retention, compile(order=), hook review
 │   ├── 09_provenance.py            # config provenance, tool provenance, edit history
-│   ├── 10_retry_and_validation.py   # chat(validator=), retry_with_steering, purify
+│   ├── 09_retry_and_validation/
+│   │   ├── 01_core_primitive.py     # retry_with_steering + LLM, RetryResult, RetryExhaustedError
+│   │   ├── 02_chat_validation.py    # chat(validator=), purify=, provenance_note=, retry_prompt=
+│   │   └── 03_compress_validation.py # compress(validator=), retain_match= combo, guided+validated
 │   └── 11_tool_query_and_audit.py   # find_tool_results/calls/turns, ToolTurn, tool_result(edit=), selective compress
 │
 ├── advanced/                         # Tier 3: Power features
@@ -217,13 +220,13 @@ Part 1 (config provenance): every assistant commit stores the fully-resolved `ge
 
 > `query_by_config(model=, temperature=)`, `set_tools()`, `get_commit_tools()`, `to_openai_params()`, `to_anthropic_params()`, `log(include_edits=True)`
 
-## 10 — Retry and Validation
+## 09 — Retry and Validation
 
 **Use case:** Validate LLM output and retry with steering when it fails. Works for chat, compression summaries, merge resolutions, or any callable.
 
-Part 1 (core primitive): `retry_with_steering()` takes `attempt` (produces a result), `validate` (checks it), `steer` (injects a correction), and optional `head_fn`/`reset_fn` for history management. Loops until validation passes or retries are exhausted. Returns `RetryResult` with the value, attempt count, and failure history. Raises `RetryExhaustedError` on exhaustion. No Tract dependency — pure logic and callbacks. Part 2: `chat(validator=my_validator, max_retries=3)` wraps the LLM call. On failure, a steering message is committed as a user message — the LLM sees its mistake in context. `purify=True` resets HEAD and re-commits only the clean result. Part 3: wrap arbitrary operations (compression, merge resolution) with the same `retry_with_steering()` primitive by providing different closures.
+Part 1 (core primitive + LLM): `retry_with_steering()` takes `attempt` (produces a result), `validate` (checks it), `steer` (injects a correction), and `head_fn`/`reset_fn` for history management. Demonstrated with a live LLM call: the LLM produces JSON, a validator checks the schema, a steering message injects the correction, and the LLM retries. `RetryExhaustedError` carries `last_result` for fallback recovery. Part 2 (chat validation): `chat(validator=my_validator, max_retries=3)` wraps the LLM call. On failure, a steering message is committed as a user message — the LLM sees its mistake in context. `purify=True` resets HEAD and re-commits only the clean result. `provenance_note=True` records retry count. `retry_prompt=` customizes the steering template. `generate(validator=)` for two-step flows. Part 3 (compress validation): `compress(validator=, max_retries=)` validates summaries after LLM generation. Combine with `retain_match=` for a two-layer safety net: deterministic regex patterns + semantic validator. `instructions=` steers the summary focus; `validator=` confirms it followed instructions.
 
-> `retry_with_steering()`, `RetryResult`, `RetryExhaustedError`, `chat(validator=, max_retries=, purify=, provenance_note=)`
+> `retry_with_steering()`, `RetryResult`, `RetryExhaustedError`, `chat(validator=, max_retries=, purify=, provenance_note=, retry_prompt=)`, `compress(validator=, max_retries=)`, `retain_match=` combo
 
 ## 11 — Tool Query and Audit
 

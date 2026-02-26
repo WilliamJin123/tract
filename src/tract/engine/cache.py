@@ -11,7 +11,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 from tract.engine.compiler import DefaultContextCompiler
-from tract.models.annotations import Priority
+from tract.models.annotations import DEFAULT_TYPE_PRIORITIES, Priority
 from tract.models.config import LLMConfig
 from tract.protocols import CompiledContext, CompileSnapshot, Message, TokenCounter
 
@@ -213,6 +213,30 @@ class CacheManager:
         """
         commit_row = self._commit_repo.get(commit_info.commit_hash)
         if commit_row is None:
+            return
+
+        # Skip commits whose content type has a default SKIP priority
+        # (e.g. reasoning). These are excluded from compile() output, so
+        # they must not enter the cache either.
+        default_priority = DEFAULT_TYPE_PRIORITIES.get(
+            commit_row.content_type, Priority.NORMAL
+        )
+        if default_priority == Priority.SKIP:
+            # Still advance the cache HEAD so subsequent appends chain
+            # correctly, but don't add the message to the snapshot.
+            self.put(
+                commit_info.commit_hash,
+                CompileSnapshot(
+                    head_hash=commit_info.commit_hash,
+                    messages=parent_snapshot.messages,
+                    commit_count=parent_snapshot.commit_count,
+                    token_count=parent_snapshot.token_count,
+                    token_source=parent_snapshot.token_source,
+                    generation_configs=parent_snapshot.generation_configs,
+                    commit_hashes=parent_snapshot.commit_hashes,
+                    message_token_counts=parent_snapshot.message_token_counts,
+                ),
+            )
             return
 
         assert isinstance(self._compiler, DefaultContextCompiler)
