@@ -81,13 +81,11 @@ if TYPE_CHECKING:
 _MAX_AUTO_MSG_LEN = 500
 
 
-def _auto_message(content_type: str, text: str) -> str:
-    """Generate a descriptive commit message from content text.
+def _fallback_message(content_type: str, text: str) -> str:
+    """Generate a fallback commit message by truncating content text.
 
-    The content_type is available separately on the commit; the message
-    is a preview of the text (max 500 chars, newlines flattened).
-    Full content is available via ``Tract.show()`` or
-    ``Tract.get_content()``.
+    Used when no LLM is available for auto-summarization, or when
+    auto_summarize is disabled.
 
     Args:
         content_type: The content type discriminator (kept for the
@@ -186,6 +184,7 @@ class Tract:
         self._in_hook: bool = False
         self._tool_summarization_config: ToolSummarizationConfig | None = None
         self._commit_reasoning: bool = True
+        self._auto_summarize: bool = False
 
     @classmethod
     def open(
@@ -208,6 +207,7 @@ class Tract:
         operation_configs: dict[str, LLMConfig] | None = None,  # deprecated: use operations=
         tokenizer_encoding: str | None = None,
         commit_reasoning: bool = True,
+        auto_summarize: bool | str | LLMConfig = False,
     ) -> Tract:
         """Open (or create) a Trace repository.
 
@@ -255,6 +255,11 @@ class Tract:
                 Common values: ``"o200k_base"`` (GPT-4o/o1/o3, default),
                 ``"cl100k_base"`` (GPT-4/3.5-turbo).  Overrides
                 ``config.tokenizer_encoding`` when both are provided.
+            auto_summarize: Enable LLM-generated commit messages.  Accepts:
+                - ``False`` (default): truncated content preview.
+                - ``True``: use the tract-level default LLM client/model.
+                - ``"model-name"``: use a specific model (e.g. ``"llama3.1-8b"``).
+                - :class:`LLMConfig`: full control over summarization config.
 
         Returns:
             A ready-to-use ``Tract`` instance.
@@ -436,6 +441,22 @@ class Tract:
 
         # Reasoning commit config
         tract._commit_reasoning = commit_reasoning
+
+        # Auto-summarize config
+        if auto_summarize is not False:
+            tract._auto_summarize = True
+            if isinstance(auto_summarize, str):
+                from dataclasses import replace as _replace
+                tract._operation_configs = _replace(
+                    tract._operation_configs,
+                    summarize=LLMConfig(model=auto_summarize, temperature=0.0),
+                )
+            elif isinstance(auto_summarize, LLMConfig):
+                from dataclasses import replace as _replace
+                tract._operation_configs = _replace(
+                    tract._operation_configs, summarize=auto_summarize,
+                )
+            # auto_summarize=True: no operation config needed, uses default
 
         return tract
 
@@ -757,7 +778,7 @@ class Tract:
 
             _text = _extract_text(content)
             _ctype = content.model_dump(mode="json").get("content_type", "unknown")
-            message = _auto_message(_ctype, _text)
+            message = self._auto_message(_ctype, _text)
 
         prev_head = self.head
 
@@ -987,7 +1008,7 @@ class Tract:
 
         return self.commit(
             ReasoningContent(text=text, format=format),
-            message=message or _auto_message("reasoning", text),
+            message=message or self._auto_message("reasoning", text),
             metadata=metadata,
         )
 
@@ -1902,6 +1923,21 @@ class Tract:
             return []
         effectives = self._compile_record_repo.get_effectives(record_id)
         return [e.commit_hash for e in effectives]
+
+    def token_checkpoints(self, limit: int = 100) -> list:
+        """API-calibrated token checkpoints, newest first.
+
+        Returns compile records where ``token_source`` starts with ``"api:"``,
+        i.e. records created by :meth:`record_usage`. Use ``limit=0`` to
+        return all matching records.
+        """
+        if self._compile_record_repo is None:
+            return []
+        all_records = list(reversed(self._compile_record_repo.get_all(self._tract_id)))
+        api_records = [r for r in all_records if r.token_source.startswith("api:")]
+        if limit == 0:
+            return api_records
+        return api_records[:limit]
 
     @overload
     def compile(
@@ -2928,7 +2964,7 @@ class Tract:
             self._operation_configs = _configs
             return
         # Keyword path: validate and construct OperationConfigs
-        _valid_ops = {"chat", "merge", "compress", "orchestrate"}
+        _valid_ops = {"chat", "merge", "compress", "orchestrate", "summarize"}
         for name, cfg in operation_configs.items():
             if not isinstance(cfg, LLMConfig):
                 raise TypeError(
@@ -2995,7 +3031,7 @@ class Tract:
                 )
             self._operation_clients = _clients
             return
-        _valid_ops = {"chat", "merge", "compress", "orchestrate"}
+        _valid_ops = {"chat", "merge", "compress", "orchestrate", "summarize"}
         for name in operation_clients:
             if name not in _valid_ops:
                 raise ValueError(
@@ -3044,6 +3080,54 @@ class Tract:
             if op_client is not None:
                 return True
         return hasattr(self, "_llm_client")
+
+    def _auto_message(self, content_type: str, text: str) -> str:
+        """Generate a commit message, using LLM summarization when available.
+
+        Falls back to truncation when:
+        - ``auto_summarize`` was not enabled on ``Tract.open()``
+        - No LLM client is available (per-operation or default)
+        - Currently inside a batch (``_in_batch``)
+        - The LLM call fails for any reason
+
+        Args:
+            content_type: The content type discriminator.
+            text: The text content to summarize.
+
+        Returns:
+            A concise one-sentence commit message, or a truncated preview.
+        """
+        if (
+            not self._auto_summarize
+            or self._in_batch
+            or not self._has_llm_client("summarize")
+        ):
+            return _fallback_message(content_type, text)
+
+        try:
+            from tract.prompts.commit_message import (
+                COMMIT_MESSAGE_SYSTEM,
+                build_commit_message_prompt,
+            )
+
+            client = self._resolve_llm_client("summarize")
+            llm_kwargs = self._resolve_llm_config(
+                "summarize", temperature=0.0, max_tokens=80,
+            )
+            messages = [
+                {"role": "system", "content": COMMIT_MESSAGE_SYSTEM},
+                {"role": "user", "content": build_commit_message_prompt(content_type, text)},
+            ]
+            response = client.chat(messages, **llm_kwargs)
+            summary = self._extract_content(response, client=client).strip()
+            if not summary:
+                return _fallback_message(content_type, text)
+            # Cap at 100 chars for safety
+            if len(summary) > 100:
+                summary = summary[:97] + "..."
+            return summary
+        except Exception:
+            return _fallback_message(content_type, text)
 
     def merge(
         self,
@@ -4100,11 +4184,45 @@ class Tract:
             self._cache.put(target_hash, updated)
             # Persist override so it survives cache eviction
             self._cache.store_api_override(target_hash, context_tokens, token_source)
+            # Persist as compile record for cross-session durability
+            if self._compile_record_repo is not None:
+                import uuid as _uuid
+                from datetime import datetime as _dt, timezone as _tz
+                record_id = _uuid.uuid4().hex
+                self._compile_record_repo.save_record(
+                    record_id=record_id,
+                    tract_id=self._tract_id,
+                    head_hash=target_hash,
+                    token_count=context_tokens,
+                    commit_count=updated.commit_count,
+                    token_source=token_source,
+                    params_json=None,
+                    created_at=_dt.now(_tz.utc),
+                )
+                for pos, commit_hash in enumerate(updated.commit_hashes):
+                    self._compile_record_repo.add_effective(record_id, commit_hash, pos)
+                self._session.commit()
             return self._cache.to_compiled(updated)
 
         # Fallback (custom compiler, no snapshot): return minimal result
         context_tokens = usage.prompt_tokens + usage.completion_tokens
         token_source = f"api:{usage.prompt_tokens}+{usage.completion_tokens}"
+        # Persist as compile record even without snapshot
+        if self._compile_record_repo is not None:
+            import uuid as _uuid
+            from datetime import datetime as _dt, timezone as _tz
+            record_id = _uuid.uuid4().hex
+            self._compile_record_repo.save_record(
+                record_id=record_id,
+                tract_id=self._tract_id,
+                head_hash=target_hash,
+                token_count=context_tokens,
+                commit_count=0,
+                token_source=token_source,
+                params_json=None,
+                created_at=_dt.now(_tz.utc),
+            )
+            self._session.commit()
         return CompiledContext(
             messages=[],
             token_count=context_tokens,

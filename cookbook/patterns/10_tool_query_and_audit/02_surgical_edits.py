@@ -24,7 +24,7 @@ TRACT_OPENAI_BASE_URL = os.environ.get("TRACT_OPENAI_BASE_URL", "")
 MODEL_ID = "gpt-oss-120b"
 
 
-def _build_agent_session(t):
+def _build_agent_session(t: Tract):
     """Build a realistic multi-tool agent session for auditing.
 
     Simulates a coding agent that uses grep, read_file, and bash tools
@@ -190,6 +190,7 @@ def part2_surgical_edits():
     refs = _build_agent_session(t)
 
     ctx_before = t.compile()
+    ctx_before.pprint(style="compact")
     print(f"  BEFORE edits: {ctx_before.token_count} tokens, "
           f"{len(ctx_before.messages)} messages\n")
 
@@ -234,6 +235,7 @@ def part2_surgical_edits():
     # --- Token accounting ---
 
     ctx_after = t.compile()
+    ctx_after.pprint(style="compact")
     saved = ctx_before.token_count - ctx_after.token_count
     print(f"\n  AFTER edits: {ctx_after.token_count} tokens, "
           f"{len(ctx_after.messages)} messages")
@@ -241,8 +243,7 @@ def part2_surgical_edits():
 
     # --- Originals preserved in history ---
 
-    print("  Originals are preserved — log(include_edits=True) shows both:\n")
-    log = t.log(include_edits=True)
+    log = t.log()
     edit_count = sum(1 for e in log if e.operation.value == "edit")
     print(f"    {len(log)} total entries, {edit_count} edits")
 

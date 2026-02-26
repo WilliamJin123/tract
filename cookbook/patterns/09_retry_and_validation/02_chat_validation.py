@@ -22,7 +22,7 @@ load_dotenv()
 
 TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
 TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-MODEL_ID = "gpt-oss-120b"
+MODEL_ID = "llama3.1-8b"
 
 
 # =============================================================================
@@ -74,9 +74,9 @@ def part1_basic_validation():
 # With purify=True, HEAD resets and only the clean result is re-committed.
 
 def part2_purify():
-    def must_contain_python(text: str) -> tuple[bool, str | None]:
-        if "python" not in text.lower():
-            return (False, "Response must mention Python")
+    def must_contain_scala(text: str) -> tuple[bool, str | None]:
+        if "scala" not in text.lower():
+            return (False, "Response must mention scala")
         return (True, None)
 
     with Tract.open(
@@ -88,7 +88,7 @@ def part2_purify():
 
         response = t.chat(
             "Name your favorite programming language and explain why in one sentence.",
-            validator=must_contain_python,
+            validator=must_contain_scala,
             max_retries=3,
             purify=True,
         )

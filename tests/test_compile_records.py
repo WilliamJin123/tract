@@ -56,7 +56,7 @@ class TestCompileRecords:
     """Tests for compile record creation and querying."""
 
     def test_generate_creates_compile_record(self):
-        """generate() should auto-create a compile record."""
+        """generate() should auto-create compile records (tiktoken + API)."""
         t = Tract.open()
         mock = MockLLMClient(responses=["I am helpful!"])
         t.configure_llm(mock)
@@ -66,16 +66,20 @@ class TestCompileRecords:
         t.generate()
 
         records = t.compile_records()
-        assert len(records) == 1
-        rec = records[0]
+        # generate() creates 2 records: tiktoken (at compile) + API (from record_usage)
+        assert len(records) == 2
+        tiktoken_recs = [r for r in records if r.token_source.startswith("tiktoken:")]
+        api_recs = [r for r in records if r.token_source.startswith("api:")]
+        assert len(tiktoken_recs) == 1
+        assert len(api_recs) == 1
+        rec = tiktoken_recs[0]
         assert rec.head_hash != ""
         assert rec.token_count > 0
         assert rec.commit_count > 0
-        assert rec.token_source.startswith("tiktoken:")
         t.close()
 
     def test_chat_creates_compile_record(self):
-        """chat() delegates to generate(), so it should also create a record."""
+        """chat() delegates to generate(), so it should also create records."""
         t = Tract.open()
         mock = MockLLMClient(responses=["Hi there!"])
         t.configure_llm(mock)
@@ -84,8 +88,11 @@ class TestCompileRecords:
         t.chat("hello")
 
         records = t.compile_records()
-        assert len(records) == 1
-        rec = records[0]
+        # chat -> generate creates tiktoken + API records
+        assert len(records) == 2
+        tiktoken_recs = [r for r in records if r.token_source.startswith("tiktoken:")]
+        assert len(tiktoken_recs) == 1
+        rec = tiktoken_recs[0]
         assert rec.token_count > 0
         assert rec.commit_count > 0
         t.close()
@@ -108,10 +115,11 @@ class TestCompileRecords:
         t.generate()
 
         records = t.compile_records()
-        assert len(records) == 1
-        rec = records[0]
+        assert len(records) == 2  # tiktoken + API
+        # Use the tiktoken record (created at compile time, before assistant commit)
+        tiktoken_rec = [r for r in records if r.token_source.startswith("tiktoken:")][0]
 
-        effectives = t.compile_record_commits(rec.record_id)
+        effectives = t.compile_record_commits(tiktoken_rec.record_id)
         # The effective commits should match the compile output
         # (generate compiles again, but after the same 3 messages, hashes match)
         assert len(effectives) == len(expected_hashes)
@@ -131,7 +139,7 @@ class TestCompileRecords:
         t.close()
 
     def test_multiple_generates_create_multiple_records(self):
-        """Each generate() call should create its own record."""
+        """Each generate() call should create its own records."""
         t = Tract.open()
         mock = MockLLMClient(responses=["r1", "r2", "r3"])
         t.configure_llm(mock)
@@ -147,9 +155,13 @@ class TestCompileRecords:
         t.generate()
 
         records = t.compile_records()
-        assert len(records) == 3
-        # Newest first
-        assert records[0].commit_count > records[2].commit_count
+        # Each generate() creates 2 records: 1 compile + 1 record_usage.
+        # First generate: tiktoken compile + API record_usage = 2.
+        # Subsequent: cache propagates API token_source, so compile record
+        # is also API-sourced, plus record_usage = 2 each.
+        assert len(records) == 6
+        # Commit counts should increase (newest first)
+        assert records[0].commit_count > records[-1].commit_count
         t.close()
 
     def test_compile_record_params_json_is_none(self):
@@ -163,8 +175,8 @@ class TestCompileRecords:
         t.generate()
 
         records = t.compile_records()
-        assert len(records) == 1
-        assert records[0].params_json is None
+        assert len(records) == 2  # tiktoken + API
+        assert all(r.params_json is None for r in records)
         t.close()
 
     def test_compile_record_survives_session(self):
@@ -181,16 +193,19 @@ class TestCompileRecords:
             t1.generate()
 
             records1 = t1.compile_records()
-            assert len(records1) == 1
-            record_id = records1[0].record_id
+            assert len(records1) == 2  # tiktoken + API
+            # Pick the tiktoken record for persistence check
+            tiktoken_rec = [r for r in records1 if r.token_source.startswith("tiktoken:")][0]
+            record_id = tiktoken_rec.record_id
             t1.close()
 
             # Session 2: verify records persist
             t2 = Tract.open(db_path, tract_id="t1")
             records2 = t2.compile_records()
-            assert len(records2) == 1
-            assert records2[0].record_id == record_id
-            assert records2[0].token_count > 0
+            assert len(records2) == 2
+            record_ids = {r.record_id for r in records2}
+            assert record_id in record_ids
+            assert tiktoken_rec.token_count > 0
 
             # Also verify effective commits persist
             effectives = t2.compile_record_commits(record_id)
@@ -198,7 +213,7 @@ class TestCompileRecords:
             t2.close()
 
     def test_compile_record_head_hash_matches_head(self):
-        """Record head_hash should match the tract head at compile time."""
+        """Tiktoken record head_hash should match the tract head at compile time."""
         t = Tract.open()
         mock = MockLLMClient(responses=["resp"])
         t.configure_llm(mock)
@@ -209,9 +224,10 @@ class TestCompileRecords:
         t.generate()
 
         records = t.compile_records()
-        # head_hash is captured BEFORE generate commits the assistant response,
-        # so it should match the head at compile time (= after user commit)
-        assert records[0].head_hash == head_before
+        # The tiktoken record is captured BEFORE generate commits the assistant
+        # response, so its head_hash matches the head at compile time.
+        tiktoken_rec = [r for r in records if r.token_source.startswith("tiktoken:")][0]
+        assert tiktoken_rec.head_hash == head_before
         t.close()
 
     def test_compile_records_limit(self):
@@ -226,7 +242,7 @@ class TestCompileRecords:
             t.generate()
 
         all_records = t.compile_records(limit=100)
-        assert len(all_records) == 5
+        assert len(all_records) == 10  # 2 per generate (tiktoken + API)
 
         limited = t.compile_records(limit=2)
         assert len(limited) == 2
@@ -249,4 +265,119 @@ class TestCompileRecords:
         t._compile_record_repo = None
         assert t.compile_records() == []
         assert t.compile_record_commits("any-id") == []
+        t.close()
+
+
+# ---------------------------------------------------------------------------
+# API token persistence tests
+# ---------------------------------------------------------------------------
+
+class TestAPITokenPersistence:
+    """Tests for record_usage() persisting API tokens as compile records."""
+
+    def test_record_usage_creates_api_compile_record(self):
+        """record_usage() should persist an API compile record."""
+        t = Tract.open()
+        t.system("System")
+        t.user("Hello")
+        t.assistant("Hi")
+
+        t.record_usage({"prompt_tokens": 50, "completion_tokens": 20})
+
+        records = t.compile_records()
+        api_records = [r for r in records if r.token_source.startswith("api:")]
+        assert len(api_records) == 1
+        rec = api_records[0]
+        assert rec.token_count == 70
+        assert rec.token_source == "api:50+20"
+        assert rec.head_hash == t.head
+        t.close()
+
+    def test_token_checkpoints_returns_only_api_records(self):
+        """After manual commits + record_usage(), only API records returned."""
+        t = Tract.open()
+        t.system("System")
+        t.user("Q")
+        t.assistant("A")
+
+        # compile() creates a tiktoken record? No — manual compile() does not.
+        # record_usage() creates an API record
+        t.record_usage({"prompt_tokens": 100, "completion_tokens": 30})
+
+        checkpoints = t.token_checkpoints()
+        assert len(checkpoints) == 1
+        assert checkpoints[0].token_source.startswith("api:")
+        assert checkpoints[0].token_count == 130
+
+        # All records should be just the API one (no tiktoken from manual commits)
+        all_records = t.compile_records()
+        assert len(all_records) == 1
+        t.close()
+
+    def test_token_checkpoints_empty_when_no_api_usage(self):
+        """Only tiktoken records exist — token_checkpoints() returns []."""
+        t = Tract.open()
+        t.system("System")
+        t.user("Q")
+
+        # Manual compile does not create any compile records
+        t.compile()
+
+        checkpoints = t.token_checkpoints()
+        assert checkpoints == []
+        t.close()
+
+    def test_record_usage_api_record_has_effective_commits(self):
+        """API compile record should have effective commits linked."""
+        t = Tract.open()
+        t.system("System")
+        t.user("Hello")
+        t.assistant("Hi")
+
+        compiled = t.compile()
+        expected_hashes = list(compiled.commit_hashes)
+
+        t.record_usage({"prompt_tokens": 40, "completion_tokens": 10})
+
+        checkpoints = t.token_checkpoints()
+        assert len(checkpoints) == 1
+        effectives = t.compile_record_commits(checkpoints[0].record_id)
+        assert len(effectives) == len(expected_hashes)
+        assert effectives == expected_hashes
+        t.close()
+
+    def test_token_checkpoints_respects_limit(self):
+        """limit=0 means all, limit=2 caps at 2."""
+        t = Tract.open()
+        t.system("System")
+
+        # Create 3 API records
+        for i in range(3):
+            t.user(f"Q{i}")
+            t.assistant(f"A{i}")
+            t.record_usage({"prompt_tokens": 10 * (i + 1), "completion_tokens": 5})
+
+        all_checkpoints = t.token_checkpoints(limit=0)
+        assert len(all_checkpoints) == 3
+
+        limited = t.token_checkpoints(limit=2)
+        assert len(limited) == 2
+        # Newest first
+        assert limited[0].record_id == all_checkpoints[0].record_id
+        t.close()
+
+    def test_record_usage_no_compile_record_repo_still_works(self):
+        """record_usage() works gracefully when repo is None."""
+        t = Tract.open()
+        t.system("System")
+        t.user("Hello")
+        t.assistant("Hi")
+        t._compile_record_repo = None
+
+        result = t.record_usage({"prompt_tokens": 50, "completion_tokens": 20})
+        assert result.token_count == 70
+        assert result.token_source == "api:50+20"
+
+        # token_checkpoints also graceful
+        assert t.token_checkpoints() == []
         t.close()
