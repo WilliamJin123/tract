@@ -6,7 +6,7 @@ Covers:
 - SqliteOperationEventRepository all 9 methods
 - SqliteCompileRecordRepository all 5 methods
 - Schema migration v2->v6 and v5->v6
-- CompressResult, PendingCompression, GCResult, ReorderWarning models
+- CompressResult, GCResult, ReorderWarning models
 - Default summarization prompt and builder
 """
 
@@ -801,11 +801,16 @@ class TestCompressionModels:
         with pytest.raises(AttributeError):
             result.compression_id = "changed"  # type: ignore[misc]
 
-    def test_pending_compression_edit_summary(self):
+    def test_pending_compress_edit_summary(self):
         """edit_summary() replaces text at index."""
-        from tract.models.compression import PendingCompression
+        from unittest.mock import MagicMock
 
-        pending = PendingCompression(
+        from tract.hooks.compress import PendingCompress
+
+        mock_tract = MagicMock()
+        pending = PendingCompress(
+            operation="compress",
+            tract=mock_tract,
             summaries=["draft 1", "draft 2"],
             source_commits=["a", "b"],
             preserved_commits=[],
@@ -816,19 +821,23 @@ class TestCompressionModels:
         assert pending.summaries[0] == "revised draft 1"
         assert pending.summaries[1] == "draft 2"
 
-    def test_pending_compression_approve_no_fn(self):
-        """approve() without _commit_fn raises CompressionError."""
-        from tract.exceptions import CompressionError
-        from tract.models.compression import PendingCompression
+    def test_pending_compress_approve_no_fn(self):
+        """approve() without _execute_fn raises RuntimeError."""
+        from unittest.mock import MagicMock
 
-        pending = PendingCompression(
+        from tract.hooks.compress import PendingCompress
+
+        mock_tract = MagicMock()
+        pending = PendingCompress(
+            operation="compress",
+            tract=mock_tract,
             summaries=["draft"],
             source_commits=["a"],
             preserved_commits=[],
             original_tokens=500,
             estimated_tokens=100,
         )
-        with pytest.raises(CompressionError, match="no commit function"):
+        with pytest.raises(RuntimeError, match="no execute function"):
             pending.approve()
 
     def test_gc_result_frozen(self):

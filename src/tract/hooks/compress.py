@@ -83,10 +83,6 @@ class PendingCompress(GuidanceMixin, Pending):
             "reject",
             "edit_summary",
             "edit_guidance",
-            "regenerate_guidance",
-            "retry",
-            "validate",
-            "edit_interactive",
         },
         repr=False,
     )
@@ -163,9 +159,7 @@ class PendingCompress(GuidanceMixin, Pending):
             NotImplementedError: Until Phase 1 wiring is complete.
         """
         raise NotImplementedError(
-            "retry() will be fully wired in Phase 1 wiring. "
-            "The method signature and fields are ready -- the LLM "
-            "re-generation pipeline needs to be connected."
+            "retry() is not yet implemented. Use edit_summary() for manual corrections."
         )
 
     def validate(self) -> ValidationResult:
@@ -178,8 +172,7 @@ class PendingCompress(GuidanceMixin, Pending):
             NotImplementedError: Until Phase 1 wiring is complete.
         """
         raise NotImplementedError(
-            "validate() will be fully wired in Phase 1 wiring. "
-            "The validation pipeline needs to be connected."
+            "validate() is not yet implemented."
         )
 
     def edit_interactive(self) -> None:
@@ -192,7 +185,7 @@ class PendingCompress(GuidanceMixin, Pending):
             NotImplementedError: Until CLI integration is complete.
         """
         raise NotImplementedError(
-            "edit_interactive() will be implemented with CLI integration."
+            "edit_interactive() is not yet implemented. Use edit_summary() for manual edits."
         )
 
     # -- Display --------------------------------------------------------

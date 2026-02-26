@@ -71,9 +71,6 @@ class PendingMerge(GuidanceMixin, Pending):
             "reject",
             "edit_resolution",
             "edit_guidance",
-            "regenerate_guidance",
-            "retry",
-            "edit_interactive",
         },
         repr=False,
     )
@@ -147,8 +144,7 @@ class PendingMerge(GuidanceMixin, Pending):
             NotImplementedError: Until Phase 2 wiring is complete.
         """
         raise NotImplementedError(
-            "retry() will be fully wired in Phase 2. "
-            "The method signature and fields are ready."
+            "retry() is not yet implemented. Use edit_resolution() for manual corrections."
         )
 
     def edit_interactive(self) -> None:
@@ -158,7 +154,7 @@ class PendingMerge(GuidanceMixin, Pending):
             NotImplementedError: Until CLI integration is complete.
         """
         raise NotImplementedError(
-            "edit_interactive() will be implemented with CLI integration."
+            "edit_interactive() is not yet implemented. Use edit_resolution() for manual edits."
         )
 
     # -- Display --------------------------------------------------------

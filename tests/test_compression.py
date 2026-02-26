@@ -16,9 +16,9 @@ from tract import (
     DialogueContent,
     InstructionContent,
     PendingCompress,
-    PendingCompression,
     PendingToolResult,
     Priority,
+    RetryExhaustedError,
     Tract,
     ToolDropResult,
     TraceError,
@@ -236,7 +236,7 @@ class TestCollaborativeMode:
         assert "Edited summary text" in messages_text
 
     def test_pending_approve(self):
-        """PendingCompression.approve() creates commits and returns CompressResult."""
+        """PendingCompress.approve() creates commits and returns CompressResult."""
         t, hashes = make_tract_with_commits(5)
         old_head = t.head
 
@@ -667,7 +667,7 @@ class TestStackedCompression:
         assert "Re-compressed summary" in messages_text
 
     def test_toctou_guard_blocks_stale_approve(self):
-        """Approving a PendingCompression after HEAD changed raises error."""
+        """Approving a PendingCompress after HEAD changed raises error."""
         t, hashes = make_tract_with_commits(5)
 
         mock = MockLLMClient()
@@ -1486,3 +1486,59 @@ class TestSummarizeIncludeContext:
             user_msg = llm.last_messages[1]["content"]
             assert "conversation so far" in user_msg
             assert "test context" in user_msg
+
+
+# ===========================================================================
+# Target tokens enforcement tests
+# ===========================================================================
+
+
+class TestTargetTokensEnforcement:
+    """Tests that target_tokens triggers retry validation."""
+
+    def test_compress_target_tokens_triggers_retry(self):
+        """When first response exceeds target, retry fires and shorter response is accepted."""
+        t, hashes = make_tract_with_commits(3)
+
+        # First response is long (~1000 tokens), second is short
+        long_response = "word " * 200  # ~200 tokens (well over a target of 50)
+        short_response = "Short summary."
+
+        mock = MockLLMClient(responses=[long_response, short_response])
+        t.configure_llm(mock)
+
+        result = t.compress(target_tokens=50)
+
+        assert isinstance(result, CompressResult)
+        # Retry should have been triggered: 2 calls total
+        assert mock._call_count == 2
+
+    def test_compress_target_tokens_within_tolerance_no_retry(self):
+        """Response within 1.2x target passes on first attempt."""
+        t, hashes = make_tract_with_commits(3)
+
+        # A short response that is within 1.2x of target
+        short_response = "Brief summary of the conversation."
+
+        mock = MockLLMClient(responses=[short_response])
+        t.configure_llm(mock)
+
+        # Use a target large enough that the short response fits within 1.2x
+        result = t.compress(target_tokens=200)
+
+        assert isinstance(result, CompressResult)
+        # Should pass on first attempt -- no retry
+        assert mock._call_count == 1
+
+    def test_compress_target_tokens_exhausted(self):
+        """When LLM always returns long responses, RetryExhaustedError is raised."""
+        t, hashes = make_tract_with_commits(3)
+
+        # Always returns a long response
+        long_response = "word " * 200
+
+        mock = MockLLMClient(responses=[long_response])
+        t.configure_llm(mock)
+
+        with pytest.raises(RetryExhaustedError):
+            t.compress(target_tokens=50, max_retries=2)

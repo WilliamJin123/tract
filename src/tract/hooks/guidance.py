@@ -63,5 +63,5 @@ class GuidanceMixin:
             NotImplementedError: Until two_stage=True is fully wired.
         """
         raise NotImplementedError(
-            "regenerate_guidance() requires LLM wiring (two_stage=True on compress/merge)"
+            "regenerate_guidance() is not yet implemented. Use edit_guidance() to set guidance manually."
         )

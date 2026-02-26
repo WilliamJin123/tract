@@ -167,13 +167,15 @@ def init_db(engine: Engine) -> None:
     """Initialize the database: create all tables and set schema version.
 
     Creates all tables defined in Base.metadata, then sets schema_version.
-    For new databases, schema_version is set to "7".
-    For existing v1 databases, migrates v1->v2->v3->v4->v5->v6->v7.
-    For existing v2 databases, migrates v2->v3->v4->v5->v6->v7.
-    For existing v3 databases, migrates v3->v4->v5->v6->v7.
-    For existing v4 databases, migrates v4->v5->v6->v7 (policy tables).
-    For existing v5 databases, migrates v5->v6->v7 (unified operation events).
-    For existing v6 databases, migrates v6->v7 (retention_json on annotations).
+    For new databases, schema_version is set to "9".
+    For existing v1 databases, migrates v1->v2->...->v9.
+    For existing v2 databases, migrates v2->v3->...->v9.
+    For existing v3 databases, migrates v3->v4->...->v9.
+    For existing v4 databases, migrates v4->v5->...->v9 (policy tables).
+    For existing v5 databases, migrates v5->v6->...->v9 (unified operation events).
+    For existing v6 databases, migrates v6->v7->v8->v9 (retention_json on annotations).
+    For existing v7 databases, migrates v7->v8->v9 (tool tracking tables).
+    For existing v8 databases, migrates v8->v9 (instruction columns on operation_events).
     """
     from sqlalchemy import text
 
@@ -186,8 +188,8 @@ def init_db(engine: Engine) -> None:
         ).scalar_one_or_none()
 
         if existing is None:
-            # New database: set schema version to 8
-            session.add(TraceMetaRow(key="schema_version", value="8"))
+            # New database: set schema version to 9
+            session.add(TraceMetaRow(key="schema_version", value="9"))
             session.commit()
         elif existing.value == "1":
             # Migrate v1 -> v2: create commit_parents table
@@ -290,4 +292,24 @@ def init_db(engine: Engine) -> None:
             for table_name in ["tool_definitions", "commit_tools"]:
                 Base.metadata.tables[table_name].create(engine, checkfirst=True)
             existing.value = "8"
+            session.commit()
+        if existing is not None and existing.value == "8":
+            # Migrate v8 -> v9: add instruction columns to operation_events
+            with engine.connect() as conn:
+                columns = [
+                    r[1]
+                    for r in conn.execute(
+                        text("PRAGMA table_info(operation_events)")
+                    ).fetchall()
+                ]
+                if "original_instructions" not in columns:
+                    conn.execute(
+                        text("ALTER TABLE operation_events ADD COLUMN original_instructions TEXT")
+                    )
+                if "effective_instructions" not in columns:
+                    conn.execute(
+                        text("ALTER TABLE operation_events ADD COLUMN effective_instructions TEXT")
+                    )
+                conn.commit()
+            existing.value = "9"
             session.commit()

@@ -38,16 +38,20 @@ def _improve_content(tract: Tract, original_hash: str, improved_text: str) -> st
         then calling this function with the improved text.
         Full wiring into Tract.user(improve=True) etc. is deferred.
     """
-    # Create EDIT commit with the improved text
-    # The original is already committed. Create an EDIT targeting it.
-    # This uses the tract's internal commit mechanism.
     from tract.models.commit import CommitOperation
+    from tract.models.content import DialogueContent
+
+    # Look up the original commit to get its role
+    original = tract._commit_repo.get_commit(original_hash)
+    role = "user"
+    if original and original.role:
+        role = original.role
 
     result = tract.commit(
-        role="user",  # Will be overridden by the original commit's role
-        content=improved_text,
+        DialogueContent(role=role, text=improved_text),
         operation=CommitOperation.EDIT,
-        parent_hash=original_hash,
+        edit_target=original_hash,
+        message=f"improve: {role} message",
     )
     return result.hash
 

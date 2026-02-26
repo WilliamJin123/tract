@@ -26,7 +26,7 @@ load_dotenv()
 
 TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
 TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-MODEL_ID = "gpt-oss-120b"
+MODEL_ID = "llama3.1-8b"
 
 
 # =============================================================================
@@ -115,11 +115,11 @@ def part1_manual_compression():
         # (PINNED + preserve= would create multiple groups, requiring LLM mode.)
         t.system("You are a concise history tutor.")
 
-        t.chat("What caused the fall of Rome?")
-        t.chat("Explain the Renaissance.")
+        t.chat("What caused the fall of Rome?", reasoning=False)
+        t.chat("Explain the Renaissance.", reasoning=False)
 
         # This Q&A is the one we want to keep
-        r3 = t.chat("What was the Space Race and who won?")
+        r3 = t.chat("What was the Space Race and who won?", reasoning=False)
 
         print("\n  BEFORE compression:\n")
         t.compile().pprint(style="chat")

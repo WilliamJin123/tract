@@ -8,12 +8,12 @@ Covers:
 - Auto-compress on compile (collaborative mode with approval)
 - Policy priority ordering via audit log
 - Pause/resume lifecycle
-- Collaborative approve/reject
+- Collaborative approve/reject via hook system
 - Policy config persistence (save/load)
 - Recursive evaluation prevention
 - Multiple policy composition
 - Custom policy subclass
-- on_proposal callback
+- Policy hook callback
 - Policy config survives restart (file-backed)
 """
 
@@ -33,7 +33,6 @@ from tract import (
     PolicyAction,
     PolicyEvaluator,
     PolicyExecutionError,
-    PolicyProposal,
     Priority,
     Tract,
     TractConfig,
@@ -258,10 +257,51 @@ class TestPauseResume:
 
 
 class TestCollaborativeApproveReject:
-    """Collaborative mode approve and reject lifecycle."""
+    """Collaborative mode approve and reject lifecycle via hooks."""
 
-    def test_collaborative_approve_reject(self):
-        """Approve executes action, reject cancels it."""
+    def test_collaborative_reject_then_approve(self):
+        """First hook rejects, second hook approves -- annotation created on second."""
+        t = Tract.open(":memory:")
+        try:
+            # Use DialogueContent which does NOT auto-pin
+            t.commit(InstructionContent(text="system"))
+            info = t.commit(DialogueContent(role="user", text="hello"))
+
+            action = PolicyAction(
+                action_type="annotate",
+                params={"target_hash": info.commit_hash, "priority": "pinned"},
+                reason="Should we pin?",
+                autonomy="collaborative",
+            )
+
+            call_count = [0]
+
+            def hook(pending):
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    pending.reject("Not now")
+                else:
+                    pending.approve()
+
+            t.on("policy", hook)
+
+            p = CountingPolicy(name="collab", trigger="compile", action=action)
+            t.configure_policies(policies=[p])
+
+            # First compile -- hook rejects
+            t.compile()
+            annotations = t.get_annotations(info.commit_hash)
+            assert not any(a.priority == Priority.PINNED for a in annotations)
+
+            # Second compile -- hook approves
+            t.compile()
+            annotations = t.get_annotations(info.commit_hash)
+            assert any(a.priority == Priority.PINNED for a in annotations)
+        finally:
+            t.close()
+
+    def test_collaborative_approve_via_hook(self):
+        """Hook auto-approves collaborative action, verifying execution."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
@@ -273,25 +313,11 @@ class TestCollaborativeApproveReject:
                 autonomy="collaborative",
             )
             p = CountingPolicy(name="collab", trigger="compile", action=action)
+
+            t.on("policy", lambda pending: pending.approve())
             t.configure_policies(policies=[p])
 
-            # Trigger evaluation -- creates proposal
             t.compile()
-
-            pending = t.get_pending_proposals()
-            assert len(pending) == 1
-
-            # Reject the first proposal
-            t.reject_proposal(pending[0].proposal_id)
-            assert len(t.get_pending_proposals()) == 0
-
-            # Trigger again -- new proposal
-            t.compile()
-            pending2 = t.get_pending_proposals()
-            assert len(pending2) == 1
-
-            # Approve this one
-            t.approve_proposal(pending2[0].proposal_id)
 
             # Annotation was created
             annotations = t.get_annotations(info.commit_hash)
@@ -464,37 +490,36 @@ class TestCustomPolicySubclass:
 
 
 # ---------------------------------------------------------------------------
-# 10. on_proposal Callback
+# 10. Policy Hook Callback
 # ---------------------------------------------------------------------------
 
 
-class TestOnProposalCallback:
-    """on_proposal callback is invoked for collaborative proposals."""
+class TestPolicyHookCallback:
+    """Policy hook is invoked for collaborative proposals."""
 
-    def test_on_proposal_callback(self):
-        """on_proposal callback is invoked with the proposal object."""
+    def test_policy_hook_captures_pending(self):
+        """Policy hook receives PendingPolicy for collaborative actions."""
         t = Tract.open(":memory:")
         try:
-            callback_calls: list[PolicyProposal] = []
+            hook_calls = []
             info = t.commit(InstructionContent(text="hello"))
 
             action = PolicyAction(
                 action_type="annotate",
                 params={"target_hash": info.commit_hash, "priority": "pinned"},
-                reason="Test callback",
+                reason="Test hook",
                 autonomy="collaborative",
             )
-            p = CountingPolicy(name="callback-test", action=action)
-            t.configure_policies(
-                policies=[p],
-                on_proposal=lambda prop: callback_calls.append(prop),
-            )
+            p = CountingPolicy(name="hook-test", action=action)
+
+            t.on("policy", lambda pending: hook_calls.append(pending))
+            t.configure_policies(policies=[p])
 
             t.compile()
 
-            assert len(callback_calls) == 1
-            assert callback_calls[0].policy_name == "callback-test"
-            assert callback_calls[0].status == "pending"
+            assert len(hook_calls) == 1
+            assert hook_calls[0].policy_name == "hook-test"
+            assert hook_calls[0].status == "pending"
         finally:
             t.close()
 

@@ -7,7 +7,7 @@ Covers:
 - Proposal status updates and pending filtering
 - Log entry filtering by time, policy_name, ordering, and limit
 - Log entry deletion (audit GC)
-- Domain models (PolicyAction, PolicyProposal, EvaluationResult, PolicyLogEntry)
+- Domain models (PolicyAction, EvaluationResult, PolicyLogEntry)
 - Policy exceptions (PolicyExecutionError, PolicyConfigError)
 """
 
@@ -440,51 +440,6 @@ class TestPolicyDomainModels:
         action = PolicyAction(action_type="compress")
         with pytest.raises(AttributeError):
             action.action_type = "prune"  # type: ignore[misc]
-
-    def test_policy_proposal_approve(self):
-        """PolicyProposal.approve() calls _execute_fn."""
-        from tract.models.policy import PolicyAction, PolicyProposal
-
-        action = PolicyAction(action_type="compress")
-        proposal = PolicyProposal(
-            proposal_id="p1",
-            policy_name="budget",
-            action=action,
-            created_at=_now(),
-            _execute_fn=lambda p: "executed",
-        )
-        result = proposal.approve()
-        assert result == "executed"
-        assert proposal.status == "approved"
-
-    def test_policy_proposal_approve_no_fn(self):
-        """PolicyProposal.approve() raises without _execute_fn."""
-        from tract.models.policy import PolicyAction, PolicyProposal
-        from tract.exceptions import PolicyExecutionError
-
-        action = PolicyAction(action_type="compress")
-        proposal = PolicyProposal(
-            proposal_id="p1",
-            policy_name="budget",
-            action=action,
-            created_at=_now(),
-        )
-        with pytest.raises(PolicyExecutionError, match="no execute function"):
-            proposal.approve()
-
-    def test_policy_proposal_reject(self):
-        """PolicyProposal.reject() sets status to rejected."""
-        from tract.models.policy import PolicyAction, PolicyProposal
-
-        action = PolicyAction(action_type="compress")
-        proposal = PolicyProposal(
-            proposal_id="p1",
-            policy_name="budget",
-            action=action,
-            created_at=_now(),
-        )
-        proposal.reject("Not needed")
-        assert proposal.status == "rejected"
 
     def test_evaluation_result_defaults(self):
         """EvaluationResult has correct defaults."""

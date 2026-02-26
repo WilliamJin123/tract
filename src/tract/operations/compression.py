@@ -26,7 +26,7 @@ from tract.exceptions import CompressionError
 from tract.models.annotations import Priority, RetentionCriteria
 from tract.models.commit import CommitOperation
 from tract.hooks.compress import PendingCompress
-from tract.models.compression import CompressResult, GCResult, PendingCompression
+from tract.models.compression import CompressResult, GCResult, ReorderWarning
 from tract.models.content import DialogueContent
 from tract.prompts.summarize import DEFAULT_SUMMARIZE_SYSTEM, build_summarize_prompt
 
@@ -626,11 +626,12 @@ def compress_range(
                 rc.match_patterns for rc in g_retention
             )
 
-            # Build a combined validator: user-supplied + retention
+            # Build a combined validator: user-supplied + retention + token count
             def _make_combined_validator(
                 user_validator, retention_criteria,
+                target_tok, tok_counter,
             ):
-                """Build a validator that checks both user + retention criteria."""
+                """Build a validator that checks user + retention + token count."""
                 def _combined(result: str) -> tuple[bool, str | None]:
                     # Check retention criteria first
                     ok, diag = _validate_retention(result, retention_criteria)
@@ -638,17 +639,35 @@ def compress_range(
                         return (False, diag)
                     # Then check user-supplied validator
                     if user_validator is not None:
-                        return user_validator(result)
+                        uok, udiag = user_validator(result)
+                        if not uok:
+                            return (False, udiag)
+                    # Then check token count if target_tokens is set
+                    if target_tok is not None:
+                        actual = tok_counter.count_text(result)
+                        limit = int(target_tok * 2.0)
+                        if actual > limit:
+                            return (
+                                False,
+                                f"Summary is ~{actual} tokens "
+                                f"(target: {target_tok}). "
+                                f"Condense to ~{target_tok} tokens.",
+                            )
                     return (True, None)
                 return _combined
 
-            needs_retry = validator is not None or has_deterministic
+            needs_retry = (
+                validator is not None
+                or has_deterministic
+                or target_tokens is not None
+            )
 
             if needs_retry:
                 from tract.retry import retry_with_steering
 
                 combined_validator = _make_combined_validator(
                     validator, g_retention,
+                    target_tokens, token_counter,
                 )
 
                 # Mutable instructions for steering
@@ -947,8 +966,6 @@ def check_reorder_safety(
     Returns:
         List of ReorderWarning objects (may be empty if no issues found).
     """
-    from tract.models.compression import ReorderWarning
-
     warnings: list[ReorderWarning] = []
     order_set = set(order)
     hash_to_pos = {h: i for i, h in enumerate(order)}

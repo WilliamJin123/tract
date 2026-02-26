@@ -28,7 +28,7 @@ DEFAULT_SUMMARIZE_SYSTEM: str = (
     "- Prioritize information that affects future interactions -- "
     "decisions made, preferences expressed, requirements established.\n"
     "- Omit filler, pleasantries, and redundant phrasing.\n"
-    "- If a target token count is specified, aim for approximately that length."
+    "- If a target token count is specified, you MUST keep your response within that limit."
 )
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ CONVERSATION_SUMMARIZE_SYSTEM: str = (
     "decisions made, preferences expressed, requirements established.\n"
     "- Omit pleasantries, greetings, filler, and meta-conversation "
     "(e.g., 'the user then asked...' is fine, but 'the user said hello' is not).\n"
-    "- If a target token count is specified, aim for approximately that length.\n"
+    "- If a target token count is specified, you MUST keep your response within that limit.\n"
     '- Begin your summary with "Previously in this conversation:"'
 )
 
@@ -69,7 +69,7 @@ TOOL_SUMMARIZE_SYSTEM: str = (
     "error messages, and decisions made based on results.\n"
     "- If multiple tool calls were made, summarize the sequence of actions "
     "and their cumulative result, not each call individually.\n"
-    "- If a target token count is specified, aim for approximately that length."
+    "- If a target token count is specified, you MUST keep your response within that limit."
 )
 
 
@@ -142,7 +142,7 @@ TOOL_CONTEXT_SUMMARIZE_SYSTEM: str = (
     "- Omit data with no bearing on the conversation goals.\n"
     "- Preserve specific details needed: names, numbers, paths, errors.\n"
     "- If entirely irrelevant, say so in one line.\n"
-    "- If a target token count is specified, aim for that length."
+    "- If a target token count is specified, you MUST keep your response within that limit."
 )
 
 
@@ -183,7 +183,10 @@ def build_summarize_prompt(
         prompt = f"Summarize the following conversation segment:\n\n{messages_text}"
 
     if target_tokens is not None:
-        prompt += f"\nTarget approximately {target_tokens} tokens."
+        prompt += (
+            f"\nIMPORTANT: Your summary MUST be approximately {target_tokens} tokens. "
+            f"This is a hard limit. Aim for {target_tokens} tokens or fewer."
+        )
 
     if retention_instructions:
         prompt += (
@@ -214,7 +217,7 @@ DEFAULT_COLLAPSE_SYSTEM: str = (
     "exact values, error messages.\n"
     "- Omit the subagent's internal reasoning process unless it contains "
     "important caveats or trade-off analysis.\n"
-    "- If a target token count is specified, aim for approximately that length.\n"
+    "- If a target token count is specified, you MUST keep your response within that limit.\n"
     'Begin with: "Subagent completed: [task summary]"'
 )
 

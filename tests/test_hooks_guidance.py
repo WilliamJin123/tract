@@ -192,13 +192,13 @@ class TestRegenerateGuidance:
     def test_regenerate_guidance_raises_on_compress(self):
         """regenerate_guidance() raises NotImplementedError on PendingCompress."""
         pending = _make_pending_compress()
-        with pytest.raises(NotImplementedError, match="two_stage"):
+        with pytest.raises(NotImplementedError, match="not yet implemented"):
             pending.regenerate_guidance()
 
     def test_regenerate_guidance_raises_on_merge(self):
         """regenerate_guidance() raises NotImplementedError on PendingMerge."""
         pending = _make_pending_merge()
-        with pytest.raises(NotImplementedError, match="two_stage"):
+        with pytest.raises(NotImplementedError, match="not yet implemented"):
             pending.regenerate_guidance()
 
     def test_regenerate_guidance_raises_with_overrides(self):
@@ -265,20 +265,20 @@ class TestPublicActionsIncludeGuidance:
         pending = _make_pending_compress()
         assert "edit_guidance" in pending._public_actions
 
-    def test_regenerate_guidance_in_compress_actions(self):
-        """'regenerate_guidance' is in PendingCompress._public_actions."""
+    def test_regenerate_guidance_not_in_compress_actions(self):
+        """'regenerate_guidance' is NOT in PendingCompress._public_actions (stub)."""
         pending = _make_pending_compress()
-        assert "regenerate_guidance" in pending._public_actions
+        assert "regenerate_guidance" not in pending._public_actions
 
     def test_edit_guidance_in_merge_actions(self):
         """'edit_guidance' is in PendingMerge._public_actions."""
         pending = _make_pending_merge()
         assert "edit_guidance" in pending._public_actions
 
-    def test_regenerate_guidance_in_merge_actions(self):
-        """'regenerate_guidance' is in PendingMerge._public_actions."""
+    def test_regenerate_guidance_not_in_merge_actions(self):
+        """'regenerate_guidance' is NOT in PendingMerge._public_actions (stub)."""
         pending = _make_pending_merge()
-        assert "regenerate_guidance" in pending._public_actions
+        assert "regenerate_guidance" not in pending._public_actions
 
     def test_execute_tool_edit_guidance(self):
         """execute_tool('edit_guidance', ...) works through dispatch."""

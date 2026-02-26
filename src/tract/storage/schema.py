@@ -177,6 +177,8 @@ class OperationEventRow(Base):
     original_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     compressed_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     params_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    original_instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    effective_instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_operation_events_tract_type", "tract_id", "event_type"),

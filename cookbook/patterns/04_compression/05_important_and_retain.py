@@ -22,7 +22,7 @@ load_dotenv()
 
 TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
 TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
-MODEL_ID = "qwen-3-235b-a22b-instruct-2507"
+MODEL_ID = "gpt-oss-120b"
 
 CONTRACT_PATH = Path(__file__).parent / "sample_contract.md"
 
@@ -112,7 +112,7 @@ def main():
         # patterns must survive. PINNED system prompt is untouched.
 
         print("=== Compressing... ===\n")
-        result = t.compress(max_retries=5)
+        result = t.compress(max_retries=5, target_tokens=300)
 
         print(f"  Original:    {result.original_tokens} tokens")
         print(f"  Compressed:  {result.compressed_tokens} tokens")

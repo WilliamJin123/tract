@@ -819,12 +819,11 @@ class TestBackwardCompatibility:
         assert "concise summary" in messages_text
         t.close()
 
-    def test_compress_review_true_replaces_auto_commit_false(self):
-        """review=True returns PendingCompress (replaces auto_commit=False returning PendingCompression)."""
+    def test_compress_review_true_returns_pending_compress(self):
+        """review=True returns PendingCompress."""
         t = _make_compressible_tract()
         pending = t.compress(content="summary", review=True)
         assert isinstance(pending, PendingCompress)
-        # Verify it's NOT the old PendingCompression
         assert type(pending).__name__ == "PendingCompress"
         t.close()
 

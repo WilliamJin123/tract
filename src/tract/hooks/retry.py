@@ -1,8 +1,11 @@
 """Convenience retry wrapper for hookable operations.
 
 Provides auto_retry() -- a standard validate->retry loop for
-Pending objects that support validate() and retry() methods
-(currently PendingCompress, eventually PendingMerge).
+Pending objects that support validate() and retry() methods.
+
+Note: auto_retry() currently raises NotImplementedError on
+PendingCompress because validate() and retry() are stubs.
+It will become functional when those methods are wired.
 """
 
 from __future__ import annotations

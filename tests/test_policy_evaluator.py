@@ -4,11 +4,10 @@ Covers:
 - Policy ABC subclassing and instantiation
 - PolicyEvaluator priority sorting, trigger filtering, recursion guard
 - Autonomous mode: immediate execution
-- Collaborative mode: proposal creation, approve/reject lifecycle
+- Collaborative mode: PendingPolicy creation via hook system
 - Manual mode: action skipped
 - Audit log entries for every triggered evaluation
 - Cooldown: rapid evaluations within cooldown_seconds are skipped
-- Pending proposal deduplication
 - Tract.configure_policies() and register_policy()
 - Tract.pause_all_policies() and resume_all_policies()
 - Tract.compile() triggers compile-triggered policies
@@ -16,7 +15,6 @@ Covers:
 - save_policy_config() and load_policy_config() roundtrip
 - Error handling: exception in policy.evaluate() is caught and logged
 - _execute_action dispatches to correct Tract method
-- get_pending_proposals returns only pending ones
 """
 
 from __future__ import annotations
@@ -34,7 +32,6 @@ from tract import (
     PolicyAction,
     PolicyEvaluator,
     PolicyExecutionError,
-    PolicyProposal,
     Priority,
     Tract,
 )
@@ -322,12 +319,10 @@ class TestAutonomousMode:
 
 
 class TestCollaborativeMode:
-    """Test collaborative mode: creates proposal, approve/reject."""
+    """Test collaborative mode: creates PendingPolicy via hook system."""
 
-    def test_creates_proposal(self):
-        """Collaborative mode creates proposal and calls callback."""
-        proposals: list[PolicyProposal] = []
-
+    def test_creates_pending_policy(self):
+        """Collaborative mode creates a PendingPolicy and returns 'proposed'."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
@@ -344,22 +339,16 @@ class TestCollaborativeMode:
             ev = PolicyEvaluator(
                 t, policies=[p],
                 policy_repo=t._policy_repo,
-                on_proposal=lambda prop: proposals.append(prop),
             )
 
             results = ev.evaluate()
             assert len(results) == 1
             assert results[0].outcome == "proposed"
-
-            # Callback was invoked
-            assert len(proposals) == 1
-            assert proposals[0].status == "pending"
-            assert proposals[0].policy_name == "collab-pin"
         finally:
             t.close()
 
-    def test_approve_executes(self):
-        """Approving a proposal executes the action."""
+    def test_collaborative_with_hook_auto_approves(self):
+        """Collaborative mode executes when a user hook auto-approves."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
@@ -373,17 +362,17 @@ class TestCollaborativeMode:
                 autonomy="collaborative",
             )
             p = DummyPolicy(name="collab-pin", action=action)
+
+            # Register a hook that auto-approves
+            t.on("policy", lambda pending: pending.approve())
+
             ev = PolicyEvaluator(
                 t, policies=[p], policy_repo=t._policy_repo,
             )
 
-            ev.evaluate()
-
-            # Get and approve the proposal
-            pending = ev.get_pending_proposals()
-            assert len(pending) == 1
-
-            ev.approve_proposal(pending[0].proposal_id)
+            results = ev.evaluate()
+            assert len(results) == 1
+            assert results[0].outcome == "executed"
 
             # Verify annotation was created
             annotations = t.get_annotations(info.commit_hash)
@@ -391,8 +380,8 @@ class TestCollaborativeMode:
         finally:
             t.close()
 
-    def test_reject_sets_status(self):
-        """Rejecting a proposal updates its status."""
+    def test_collaborative_with_hook_rejects(self):
+        """Collaborative mode returns 'proposed' when hook rejects."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
@@ -405,19 +394,48 @@ class TestCollaborativeMode:
                 autonomy="collaborative",
             )
             p = DummyPolicy(name="collab-pin", action=action)
+
+            # Register a hook that rejects
+            t.on("policy", lambda pending: pending.reject("Not needed"))
+
             ev = PolicyEvaluator(
                 t, policies=[p], policy_repo=t._policy_repo,
             )
 
-            ev.evaluate()
-            pending = ev.get_pending_proposals()
-            assert len(pending) == 1
+            results = ev.evaluate()
+            assert len(results) == 1
+            assert results[0].outcome == "proposed"
+        finally:
+            t.close()
 
-            ev.reject_proposal(pending[0].proposal_id, reason="Not needed")
+    def test_collaborative_auto_approve_via_default_handler(self):
+        """Collaborative mode executes when default_handler approves."""
+        t = Tract.open(":memory:")
+        try:
+            info = t.commit(InstructionContent(text="hello"))
+            action = PolicyAction(
+                action_type="annotate",
+                params={
+                    "target_hash": info.commit_hash,
+                    "priority": "pinned",
+                },
+                reason="Propose pinning",
+                autonomy="collaborative",
+            )
+            p = DummyPolicy(
+                name="collab-pin", action=action, auto_approve_default=True,
+            )
+            ev = PolicyEvaluator(
+                t, policies=[p], policy_repo=t._policy_repo,
+            )
 
-            # No more pending proposals
-            pending_after = ev.get_pending_proposals()
-            assert len(pending_after) == 0
+            results = ev.evaluate()
+            assert len(results) == 1
+            assert results[0].outcome == "executed"
+
+            # Verify annotation was created
+            annotations = t.get_annotations(info.commit_hash)
+            assert any(a.priority == Priority.PINNED for a in annotations)
         finally:
             t.close()
 
@@ -504,44 +522,7 @@ class TestCooldown:
 
 
 # ---------------------------------------------------------------------------
-# 7. Pending Proposal Deduplication
-# ---------------------------------------------------------------------------
-
-
-class TestPendingDedup:
-    """Test pending proposal deduplication."""
-
-    def test_skips_if_pending_exists(self):
-        """If a pending proposal exists for a policy, skip re-evaluation."""
-        t = Tract.open(":memory:")
-        try:
-            info = t.commit(InstructionContent(text="hello"))
-            action = PolicyAction(
-                action_type="annotate",
-                params={
-                    "target_hash": info.commit_hash,
-                    "priority": "pinned",
-                },
-                autonomy="collaborative",
-            )
-            p = DummyPolicy(name="dedup-policy", action=action)
-            ev = PolicyEvaluator(
-                t, policies=[p], policy_repo=t._policy_repo,
-            )
-
-            # First evaluation creates proposal
-            results1 = ev.evaluate()
-            assert results1[0].outcome == "proposed"
-
-            # Second evaluation skips because pending exists
-            results2 = ev.evaluate()
-            assert results2[0].outcome == "skipped"
-        finally:
-            t.close()
-
-
-# ---------------------------------------------------------------------------
-# 8. Error Handling
+# 7. Error Handling
 # ---------------------------------------------------------------------------
 
 
@@ -574,7 +555,7 @@ class TestErrorHandling:
 
 
 # ---------------------------------------------------------------------------
-# 9. Tract Integration Tests
+# 8. Tract Integration Tests
 # ---------------------------------------------------------------------------
 
 
@@ -705,7 +686,7 @@ class TestTractIntegration:
 
 
 # ---------------------------------------------------------------------------
-# 10. Config Persistence
+# 9. Config Persistence
 # ---------------------------------------------------------------------------
 
 
@@ -750,7 +731,7 @@ class TestConfigPersistence:
 
 
 # ---------------------------------------------------------------------------
-# 11. Dispatch Tests
+# 10. Dispatch Tests
 # ---------------------------------------------------------------------------
 
 
@@ -801,116 +782,7 @@ class TestDispatch:
 
 
 # ---------------------------------------------------------------------------
-# 12. Pending Proposals via Tract
-# ---------------------------------------------------------------------------
-
-
-class TestTractProposals:
-    """Test Tract-level proposal management."""
-
-    def test_get_pending_proposals_no_evaluator(self):
-        """get_pending_proposals returns [] when no evaluator."""
-        t = Tract.open(":memory:")
-        try:
-            assert t.get_pending_proposals() == []
-        finally:
-            t.close()
-
-    def test_approve_no_evaluator_raises(self):
-        """approve_proposal raises when no evaluator."""
-        t = Tract.open(":memory:")
-        try:
-            with pytest.raises(PolicyExecutionError, match="No policy evaluator"):
-                t.approve_proposal("fake-id")
-        finally:
-            t.close()
-
-    def test_reject_no_evaluator_raises(self):
-        """reject_proposal raises when no evaluator."""
-        t = Tract.open(":memory:")
-        try:
-            with pytest.raises(PolicyExecutionError, match="No policy evaluator"):
-                t.reject_proposal("fake-id")
-        finally:
-            t.close()
-
-    def test_get_pending_proposals_returns_pending_only(self):
-        """get_pending_proposals returns only pending proposals."""
-        t = Tract.open(":memory:")
-        try:
-            info = t.commit(InstructionContent(text="hello"))
-
-            # Create two collaborative proposals
-            action1 = PolicyAction(
-                action_type="annotate",
-                params={
-                    "target_hash": info.commit_hash,
-                    "priority": "pinned",
-                },
-                autonomy="collaborative",
-            )
-            action2 = PolicyAction(
-                action_type="annotate",
-                params={
-                    "target_hash": info.commit_hash,
-                    "priority": "normal",
-                },
-                autonomy="collaborative",
-            )
-            p1 = DummyPolicy(name="prop1", action=action1)
-            p2 = DummyPolicy(name="prop2", action=action2)
-
-            t.configure_policies(policies=[p1, p2])
-            t.policy_evaluator.evaluate()
-
-            pending = t.get_pending_proposals()
-            assert len(pending) == 2
-
-            # Approve first, reject second
-            t.approve_proposal(pending[0].proposal_id)
-            t.reject_proposal(pending[1].proposal_id)
-
-            # Now no pending
-            remaining = t.get_pending_proposals()
-            assert len(remaining) == 0
-        finally:
-            t.close()
-
-    def test_full_lifecycle_via_tract(self):
-        """Full proposal lifecycle via Tract methods."""
-        t = Tract.open(":memory:")
-        try:
-            info = t.commit(InstructionContent(text="hello"))
-            action = PolicyAction(
-                action_type="annotate",
-                params={
-                    "target_hash": info.commit_hash,
-                    "priority": "pinned",
-                },
-                autonomy="collaborative",
-            )
-            p = DummyPolicy(name="lifecycle", action=action)
-            t.configure_policies(policies=[p])
-            t.policy_evaluator.evaluate()
-
-            pending = t.get_pending_proposals()
-            assert len(pending) == 1
-
-            # Approve via Tract
-            t.approve_proposal(pending[0].proposal_id)
-
-            # Annotation was created
-            annotations = t.get_annotations(info.commit_hash)
-            assert any(a.priority == Priority.PINNED for a in annotations)
-
-            # No more pending
-            assert len(t.get_pending_proposals()) == 0
-        finally:
-            t.close()
-
-
-# ---------------------------------------------------------------------------
-# 13. Manual/Supervised Mode
+# 11. Manual/Supervised Mode
 # ---------------------------------------------------------------------------
 
 

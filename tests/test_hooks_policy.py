@@ -382,15 +382,15 @@ class TestPolicyHookRegistration:
 
 
 # ===========================================================================
-# 5. Backward compatibility: on_proposal callback
+# 5. Policy hook replaces on_proposal callback
 # ===========================================================================
 
 
-class TestPolicyBackwardCompat:
-    """on_proposal callback still works for backward compatibility."""
+class TestPolicyHookReplacesOnProposal:
+    """Policy hook captures collaborative proposals (on_proposal removed)."""
 
-    def test_on_proposal_callback_still_fires(self):
-        """on_proposal callback fires for collaborative proposals."""
+    def test_policy_hook_captures_collaborative(self):
+        """Policy hook fires for collaborative proposals."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
@@ -398,16 +398,17 @@ class TestPolicyBackwardCompat:
             proposals = []
             policy = SimpleCollabPolicy()
 
-            # Use on_proposal callback (old API)
+            # Use hook system (new API)
+            t.on("policy", lambda p: proposals.append(p))
+
             ev = PolicyEvaluator(
                 t, policies=[policy],
-                on_proposal=lambda p: proposals.append(p),
             )
             ev.evaluate()
 
-            # on_proposal should have been called
-            # (but pending may already be resolved by default_handler)
-            # The callback fires only if pending is still "pending"
+            # Hook should have been called
+            assert len(proposals) >= 1
+            assert proposals[0].status in ("pending", "approved")
         finally:
             t.close()
 

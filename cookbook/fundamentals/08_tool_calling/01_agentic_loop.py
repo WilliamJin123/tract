@@ -23,7 +23,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 # The directory this file lives in — tools will search here.
-COOKBOOK_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+COOKBOOK_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # The marker to search for — split to avoid matching THIS file in search.
 _MARKER = "DIS" + "COVERY"
@@ -42,7 +42,7 @@ TOOLS = [
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Directory path relative to the cookbook/fundamentals/ root.",
+                        "description": "Directory path relative to the 08_tool_calling/ root.",
                     },
                 },
                 "required": ["path"],
@@ -59,7 +59,7 @@ TOOLS = [
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Filename (not full path) inside the cookbook/fundamentals/ directory.",
+                        "description": "Filename (not full path) inside the 08_tool_calling/ directory.",
                     },
                 },
                 "required": ["path"],
@@ -70,7 +70,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_files",
-            "description": "Search for a text pattern across all .py files in the cookbook/fundamentals/ directory. Returns matching lines with filenames.",
+            "description": "Search for a text pattern across all .py files in the 08_tool_calling/ directory. Returns matching lines with filenames.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -179,7 +179,7 @@ def main():
             "answer, respond with the exact text — no tool calls."
         )
         t.user(
-            "One of the .py files in the cookbook/fundamentals/ directory "
+            "One of the .py files in the 08_tool_calling/ directory "
             f"contains a comment line starting with '# {_MARKER}:'. "
             "Find it and tell me the filename, line number, exact text, "
             "and a brief explanation of what the comment means, as well as what other content exists in the file."

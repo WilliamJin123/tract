@@ -1,18 +1,13 @@
 """Domain models for the policy engine subsystem.
 
-Provides data classes for policy actions, proposals, evaluation results,
+Provides data classes for policy actions, evaluation results,
 and log entries used by the policy evaluation pipeline.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass(frozen=True)
@@ -28,61 +23,6 @@ class PolicyAction:
     params: dict = field(default_factory=dict)
     reason: str = ""
     autonomy: str = "collaborative"  # "autonomous", "collaborative", "supervised"
-
-
-@dataclass
-class PolicyProposal:
-    """A proposed policy action awaiting approval.
-
-    Mutable: status changes as the proposal is approved/rejected.
-    Follows the PendingCompression pattern -- _execute_fn is set
-    internally and should not be set by users directly.
-    """
-
-    proposal_id: str
-    policy_name: str
-    action: PolicyAction
-    created_at: datetime
-    status: str = "pending"  # "pending", "approved", "rejected", "expired", "executed"
-    _execute_fn: Callable[[PolicyProposal], object] | None = field(
-        default=None, repr=False
-    )
-    _reject_fn: Callable[[PolicyProposal, str], None] | None = field(
-        default=None, repr=False
-    )
-
-    def approve(self) -> object:
-        """Approve and execute the proposed action.
-
-        Returns:
-            Result of executing the action.
-
-        Raises:
-            PolicyExecutionError: If no execute function has been set.
-        """
-        from tract.exceptions import PolicyExecutionError
-
-        if self._execute_fn is None:
-            raise PolicyExecutionError(
-                "Cannot approve: no execute function set. "
-                "This PolicyProposal was not created by the policy engine."
-            )
-        self.status = "approved"
-        return self._execute_fn(self)
-
-    def reject(self, reason: str = "") -> None:
-        """Reject the proposed action.
-
-        If the proposal was created by the policy engine, rejection is
-        persisted to the database.  Otherwise only the in-memory status
-        is updated.
-
-        Args:
-            reason: Optional explanation for why the proposal was rejected.
-        """
-        self.status = "rejected"
-        if self._reject_fn is not None:
-            self._reject_fn(self, reason)
 
 
 @dataclass(frozen=True)

@@ -49,9 +49,6 @@ def part4_llm_integration():
 
         resp = t.generate(reasoning_effort="high")
 
-        print(f"  ChatResponse.text:     {resp.text[:80]}...")
-        print(f"  ChatResponse.reasoning: {repr(resp.reasoning)[:80] if resp.reasoning else 'None'}")
-
         if resp.reasoning_commit:
             print(f"  reasoning_commit hash: {resp.reasoning_commit.commit_hash[:8]}")
             print(f"  reasoning_commit type: {resp.reasoning_commit.content_type}")

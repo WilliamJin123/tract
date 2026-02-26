@@ -60,7 +60,7 @@ from tract.models.merge import (
 )
 
 # Compression models
-from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning, ToolCompactResult, ToolDropResult
+from tract.models.compression import CompressResult, GCResult, ReorderWarning, ToolCompactResult, ToolDropResult
 
 # Hook system
 from tract.hooks import Pending, PendingCompress, PendingToolResult, ValidationResult, HookRejection
@@ -76,7 +76,7 @@ from tract.prompts.summarize import (
 # Policy engine
 from tract.policy import Policy, PolicyEvaluator
 from tract.policy.builtin import ArchivePolicy, CompressPolicy, PinPolicy, BranchPolicy, RebasePolicy
-from tract.models.policy import PolicyAction, PolicyProposal, EvaluationResult, PolicyLogEntry
+from tract.models.policy import PolicyAction, EvaluationResult, PolicyLogEntry
 
 # Session and spawn models
 from tract.session import Session
@@ -250,7 +250,6 @@ __all__ = [
     "ArchivePolicy",
     "RebasePolicy",
     "PolicyAction",
-    "PolicyProposal",
     "EvaluationResult",
     "PolicyLogEntry",
     # Compression models
@@ -258,7 +257,6 @@ __all__ = [
     "GCResult",
     "ToolCompactResult",
     "ToolDropResult",
-    "PendingCompression",
     "ReorderWarning",
     "DEFAULT_SUMMARIZE_SYSTEM",
     "CONVERSATION_SUMMARIZE_SYSTEM",

@@ -58,9 +58,8 @@ if TYPE_CHECKING:
     from tract.hooks.rebase import PendingRebase
     from tract.hooks.tool_result import PendingToolResult
     from tract.models.branch import BranchInfo
-    from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning, ToolCompactResult, ToolDropResult
+    from tract.models.compression import CompressResult, GCResult, ReorderWarning, ToolCompactResult, ToolDropResult
     from tract.models.merge import ImportResult, MergeResult, RebaseResult
-    from tract.models.policy import PolicyProposal
     from tract.models.session import SpawnInfo
     from tract.operations.diff import DiffResult
     from tract.operations.history import StatusInfo
@@ -3687,16 +3686,15 @@ class Tract:
         return pending.approve()
 
     def _finalize_compression(
-        self, pending: PendingCompress | PendingCompression,
+        self, pending: PendingCompress,
     ) -> CompressResult:
         """Finalize a pending compression by creating commits.
 
         Called by PendingCompress.approve() via the _execute_fn closure,
-        or directly by approve_compression(). Accepts both the new
-        PendingCompress and the deprecated PendingCompression.
+        or directly by approve_compression().
 
         Args:
-            pending: The PendingCompress (or PendingCompression) to finalize.
+            pending: The PendingCompress to finalize.
 
         Returns:
             CompressResult with committed compression details.
@@ -3747,15 +3745,12 @@ class Tract:
         return result
 
     def approve_compression(
-        self, pending: PendingCompress | PendingCompression,
+        self, pending: PendingCompress,
     ) -> CompressResult:
         """Finalize a pending compression (alternative to pending.approve()).
 
-        Accepts both the new PendingCompress and the deprecated
-        PendingCompression for backward compatibility.
-
         Args:
-            pending: The PendingCompress (or PendingCompression) to finalize.
+            pending: The PendingCompress to finalize.
 
         Returns:
             CompressResult with committed compression details.
@@ -4190,7 +4185,6 @@ class Tract:
         self,
         policies: list | None = None,
         *,
-        on_proposal: Callable[[PolicyProposal], None] | None = None,
         cooldown_seconds: float = 0,
     ) -> None:
         """Configure the policy evaluator.
@@ -4200,8 +4194,6 @@ class Tract:
 
         Args:
             policies: List of Policy instances to register.
-            on_proposal: Callback invoked when a collaborative policy
-                creates a proposal.
             cooldown_seconds: Minimum seconds between re-evaluations
                 of the same policy. Default 0 (no cooldown).
         """
@@ -4211,7 +4203,6 @@ class Tract:
             tract=self,
             policies=policies,
             policy_repo=self._policy_repo,
-            on_proposal=on_proposal,
             cooldown_seconds=cooldown_seconds,
         )
 
@@ -4253,51 +4244,6 @@ class Tract:
         """
         if self._policy_evaluator is not None:
             self._policy_evaluator.resume()
-
-    def get_pending_proposals(self) -> list[PolicyProposal]:
-        """Get all pending policy proposals.
-
-        Returns:
-            List of PolicyProposal objects with status="pending".
-            Empty list if no evaluator configured.
-        """
-        if self._policy_evaluator is None:
-            return []
-        return self._policy_evaluator.get_pending_proposals()
-
-    def approve_proposal(self, proposal_id: str) -> object:
-        """Approve and execute a pending policy proposal.
-
-        Args:
-            proposal_id: The ID of the proposal to approve.
-
-        Returns:
-            Result of executing the action.
-
-        Raises:
-            PolicyExecutionError: If no evaluator or proposal not found.
-        """
-        if self._policy_evaluator is None:
-            from tract.exceptions import PolicyExecutionError
-
-            raise PolicyExecutionError("No policy evaluator configured")
-        return self._policy_evaluator.approve_proposal(proposal_id)
-
-    def reject_proposal(self, proposal_id: str, reason: str = "") -> None:
-        """Reject a pending policy proposal.
-
-        Args:
-            proposal_id: The ID of the proposal to reject.
-            reason: Optional reason for rejection.
-
-        Raises:
-            PolicyExecutionError: If no evaluator or proposal not found.
-        """
-        if self._policy_evaluator is None:
-            from tract.exceptions import PolicyExecutionError
-
-            raise PolicyExecutionError("No policy evaluator configured")
-        self._policy_evaluator.reject_proposal(proposal_id, reason)
 
     def save_policy_config(self, config_data: dict) -> None:
         """Persist policy configuration to _trace_meta.
