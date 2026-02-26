@@ -874,3 +874,121 @@ class TestMergeModels:
         # Update existing
         result.edit_resolution("hash1", "updated content")
         assert result.resolutions["hash1"] == "updated content"
+
+
+# ===========================================================================
+# ConflictInfo marker text generation and parsing
+# ===========================================================================
+
+
+def _make_test_commit(hash: str = "abc") -> CommitInfo:
+    """Create a minimal CommitInfo for unit tests."""
+    from datetime import datetime
+
+    return CommitInfo(
+        commit_hash=hash,
+        tract_id="test",
+        content_hash="h",
+        content_type="instruction",
+        operation=CommitOperation.APPEND,
+        token_count=5,
+        created_at=datetime.now(),
+    )
+
+
+class TestConflictMarkerText:
+    """ConflictInfo.to_marker_text() generates git-style conflict markers."""
+
+    def test_to_marker_text_basic_two_way(self) -> None:
+        """to_marker_text() generates markers with ours/theirs content."""
+        conflict = ConflictInfo(
+            conflict_type="both_edit",
+            commit_a=_make_test_commit("aaaa1111bbbb2222"),
+            commit_b=_make_test_commit("cccc3333dddd4444"),
+            content_a_text="Version A text",
+            content_b_text="Version B text",
+        )
+        text = conflict.to_marker_text()
+
+        assert "<<<<<<< aaaa1111" in text
+        assert "Version A text" in text
+        assert "=======" in text
+        assert "Version B text" in text
+        assert ">>>>>>> cccc3333" in text
+        # No ancestor section
+        assert "|||||||" not in text
+
+    def test_to_marker_text_three_way_with_ancestor(self) -> None:
+        """to_marker_text() includes ancestor section when available."""
+        conflict = ConflictInfo(
+            conflict_type="both_edit",
+            commit_a=_make_test_commit("aaaa1111bbbb2222"),
+            commit_b=_make_test_commit("cccc3333dddd4444"),
+            content_a_text="Version A text",
+            content_b_text="Version B text",
+            ancestor_content_text="Original text",
+        )
+        text = conflict.to_marker_text()
+
+        assert "<<<<<<< aaaa1111" in text
+        assert "Version A text" in text
+        assert "||||||| ancestor" in text
+        assert "Original text" in text
+        assert "=======" in text
+        assert "Version B text" in text
+        assert ">>>>>>> cccc3333" in text
+
+    def test_to_marker_text_empty_content(self) -> None:
+        """to_marker_text() handles empty content strings."""
+        conflict = ConflictInfo(
+            conflict_type="both_edit",
+            commit_a=_make_test_commit("aaaa1111bbbb2222"),
+            commit_b=_make_test_commit("cccc3333dddd4444"),
+            content_a_text="",
+            content_b_text="",
+        )
+        text = conflict.to_marker_text()
+
+        assert "<<<<<<< aaaa1111" in text
+        assert "=======" in text
+        assert ">>>>>>> cccc3333" in text
+
+
+class TestParseConflictMarkers:
+    """ConflictInfo.parse_conflict_markers() parses or detects markers."""
+
+    def test_resolved_no_markers(self) -> None:
+        """Text without markers is treated as resolved."""
+        result = ConflictInfo.parse_conflict_markers("My resolved content")
+        assert result == "My resolved content"
+
+    def test_unresolved_markers_present(self) -> None:
+        """Text with both markers returns None (unresolved)."""
+        text = "<<<<<<< aaaa1111\nVersion A\n=======\nVersion B\n>>>>>>> cccc3333"
+        result = ConflictInfo.parse_conflict_markers(text)
+        assert result is None
+
+    def test_whitespace_stripping(self) -> None:
+        """Resolved text gets whitespace stripped."""
+        result = ConflictInfo.parse_conflict_markers("  resolved content  \n\n")
+        assert result == "resolved content"
+
+    def test_roundtrip_unresolved(self) -> None:
+        """to_marker_text() output -> parse_conflict_markers() returns None."""
+        conflict = ConflictInfo(
+            conflict_type="both_edit",
+            commit_a=_make_test_commit("aaaa1111bbbb2222"),
+            commit_b=_make_test_commit("cccc3333dddd4444"),
+            content_a_text="Version A",
+            content_b_text="Version B",
+        )
+        marker_text = conflict.to_marker_text()
+        result = ConflictInfo.parse_conflict_markers(marker_text)
+        assert result is None
+
+    def test_partial_markers_treated_as_resolved(self) -> None:
+        """Text with only opening marker (no closing) is treated as resolved."""
+        text = "<<<<<<< aaaa1111\nSome content"
+        result = ConflictInfo.parse_conflict_markers(text)
+        # Only has opening marker, not closing — treated as resolved
+        assert result is not None

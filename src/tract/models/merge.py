@@ -44,6 +44,39 @@ class ConflictInfo(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
+    def to_marker_text(self) -> str:
+        """Generate editable git-style conflict markers.
+
+        Returns a string with ``<<<<<<<`` / ``=======`` / ``>>>>>>>`` markers
+        wrapping both versions of the conflict.  If ``ancestor_content_text``
+        is available, a ``|||||||`` section is included for 3-way display.
+        """
+        a_label = (self.commit_a.commit_hash or "ours")[:8]
+        b_label = (self.commit_b.commit_hash or "theirs")[:8]
+
+        lines: list[str] = []
+        lines.append(f"<<<<<<< {a_label}")
+        lines.append(self.content_a_text)
+        if self.ancestor_content_text is not None:
+            lines.append("||||||| ancestor")
+            lines.append(self.ancestor_content_text)
+        lines.append("=======")
+        lines.append(self.content_b_text)
+        lines.append(f">>>>>>> {b_label}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def parse_conflict_markers(text: str) -> str | None:
+        """Parse text that may contain conflict markers.
+
+        If both ``<<<<<<<`` and ``>>>>>>>`` markers remain, the conflict
+        is considered unresolved and ``None`` is returned.  Otherwise
+        the (stripped) text is treated as the user's resolution.
+        """
+        if "<<<<<<< " in text and ">>>>>>> " in text:
+            return None
+        return text.strip()
+
     def pprint(self) -> None:
         """Pretty-print this conflict as a git-style diff."""
         from tract.formatting import pprint_conflict_info

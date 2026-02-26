@@ -3162,8 +3162,12 @@ class Tract:
             self._cache.clear()
             return result
 
-        # Conflict path: build PendingMerge if resolutions available
-        if result.merge_type == "conflict" and result.resolutions:
+        # Conflict path: build PendingMerge if resolutions available,
+        # review requested, or merge hooks registered
+        has_hook = "merge" in self._hooks or "*" in self._hooks
+        if result.merge_type == "conflict" and (
+            result.resolutions or review or has_hook
+        ):
             current_branch = self._ref_repo.get_current_branch(self._tract_id) or ""
 
             pending = _PendingMerge(
@@ -3214,7 +3218,6 @@ class Tract:
             if review:
                 return pending
 
-            has_hook = "merge" in self._hooks or "*" in self._hooks
             if has_hook and not self._in_hook:
                 self._fire_hook(pending)
                 if pending.status == "approved" and hasattr(pending, "_committed_result"):

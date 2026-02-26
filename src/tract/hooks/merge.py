@@ -70,6 +70,8 @@ class PendingMerge(GuidanceMixin, Pending):
             "approve",
             "reject",
             "edit_resolution",
+            "set_resolution",
+            "edit_interactive",
             "edit_guidance",
         },
         repr=False,
@@ -147,15 +149,66 @@ class PendingMerge(GuidanceMixin, Pending):
             "retry() is not yet implemented. Use edit_resolution() for manual corrections."
         )
 
-    def edit_interactive(self) -> None:
-        """Launch an interactive editing session for conflict resolutions.
+    def set_resolution(self, key: str, content: str) -> None:
+        """Set or replace a conflict resolution (does not require key to exist).
+
+        Unlike :meth:`edit_resolution`, this does **not** raise if ``key``
+        is not already in :attr:`resolutions`.  Use this when building
+        resolutions from scratch (e.g. ``review=True`` without a resolver).
+
+        Args:
+            key: The conflict key (typically a ``target_hash``).
+            content: The resolved content text.
 
         Raises:
-            NotImplementedError: Until CLI integration is complete.
+            RuntimeError: If status is not "pending".
         """
-        raise NotImplementedError(
-            "edit_interactive() is not yet implemented. Use edit_resolution() for manual edits."
-        )
+        self._require_pending()
+        self.resolutions[key] = content
+
+    def edit_interactive(self) -> None:
+        """Open each conflict in ``$EDITOR`` for interactive resolution.
+
+        Iterates over :attr:`conflicts`, generates editable marker text
+        via :meth:`~tract.models.merge.ConflictInfo.to_marker_text`,
+        and opens each in the user's ``$EDITOR`` (via ``click.edit``).
+        Already-resolved conflicts show the existing resolution instead
+        of markers.  Unresolved or cancelled edits are skipped.
+
+        Raises:
+            RuntimeError: If status is not "pending".
+        """
+        import click
+
+        from tract.models.merge import ConflictInfo
+
+        self._require_pending()
+
+        for conflict in self.conflicts:
+            if not isinstance(conflict, ConflictInfo):
+                continue
+
+            key = conflict.target_hash
+            if key is None:
+                continue
+
+            # Start with existing resolution or marker text
+            if key in self.resolutions:
+                initial = self.resolutions[key]
+            else:
+                initial = conflict.to_marker_text()
+
+            edited = click.edit(initial)
+            if edited is None:
+                # Editor was closed without saving — skip
+                continue
+
+            parsed = ConflictInfo.parse_conflict_markers(edited)
+            if parsed is None:
+                # Markers still present — unresolved, skip
+                continue
+
+            self.resolutions[key] = parsed
 
     # -- Display --------------------------------------------------------
     # Inherits Rich-based pprint() from Pending base class.

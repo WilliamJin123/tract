@@ -5,19 +5,19 @@ conflict that Tract can't auto-resolve. You inspect the conflict,
 write a resolution, and commit it — then verify with a live LLM call
 that the resolved persona works correctly.
 
-Run interactively to write your own resolution, or pipe/redirect to use
-the default resolution automatically.
+Run interactively to edit your resolution in $EDITOR, or pipe/redirect
+to use the default resolution automatically.
 
-Demonstrates: merge(), merge_type, MergeResult, committed, conflicts,
-              ConflictInfo, ConflictInfo.pprint(), edit_resolution(),
-              commit_merge(), MergeResult.pprint(), CommitOperation.EDIT,
-              InstructionContent, apply resolution via EDIT commit,
+Demonstrates: merge(review=True), PendingMerge, ConflictInfo,
+              to_marker_text(), parse_conflict_markers(),
+              set_resolution(), approve(), edit_interactive(),
               chat() to verify the resolved persona, pprint(style="compact")
 """
 
 import os
 import sys
 
+import click
 from dotenv import load_dotenv
 
 from tract import CommitOperation, InstructionContent, Tract
@@ -30,8 +30,6 @@ MODEL_ID = "gpt-oss-120b"
 
 
 def main():
-    sys.stdout.reconfigure(encoding="utf-8")
-
     print("=" * 60)
     print("Scenario: CONFLICT (manual resolution)")
     print("=" * 60)
@@ -78,38 +76,59 @@ def main():
         print(f"\n  formal (academic persona):")
         t.compile().pprint(style="compact")
 
-        # --- Attempt the merge — conflict detected ---
+        # --- Attempt the merge with review=True — conflict detected ---
+        # review=True returns a PendingMerge even without a resolver,
+        # letting us build resolutions from scratch.
         t.switch("main")
-        result = t.merge("formal")
+        pending = t.merge("formal", review=True)
 
-        print(f"\n  merge('formal') -> {result.merge_type}")
-        print(f"    committed: {result.committed}  (needs resolution)")
-        print(f"    conflicts: {len(result.conflicts)}\n")
+        # For ff/clean merges, result is a MergeResult — check for PendingMerge
+        from tract.hooks.merge import PendingMerge
 
-        # --- Inspect the conflict with the SDK pprint helper ---
-        conflict = result.conflicts[0]
-        conflict.pprint()
+        if not isinstance(pending, PendingMerge):
+            print(f"\n  No conflicts — merge completed: {pending.merge_type}")
+            pending.pprint()
+            return
+
+        print(f"\n  merge('formal', review=True) -> PendingMerge")
+        print(f"    conflicts: {len(pending.conflicts)}")
+        print(f"    resolutions: {len(pending.resolutions)} (empty — no resolver)\n")
+
+        # --- Inspect the conflict with marker text ---
+        conflict = pending.conflicts[0]
+        marker_text = conflict.to_marker_text()
+        print("  Conflict marker text (what $EDITOR would show):")
+        for line in marker_text.split("\n"):
+            print(f"    {line}")
 
         # --- Resolve the conflict ---
-        # The default blends both personas into one balanced description.
         default_resolution = (
             "You are a knowledgeable assistant. Be precise when discussing "
             "technical concepts, but keep your tone approachable and friendly."
         )
 
         if sys.stdin.isatty():
-            print(f"\n  Default resolution:")
-            print(f"    \"{default_resolution}\"")
-            user_input = input("\n  Your resolution (Enter to accept default): ").strip()
-            resolution = user_input if user_input else default_resolution
+            # Interactive: open in $EDITOR for a real editing experience
+            print(f"\n  Opening conflict in $EDITOR...")
+            edited = click.edit(marker_text)
+            if edited is not None:
+                parsed = conflict.parse_conflict_markers(edited)
+                if parsed is not None:
+                    resolution = parsed
+                else:
+                    print("  Markers still present — using default resolution.")
+                    resolution = default_resolution
+            else:
+                print("  Editor closed without saving — using default resolution.")
+                resolution = default_resolution
         else:
             resolution = default_resolution
 
         print(f"\n  Resolution: \"{resolution}\"\n")
 
-        # --- Commit the merge with resolution ---
-        result.edit_resolution(conflict.target_hash, resolution)
-        result = t.commit_merge(result, message="merge: combined personas")
+        # --- Set the resolution and approve ---
+        pending.set_resolution(conflict.target_hash, resolution)
+        result = pending.approve()
 
         # Show committed result with MergeResult.pprint()
         result.pprint()
