@@ -5,19 +5,18 @@ conflict that Tract can't auto-resolve. You inspect the conflict,
 write a resolution, and commit it — then verify with a live LLM call
 that the resolved persona works correctly.
 
-Run interactively to edit your resolution in $EDITOR, or pipe/redirect
-to use the default resolution automatically.
+Run interactively to resolve via a quick-pick menu (accept current,
+accept incoming, accept both, or edit in $EDITOR). In non-interactive
+mode the default resolution is applied automatically.
 
-Demonstrates: merge(review=True), PendingMerge, ConflictInfo,
-              to_marker_text(), parse_conflict_markers(),
-              set_resolution(), approve(), edit_interactive(),
-              chat() to verify the resolved persona, pprint(style="compact")
+Demonstrates: merge(review=True), PendingMerge, edit_interactive(),
+              set_resolution(), approve(), to_marker_text(),
+              parse_conflict_markers(), chat(), pprint(style="compact")
 """
 
 import os
 import sys
 
-import click
 from dotenv import load_dotenv
 
 from tract import CommitOperation, InstructionContent, Tract
@@ -78,11 +77,10 @@ def main():
 
         # --- Attempt the merge with review=True — conflict detected ---
         # review=True returns a PendingMerge even without a resolver,
-        # letting us build resolutions from scratch.
+        # letting us build resolutions interactively.
         t.switch("main")
         pending = t.merge("formal", review=True)
 
-        # For ff/clean merges, result is a MergeResult — check for PendingMerge
         from tract.hooks.merge import PendingMerge
 
         if not isinstance(pending, PendingMerge):
@@ -94,13 +92,6 @@ def main():
         print(f"    conflicts: {len(pending.conflicts)}")
         print(f"    resolutions: {len(pending.resolutions)} (empty — no resolver)\n")
 
-        # --- Inspect the conflict with marker text ---
-        conflict = pending.conflicts[0]
-        marker_text = conflict.to_marker_text()
-        print("  Conflict marker text (what $EDITOR would show):")
-        for line in marker_text.split("\n"):
-            print(f"    {line}")
-
         # --- Resolve the conflict ---
         default_resolution = (
             "You are a knowledgeable assistant. Be precise when discussing "
@@ -108,26 +99,22 @@ def main():
         )
 
         if sys.stdin.isatty():
-            # Interactive: open in $EDITOR for a real editing experience
-            print(f"\n  Opening conflict in $EDITOR...")
-            edited = click.edit(marker_text)
-            if edited is not None:
-                parsed = conflict.parse_conflict_markers(edited)
-                if parsed is not None:
-                    resolution = parsed
-                else:
-                    print("  Markers still present — using default resolution.")
-                    resolution = default_resolution
-            else:
-                print("  Editor closed without saving — using default resolution.")
-                resolution = default_resolution
+            # Interactive: quick-pick menu for each conflict
+            # Options: accept current, accept incoming, accept both, $EDITOR
+            pending.edit_interactive()
+
+            # Check if user skipped — fall back to default
+            for conflict in pending.conflicts:
+                key = conflict.target_hash
+                if key and key not in pending.resolutions:
+                    print(f"  Using default resolution for unresolved conflict.")
+                    pending.set_resolution(key, default_resolution)
         else:
-            resolution = default_resolution
+            # Non-interactive: apply default resolution
+            for conflict in pending.conflicts:
+                if conflict.target_hash:
+                    pending.set_resolution(conflict.target_hash, default_resolution)
 
-        print(f"\n  Resolution: \"{resolution}\"\n")
-
-        # --- Set the resolution and approve ---
-        pending.set_resolution(conflict.target_hash, resolution)
         result = pending.approve()
 
         # Show committed result with MergeResult.pprint()

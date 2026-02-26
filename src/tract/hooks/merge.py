@@ -167,13 +167,18 @@ class PendingMerge(GuidanceMixin, Pending):
         self.resolutions[key] = content
 
     def edit_interactive(self) -> None:
-        """Open each conflict in ``$EDITOR`` for interactive resolution.
+        """Interactive conflict resolution with a quick-pick menu.
 
-        Iterates over :attr:`conflicts`, generates editable marker text
-        via :meth:`~tract.models.merge.ConflictInfo.to_marker_text`,
-        and opens each in the user's ``$EDITOR`` (via ``click.edit``).
-        Already-resolved conflicts show the existing resolution instead
-        of markers.  Unresolved or cancelled edits are skipped.
+        For each conflict, displays both versions and offers:
+
+        1. **Accept current** — use the target branch version
+        2. **Accept incoming** — use the source branch version
+        3. **Accept both** — concatenate current + incoming
+        4. **Edit in $EDITOR** — open marker text for manual editing
+        s. **Skip** — leave unresolved
+
+        Already-resolved conflicts show the existing resolution and
+        offer to re-edit.
 
         Raises:
             RuntimeError: If status is not "pending".
@@ -184,7 +189,7 @@ class PendingMerge(GuidanceMixin, Pending):
 
         self._require_pending()
 
-        for conflict in self.conflicts:
+        for i, conflict in enumerate(self.conflicts):
             if not isinstance(conflict, ConflictInfo):
                 continue
 
@@ -192,23 +197,66 @@ class PendingMerge(GuidanceMixin, Pending):
             if key is None:
                 continue
 
-            # Start with existing resolution or marker text
+            # Already resolved? Offer to re-edit
             if key in self.resolutions:
-                initial = self.resolutions[key]
-            else:
-                initial = conflict.to_marker_text()
+                click.echo(f"\nConflict [{i}] — already resolved:")
+                click.echo(f'  "{self.resolutions[key][:80]}"')
+                if not click.confirm("  Re-edit this conflict?", default=False):
+                    continue
 
-            edited = click.edit(initial)
-            if edited is None:
-                # Editor was closed without saving — skip
-                continue
+            # Display the two versions
+            target = self.target_branch or "current"
+            source = self.source_branch or "incoming"
+            click.echo(f"\nConflict [{i}]: {conflict.conflict_type} on {key[:8]}")
+            click.echo(f"\n  CURRENT ({target}):")
+            click.echo(f'    "{conflict.content_a_text}"')
+            click.echo(f"\n  INCOMING ({source}):")
+            click.echo(f'    "{conflict.content_b_text}"')
 
-            parsed = ConflictInfo.parse_conflict_markers(edited)
-            if parsed is None:
-                # Markers still present — unresolved, skip
-                continue
+            click.echo(f"\n  [1] Accept current")
+            click.echo(f"  [2] Accept incoming")
+            click.echo(f"  [3] Accept both (current + incoming)")
+            click.echo(f"  [4] Edit in $EDITOR")
+            click.echo(f"  [s] Skip")
 
-            self.resolutions[key] = parsed
+            choice = click.prompt(
+                "  Choice", type=click.Choice(["1", "2", "3", "4", "s"])
+            )
+
+            if choice == "1":
+                self.resolutions[key] = conflict.content_a_text
+            elif choice == "2":
+                self.resolutions[key] = conflict.content_b_text
+            elif choice == "3":
+                self.resolutions[key] = (
+                    conflict.content_a_text + "\n" + conflict.content_b_text
+                )
+            elif choice == "4":
+                header = (
+                    "# MERGE CONFLICT — edit below, then save and close.\n"
+                    "# Delete the marker lines (<<<, ===, >>>) and keep "
+                    "your resolution.\n"
+                    "# Lines starting with # at the top will be stripped.\n"
+                    "#\n"
+                )
+                initial = header + conflict.to_marker_text()
+                edited = click.edit(initial)
+                if edited is None:
+                    click.echo("  Skipped (editor closed without saving).")
+                    continue
+
+                # Strip leading comment lines
+                lines = edited.split("\n")
+                while lines and lines[0].startswith("#"):
+                    lines.pop(0)
+                cleaned = "\n".join(lines)
+
+                parsed = ConflictInfo.parse_conflict_markers(cleaned)
+                if parsed is None:
+                    click.echo("  Markers still present — skipped.")
+                    continue
+                self.resolutions[key] = parsed
+            # choice == "s": skip
 
     # -- Display --------------------------------------------------------
     # Inherits Rich-based pprint() from Pending base class.

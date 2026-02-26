@@ -444,71 +444,165 @@ class TestMergeSetResolution:
 
 
 class TestMergeEditInteractive:
-    """PendingMerge.edit_interactive() opens conflicts in $EDITOR."""
+    """PendingMerge.edit_interactive() with quick-pick menu."""
 
-    def test_edit_interactive_resolves_conflicts(self, monkeypatch):
-        """edit_interactive() resolves conflicts when user edits markers away."""
+    def test_accept_current(self, monkeypatch):
+        """Choice '1' resolves with the current (target) branch content."""
         t, source = _make_conflict_tract()
         try:
             pending = t.merge(source, review=True)
             assert isinstance(pending, PendingMerge)
-            assert len(pending.conflicts) > 0
 
-            # Monkeypatch click.edit to return resolved text
             import click
-            monkeypatch.setattr(click, "edit", lambda text: "My resolved content")
+            monkeypatch.setattr(click, "echo", lambda *a, **kw: None)
+            monkeypatch.setattr(click, "prompt", lambda *a, **kw: "1")
 
             pending.edit_interactive()
 
-            # Should have resolution for each conflict
             for conflict in pending.conflicts:
                 if conflict.target_hash:
-                    assert conflict.target_hash in pending.resolutions
-                    assert pending.resolutions[conflict.target_hash] == "My resolved content"
+                    assert pending.resolutions[conflict.target_hash] == conflict.content_a_text
         finally:
             t.close()
 
-    def test_edit_interactive_skips_on_none(self, monkeypatch):
-        """edit_interactive() skips conflicts when editor returns None."""
+    def test_accept_incoming(self, monkeypatch):
+        """Choice '2' resolves with the incoming (source) branch content."""
         t, source = _make_conflict_tract()
         try:
             pending = t.merge(source, review=True)
             assert isinstance(pending, PendingMerge)
 
-            # Monkeypatch click.edit to return None (editor closed)
             import click
-            monkeypatch.setattr(click, "edit", lambda text: None)
+            monkeypatch.setattr(click, "echo", lambda *a, **kw: None)
+            monkeypatch.setattr(click, "prompt", lambda *a, **kw: "2")
 
             pending.edit_interactive()
 
-            # No resolutions should be added
-            assert len(pending.resolutions) == 0
+            for conflict in pending.conflicts:
+                if conflict.target_hash:
+                    assert pending.resolutions[conflict.target_hash] == conflict.content_b_text
         finally:
             t.close()
 
-    def test_edit_interactive_skips_unresolved_markers(self, monkeypatch):
-        """edit_interactive() skips when markers are still present."""
+    def test_accept_both(self, monkeypatch):
+        """Choice '3' concatenates current + incoming."""
         t, source = _make_conflict_tract()
         try:
             pending = t.merge(source, review=True)
             assert isinstance(pending, PendingMerge)
 
-            # Return the marker text unchanged
             import click
+            monkeypatch.setattr(click, "echo", lambda *a, **kw: None)
+            monkeypatch.setattr(click, "prompt", lambda *a, **kw: "3")
+
+            pending.edit_interactive()
+
+            for conflict in pending.conflicts:
+                if conflict.target_hash:
+                    expected = conflict.content_a_text + "\n" + conflict.content_b_text
+                    assert pending.resolutions[conflict.target_hash] == expected
+        finally:
+            t.close()
+
+    def test_edit_in_editor_resolves(self, monkeypatch):
+        """Choice '4' opens $EDITOR; resolved text is stored."""
+        t, source = _make_conflict_tract()
+        try:
+            pending = t.merge(source, review=True)
+            assert isinstance(pending, PendingMerge)
+
+            import click
+            monkeypatch.setattr(click, "echo", lambda *a, **kw: None)
+            monkeypatch.setattr(click, "prompt", lambda *a, **kw: "4")
+            monkeypatch.setattr(click, "edit", lambda text: "My manual resolution")
+
+            pending.edit_interactive()
+
+            for conflict in pending.conflicts:
+                if conflict.target_hash:
+                    assert pending.resolutions[conflict.target_hash] == "My manual resolution"
+        finally:
+            t.close()
+
+    def test_edit_in_editor_strips_header(self, monkeypatch):
+        """Choice '4' strips leading # comment lines from editor output."""
+        t, source = _make_conflict_tract()
+        try:
+            pending = t.merge(source, review=True)
+            assert isinstance(pending, PendingMerge)
+
+            import click
+            monkeypatch.setattr(click, "echo", lambda *a, **kw: None)
+            monkeypatch.setattr(click, "prompt", lambda *a, **kw: "4")
+            # Simulate user leaving comment lines but removing markers
             monkeypatch.setattr(
                 click, "edit",
-                lambda text: "<<<<<<< aaaa\nA\n=======\nB\n>>>>>>> bbbb",
+                lambda text: "# leftover comment\n# another\nResolved content",
             )
 
             pending.edit_interactive()
 
-            # Unresolved — no resolutions added
+            for conflict in pending.conflicts:
+                if conflict.target_hash:
+                    assert pending.resolutions[conflict.target_hash] == "Resolved content"
+        finally:
+            t.close()
+
+    def test_edit_in_editor_skips_on_none(self, monkeypatch):
+        """Choice '4' with editor returning None skips the conflict."""
+        t, source = _make_conflict_tract()
+        try:
+            pending = t.merge(source, review=True)
+            assert isinstance(pending, PendingMerge)
+
+            import click
+            monkeypatch.setattr(click, "echo", lambda *a, **kw: None)
+            monkeypatch.setattr(click, "prompt", lambda *a, **kw: "4")
+            monkeypatch.setattr(click, "edit", lambda text: None)
+
+            pending.edit_interactive()
             assert len(pending.resolutions) == 0
         finally:
             t.close()
 
-    def test_edit_interactive_uses_existing_resolution(self, monkeypatch):
-        """edit_interactive() opens existing resolution instead of markers."""
+    def test_edit_in_editor_skips_unresolved_markers(self, monkeypatch):
+        """Choice '4' with markers still present skips the conflict."""
+        t, source = _make_conflict_tract()
+        try:
+            pending = t.merge(source, review=True)
+            assert isinstance(pending, PendingMerge)
+
+            import click
+            monkeypatch.setattr(click, "echo", lambda *a, **kw: None)
+            monkeypatch.setattr(click, "prompt", lambda *a, **kw: "4")
+            monkeypatch.setattr(
+                click, "edit",
+                lambda text: "<<<<<<< aa\nA\n=======\nB\n>>>>>>> bb",
+            )
+
+            pending.edit_interactive()
+            assert len(pending.resolutions) == 0
+        finally:
+            t.close()
+
+    def test_skip_leaves_unresolved(self, monkeypatch):
+        """Choice 's' skips the conflict without adding a resolution."""
+        t, source = _make_conflict_tract()
+        try:
+            pending = t.merge(source, review=True)
+            assert isinstance(pending, PendingMerge)
+
+            import click
+            monkeypatch.setattr(click, "echo", lambda *a, **kw: None)
+            monkeypatch.setattr(click, "prompt", lambda *a, **kw: "s")
+
+            pending.edit_interactive()
+            assert len(pending.resolutions) == 0
+        finally:
+            t.close()
+
+    def test_existing_resolution_offers_reedit(self, monkeypatch):
+        """Already-resolved conflicts prompt for re-edit; 'No' keeps original."""
         t, source = _make_conflict_tract()
         try:
             def resolver(conflict):
@@ -522,19 +616,17 @@ class TestMergeEditInteractive:
             pending = t.merge(source, resolver=resolver, review=True)
             assert isinstance(pending, PendingMerge)
 
-            # Track what text was passed to click.edit
-            received_texts = []
             import click
-            monkeypatch.setattr(
-                click, "edit",
-                lambda text: (received_texts.append(text), "Edited resolution")[1],
-            )
+            monkeypatch.setattr(click, "echo", lambda *a, **kw: None)
+            # Decline re-edit
+            monkeypatch.setattr(click, "confirm", lambda *a, **kw: False)
 
             pending.edit_interactive()
 
-            # Should have received the existing resolution, not marker text
-            assert len(received_texts) > 0
-            assert received_texts[0] == "LLM draft"
+            # Original resolution preserved
+            for conflict in pending.conflicts:
+                if conflict.target_hash:
+                    assert pending.resolutions[conflict.target_hash] == "LLM draft"
         finally:
             t.close()
 

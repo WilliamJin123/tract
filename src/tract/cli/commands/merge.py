@@ -25,7 +25,7 @@ from tract.cli.formatting import format_merge_result
     "--review",
     "do_review",
     is_flag=True,
-    help="Review and edit conflict resolutions in $EDITOR before committing.",
+    help="Interactively resolve conflicts before committing.",
 )
 @click.pass_context
 def merge(
@@ -39,7 +39,7 @@ def merge(
     """Merge SOURCE branch into the current branch.
 
     SOURCE is the name of the branch to merge in.
-    Use --review to interactively resolve conflicts in $EDITOR.
+    Use --review to interactively resolve conflicts with a quick-pick menu.
     """
     from tract.cli import _tract_session
     from tract.exceptions import NothingToMergeError
@@ -66,37 +66,7 @@ def merge(
                     f"{len(result.conflicts)} conflict(s) to resolve"
                 )
 
-                for i, conflict in enumerate(result.conflicts):
-                    key = conflict.target_hash
-                    if key is None:
-                        continue
-
-                    # Show existing resolution or marker text
-                    if key in result.resolutions:
-                        initial = result.resolutions[key]
-                    else:
-                        initial = conflict.to_marker_text()
-
-                    console.print(
-                        f"\n[bold]Opening conflict [{i}] in editor...[/bold]"
-                    )
-                    edited = click.edit(initial)
-
-                    if edited is None:
-                        console.print(f"[dim]Conflict [{i}] skipped (editor closed).[/dim]")
-                        continue
-
-                    from tract.models.merge import ConflictInfo
-
-                    parsed = ConflictInfo.parse_conflict_markers(edited)
-                    if parsed is None:
-                        console.print(
-                            f"[yellow]Conflict [{i}] still has markers — skipped.[/yellow]"
-                        )
-                        continue
-
-                    result.set_resolution(key, parsed)
-                    console.print(f"[green]Conflict [{i}] resolved.[/green]")
+                result.edit_interactive()
 
                 # Check all conflicts resolved
                 unresolved = [
@@ -105,7 +75,7 @@ def merge(
                 ]
                 if unresolved:
                     console.print(
-                        f"[yellow]{len(unresolved)} conflict(s) still unresolved. "
+                        f"\n[yellow]{len(unresolved)} conflict(s) still unresolved. "
                         f"Cannot commit.[/yellow]"
                     )
                     return
