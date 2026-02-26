@@ -11,12 +11,36 @@ from __future__ import annotations
 import json as _json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, runtime_checkable
 
 from tract.models.config import LLMConfig
 
 if TYPE_CHECKING:
     from tract.models.commit import CommitInfo
+
+
+class ToolCallDict(TypedDict):
+    """Canonical storage format for a single tool call."""
+
+    id: str
+    name: str
+    arguments: dict
+    type: str
+
+
+class _ToolCallOpenAIFunction(TypedDict):
+    """OpenAI function sub-object."""
+
+    name: str
+    arguments: str
+
+
+class ToolCallOpenAIDict(TypedDict):
+    """OpenAI wire format for a single tool call."""
+
+    id: str
+    type: str
+    function: _ToolCallOpenAIFunction
 
 
 @dataclass(frozen=True)
@@ -60,7 +84,7 @@ class ToolCall:
         )
 
     @classmethod
-    def from_dict(cls, d: dict) -> ToolCall:
+    def from_dict(cls, d: ToolCallDict | dict[str, object]) -> ToolCall:
         """Reconstruct from a stored dict (e.g. metadata_json)."""
         return cls(
             id=d["id"],
@@ -69,7 +93,7 @@ class ToolCall:
             type=d.get("type", "function"),
         )
 
-    def to_openai(self) -> dict:
+    def to_openai(self) -> ToolCallOpenAIDict:
         """Serialize to OpenAI wire format."""
         return {
             "id": self.id,
@@ -80,7 +104,7 @@ class ToolCall:
             },
         }
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> ToolCallDict:
         """Serialize for storage in metadata_json."""
         return {
             "id": self.id,

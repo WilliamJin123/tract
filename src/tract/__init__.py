@@ -25,7 +25,7 @@ from tract.models.content import (
 )
 
 # Commit and annotation types
-from tract.models.commit import CommitInfo, CommitOperation
+from tract.models.commit import CommitInfo, CommitMetadata, CommitOperation
 from tract.models.annotations import Priority, PriorityAnnotation, RetentionCriteria
 
 # Configuration
@@ -41,6 +41,8 @@ from tract.protocols import (
     TokenUsage,
     ChatResponse,
     ToolCall,
+    ToolCallDict,
+    ToolCallOpenAIDict,
     ToolTurn,
 )
 
@@ -166,6 +168,7 @@ __all__ = [
     "ContentTypeHints",
     # Commit types
     "CommitInfo",
+    "CommitMetadata",
     "CommitOperation",
     # Annotations
     "Priority",
@@ -189,6 +192,8 @@ __all__ = [
     "TokenUsage",
     "ChatResponse",
     "ToolCall",
+    "ToolCallDict",
+    "ToolCallOpenAIDict",
     "ToolTurn",
     # Branch model
     "BranchInfo",

@@ -8,11 +8,27 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TypedDict
 
 from pydantic import BaseModel, field_validator
 
 from tract.models.config import LLMConfig
+
+
+class CommitMetadata(TypedDict, total=False):
+    """Known metadata keys on a CommitInfo.
+
+    ``total=False`` means all keys are optional — users may also store
+    arbitrary extra keys, so ``CommitInfo.metadata`` stays ``Optional[dict]``.
+    """
+
+    tool_calls: list[dict]
+    tool_call_id: str
+    name: str
+    is_error: bool
+    summarized_from_length: int
+    collapse_source_tract_id: str
+    collapse_source_head: str
 
 
 class CommitOperation(str, enum.Enum):

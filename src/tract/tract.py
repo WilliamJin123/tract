@@ -22,7 +22,7 @@ from tract.engine.commit import CommitEngine
 from tract.engine.compiler import DefaultContextCompiler
 from tract.engine.tokens import TiktokenCounter
 from tract.models.annotations import Priority, PriorityAnnotation, RetentionCriteria
-from tract.models.commit import CommitInfo, CommitOperation
+from tract.models.commit import CommitInfo, CommitMetadata, CommitOperation
 from tract.models.config import LLMConfig, Operator, OperationClients, OperationConfigs, TractConfig
 from tract.models.content import validate_content
 from tract.exceptions import (
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from tract.hooks.rebase import PendingRebase
     from tract.hooks.tool_result import PendingToolResult
     from tract.models.branch import BranchInfo
-    from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning, ToolCompactResult
+    from tract.models.compression import CompressResult, GCResult, PendingCompression, ReorderWarning, ToolCompactResult, ToolDropResult
     from tract.models.merge import ImportResult, MergeResult, RebaseResult
     from tract.models.policy import PolicyProposal
     from tract.models.session import SpawnInfo
@@ -1245,6 +1245,8 @@ class Tract:
         entries = self.log(limit=10000)
         entries.reverse()  # oldest-first
 
+        from tract.protocols import ToolCall as _ToolCall
+
         results = []
         for ci in entries:
             meta = ci.metadata or {}
@@ -1253,7 +1255,7 @@ class Tract:
                 continue
             if name is not None:
                 # Check if any tool call matches the name
-                names = [tc.get("name", "") for tc in tool_calls]
+                names = [_ToolCall.from_dict(tc).name for tc in tool_calls]
                 if name not in names:
                     continue
             results.append(ci)
@@ -1278,7 +1280,8 @@ class Tract:
         Returns:
             List of :class:`ToolTurn` in chronological order.
         """
-        from tract.protocols import ToolTurn
+
+        from tract.protocols import ToolCall as _ToolCall, ToolTurn
 
         entries = self.log(limit=10000)
         entries.reverse()  # oldest-first
@@ -1302,11 +1305,10 @@ class Tract:
             # Gather results for this tool call commit
             all_results = []
             turn_names = []
-            for tc in tool_calls_data:
-                tc_id = tc.get("id", "")
-                tc_name = tc.get("name", "")
-                turn_names.append(tc_name)
-                all_results.extend(result_index.get(tc_id, []))
+            for tc_raw in tool_calls_data:
+                tc_obj = _ToolCall.from_dict(tc_raw)
+                turn_names.append(tc_obj.name)
+                all_results.extend(result_index.get(tc_obj.id, []))
 
             if name is not None and name not in turn_names:
                 continue
@@ -3909,7 +3911,7 @@ class Tract:
         source_commits: list[str] = []
 
         for result_ci, summary in zip(results_to_compact, summaries):
-            r_meta = result_ci.metadata or {}
+            r_meta: CommitMetadata = result_ci.metadata or {}  # type: ignore[assignment]
             original_tokens += result_ci.token_count
             source_commits.append(result_ci.commit_hash)
 

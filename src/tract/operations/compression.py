@@ -261,7 +261,7 @@ def _partition_around_pinned(
     return groups
 
 
-def build_role_label(role: str, meta: dict) -> str:
+def build_role_label(role: str, meta: dict[str, object]) -> str:
     """Build a role label enriched with tool metadata for summarization.
 
     Used by :func:`_build_messages_text` and by
