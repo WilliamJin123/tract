@@ -47,7 +47,7 @@ def part4_llm_integration():
         t.system("Think step by step before answering. Make sure your reasoning is thorough and clear, but your answers are concise")
         t.user("I want to wash my car and the car wash is 50 meters close. Should I drive there or walk?")
 
-        resp = t.generate()
+        resp = t.generate(reasoning_effort="high")
 
         print(f"  ChatResponse.text:     {resp.text[:80]}...")
         print(f"  ChatResponse.reasoning: {repr(resp.reasoning)[:80] if resp.reasoning else 'None'}")
@@ -75,7 +75,7 @@ def part4_llm_integration():
         t.system("Think step by step.")
         t.user("What is 7 * 8?")
 
-        resp = t.generate(reasoning=False)
+        resp = t.generate(reasoning=False, reasoning_effort="high")
 
         # Reasoning text is still extracted (if available)...
         print(f"  reasoning extracted: {resp.reasoning is not None}")
@@ -99,7 +99,7 @@ def part4_llm_integration():
         t.system("Think carefully.")
         t.user("What is 12 + 13?")
 
-        resp = t.generate()
+        resp = t.generate(reasoning_effort="high")
 
         print(f"  reasoning extracted: {resp.reasoning is not None}")
         print(f"  reasoning committed: {resp.reasoning_commit is not None}")

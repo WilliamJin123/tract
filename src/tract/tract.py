@@ -1548,6 +1548,7 @@ class Tract:
         purify: bool = False,
         provenance_note: bool = False,
         retry_prompt: str | None = None,
+        **kwargs: object,
     ) -> ChatResponse:
         """Compile context, call LLM, commit assistant response, record usage.
 
@@ -1574,6 +1575,9 @@ class Tract:
             provenance_note: If True, commit a meta note recording retry count.
             retry_prompt: Custom steering prompt template. The diagnosis string
                 is appended to this. Defaults to a standard steering message.
+            **kwargs: Extra provider-specific parameters passed through to the
+                LLM client (e.g. ``reasoning_effort="high"``).  Highest
+                priority in the config resolution chain.
 
         Returns:
             :class:`ChatResponse` with text, usage, commit_info, generation_config.
@@ -1599,7 +1603,7 @@ class Tract:
                 model=model, temperature=temperature,
                 max_tokens=max_tokens, llm_config=llm_config,
                 message=message, metadata=metadata,
-                reasoning=reasoning,
+                reasoning=reasoning, **kwargs,
             )
 
         # Retry-guarded path
@@ -1610,7 +1614,7 @@ class Tract:
                 model=model, temperature=temperature,
                 max_tokens=max_tokens, llm_config=llm_config,
                 message=message, metadata=metadata,
-                reasoning=reasoning,
+                reasoning=reasoning, **kwargs,
             )
 
         def _validate(resp: ChatResponse) -> tuple[bool, str | None]:
@@ -1680,6 +1684,7 @@ class Tract:
         message: str | None = None,
         metadata: dict | None = None,
         reasoning: bool = True,
+        **kwargs: object,
     ) -> ChatResponse:
         """Single generate attempt (no retry). Internal helper.
 
@@ -1717,7 +1722,7 @@ class Tract:
         chat_client = self._resolve_llm_client("chat")
         llm_kwargs = self._resolve_llm_config(
             "chat", model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config,
+            max_tokens=max_tokens, llm_config=llm_config, **kwargs,
         )
         if compiled.tools:
             llm_kwargs["tools"] = compiled.tools
@@ -1808,6 +1813,7 @@ class Tract:
         purify: bool = False,
         provenance_note: bool = False,
         retry_prompt: str | None = None,
+        **kwargs: object,
     ) -> ChatResponse:
         """Send a user message and get an LLM response in one call.
 
@@ -1838,6 +1844,9 @@ class Tract:
             provenance_note: If True, commit a meta note recording retry count.
             retry_prompt: Custom steering prompt template. The diagnosis string
                 is appended to this. Defaults to a standard steering message.
+            **kwargs: Extra provider-specific parameters passed through to the
+                LLM client (e.g. ``reasoning_effort="high"``).  Highest
+                priority in the config resolution chain.
 
         Returns:
             :class:`ChatResponse` with text, usage, commit_info, generation_config.
@@ -1863,6 +1872,7 @@ class Tract:
             purify=purify,
             provenance_note=provenance_note,
             retry_prompt=retry_prompt,
+            **kwargs,
         )
         return _dc.replace(response, prompt=text)
 
