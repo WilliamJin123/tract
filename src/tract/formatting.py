@@ -202,14 +202,19 @@ def pprint_compiled_context(
             content = msg.content
             if max_chars is not None and len(content) > max_chars:
                 content = content[:max_chars - 3] + "..."
-            color = _ROLE_COLORS.get(msg.role, "white")
-            role_label = Text(msg.role, style=f"bold {color}")
+            sk = _style_key(msg)
+            color = _ROLE_COLORS.get(sk, "white")
+            label = "reasoning" if sk == "reasoning" else msg.role
+            role_label = Text(label, style=f"bold {color}")
             # Role-appropriate content rendering:
             # - system: dim (configuration, not conversation)
+            # - reasoning: dim cyan italic (chain-of-thought)
             # - assistant: Markdown (preserves code blocks, headers, lists)
             # - user/tool/other: plain white text
             if msg.role == "system":
                 cell = Text(content, style="italic white")
+            elif sk == "reasoning":
+                cell = Text(content, style="white")
             elif msg.role == "assistant":
                 cell = Markdown(content)
             else:
@@ -239,7 +244,7 @@ _ROLE_STYLES: dict[str, tuple[str, str]] = {
     "user": ("User", "blue"),
     "assistant": ("Assistant", "green"),
     "tool": ("Tool Result", "magenta"),
-    "reasoning": ("Reasoning", "dim cyan"),
+    "reasoning": ("Reasoning", "dark_orange"),
 }
 
 def _inline_markdown(text: str) -> str:
@@ -272,8 +277,20 @@ _ROLE_COLORS: dict[str, str] = {
     "user": "blue",
     "assistant": "green",
     "tool": "magenta",
-    "reasoning": "dim cyan",
+    "reasoning": "dark_orange",
 }
+
+
+def _style_key(msg: Any) -> str:
+    """Return the style lookup key for a message.
+
+    Prefers content_type (e.g. 'reasoning') over role so that reasoning
+    commits get distinct styling even though their role is 'assistant'.
+    """
+    ct = getattr(msg, "content_type", None)
+    if ct and ct in _ROLE_COLORS:
+        return ct
+    return msg.role
 
 
 def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: Any = None) -> None:
@@ -304,8 +321,9 @@ def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: An
             if max_chars is not None and len(preview) > max_chars:
                 preview = preview[:max_chars - 3] + "..."
         else:
-            color = _ROLE_COLORS.get(msg.role, "white")
-            role_label = "tool res." if msg.role == "tool" else msg.role
+            sk = _style_key(msg)
+            color = _ROLE_COLORS.get(sk, "white")
+            role_label = "reasoning" if sk == "reasoning" else ("tool res." if msg.role == "tool" else msg.role)
             if max_chars is not None and len(content) > max_chars:
                 preview = content[:max_chars - 3] + "..."
             else:
@@ -332,12 +350,15 @@ def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: An
         cont_prefix.append(" " * 13)
         cont_prefix.append("| ", style="dim")
 
-        is_assistant_text = msg.role == "assistant" and not getattr(msg, "tool_calls", None)
+        is_reasoning = _style_key(msg) == "reasoning"
+        is_assistant_text = msg.role == "assistant" and not getattr(msg, "tool_calls", None) and not is_reasoning
 
         for i, line_text in enumerate(wrapped_lines):
             line = role_prefix.copy() if i == 0 else cont_prefix.copy()
 
-            if is_assistant_text:
+            if is_reasoning:
+                line.append(line_text)
+            elif is_assistant_text:
                 markup = _inline_markdown(line_text)
                 line.append_text(Text.from_markup(markup))
             else:
@@ -363,7 +384,8 @@ def _pprint_compiled_chat(ctx: Any, *, max_chars: int | None = None, file: Any =
         if max_chars is not None and len(content) > max_chars:
             content = content[:max_chars - 3] + "..."
 
-        title, border = _ROLE_STYLES.get(msg.role, (msg.role.title(), "white"))
+        sk = _style_key(msg)
+        title, border = _ROLE_STYLES.get(sk, (msg.role.title(), "white"))
 
         # Tool-calling assistant messages: show calls instead of "(empty)"
         if msg.role == "assistant" and msg.tool_calls:
@@ -383,6 +405,8 @@ def _pprint_compiled_chat(ctx: Any, *, max_chars: int | None = None, file: Any =
             body: Any = Group(*parts) if len(parts) > 1 else parts[0]
             title = "Tool Call"
             border = "magenta"
+        elif sk == "reasoning":
+            body = Text(content, style="white") if content else Text("(empty)")
         elif msg.role == "assistant":
             body = Markdown(content) if content else Text("(empty)")
         else:

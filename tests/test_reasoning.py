@@ -681,11 +681,11 @@ class TestReasoningFormatting:
     def test_role_colors_has_reasoning(self):
         from tract.formatting import _ROLE_COLORS
         assert "reasoning" in _ROLE_COLORS
-        assert "dim cyan" in _ROLE_COLORS["reasoning"]
+        assert "dark_orange" in _ROLE_COLORS["reasoning"]
 
     def test_role_styles_has_reasoning(self):
         from tract.formatting import _ROLE_STYLES
         assert "reasoning" in _ROLE_STYLES
         title, color = _ROLE_STYLES["reasoning"]
         assert title == "Reasoning"
-        assert "dim cyan" in color
+        assert "dark_orange" in color

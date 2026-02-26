@@ -100,6 +100,7 @@ class Message:
     token_count: int = 0
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
+    content_type: str | None = None
 
 
 @dataclass(frozen=True)

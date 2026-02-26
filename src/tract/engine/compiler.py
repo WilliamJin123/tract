@@ -389,6 +389,7 @@ class DefaultContextCompiler:
         return Message(
             role=role, content=text, name=name,
             tool_calls=tool_calls, tool_call_id=tool_call_id,
+            content_type=content_type,
         )
 
     def _build_messages(
@@ -411,6 +412,7 @@ class DefaultContextCompiler:
                 msg = Message(
                     role=msg.role, content=msg.content + " [edited]", name=msg.name,
                     tool_calls=msg.tool_calls, tool_call_id=msg.tool_call_id,
+                    content_type=msg.content_type,
                 )
 
             messages.append(msg)
