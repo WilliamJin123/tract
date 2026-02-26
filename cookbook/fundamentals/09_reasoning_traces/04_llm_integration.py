@@ -44,8 +44,8 @@ def part4_llm_integration():
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        t.system("Think step by step before answering.")
-        t.user("What is 15% of 240?")
+        t.system("Think step by step before answering. Make sure your reasoning is thorough and clear, but your answers are concise")
+        t.user("I want to wash my car and the car wash is 50 meters close. Should I drive there or walk?")
 
         resp = t.generate()
 
@@ -58,10 +58,10 @@ def part4_llm_integration():
         else:
             print("  (Model did not produce reasoning tokens)")
 
-        # Log shows the full chain
-        print(f"\n  log() (newest first):")
-        for entry in t.log(limit=5):
-            print(f"    {entry}")
+        # Compile with include_reasoning=True to see reasoning in pprint
+        print(f"\n  compile(include_reasoning=True):\n")
+        ctx = t.compile(include_reasoning=True)
+        ctx.pprint(style="chat")
 
     # --- 4b: Per-call opt-out ---
 
