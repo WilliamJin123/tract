@@ -53,6 +53,11 @@ def retry_and_validate() -> None:
     ) as t:
         _seed_conversation(t)
 
+        print(f"\n  Conversation BEFORE compression:")
+        ctx_before = t.compile()
+        print(f"    {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
+        ctx_before.pprint(style="compact")
+
         pending: PendingCompress = t.compress(target_tokens=150, review=True)
 
         # Validate the initial summaries.
@@ -87,6 +92,11 @@ def retry_and_validate() -> None:
         pending.pprint()
         print(f"    ratio={compress_result.compression_ratio:.1%}")
 
+        print(f"\n  Conversation AFTER compression:")
+        ctx_after = t.compile()
+        print(f"    {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
+        ctx_after.pprint(style="compact")
+
     # --- 4b: auto_retry() -- automated validate->retry loop ---
     print("\n  --- 4b: auto_retry() -- automated loop ---")
 
@@ -110,6 +120,11 @@ def retry_and_validate() -> None:
         else:
             print(f"    Compression ratio: {result.compression_ratio:.1%}")
             pending.pprint()
+
+            print(f"\n  Conversation AFTER auto_retry compression:")
+            ctx_after = t.compile()
+            print(f"    {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
+            ctx_after.pprint(style="compact")
 
     # --- 4c: HookRejection when retries are exhausted ---
     print("\n  --- 4c: HookRejection when retries are exhausted ---")

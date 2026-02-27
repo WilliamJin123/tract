@@ -50,6 +50,11 @@ def two_stage() -> None:
     ) as t:
         _seed_conversation(t)
 
+        print(f"\n  Conversation BEFORE compression:")
+        ctx_before = t.compile()
+        print(f"    {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
+        ctx_before.pprint(style="compact")
+
         pending: PendingCompress = t.compress(
             target_tokens=150, two_stage=True, review=True,
         )
@@ -109,6 +114,11 @@ def two_stage() -> None:
         result: CompressResult = pending.approve()
         print(f"\n  Approved with user guidance: ratio={result.compression_ratio:.1%}")
 
+        print(f"\n  Conversation AFTER compression:")
+        ctx_after = t.compile()
+        print(f"    {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
+        ctx_after.pprint(style="compact")
+
     # --- 5d: two_stage=False (default) skips guidance ---
     print("\n  --- 5d: two_stage=False (default) skips guidance ---")
 
@@ -129,6 +139,11 @@ def two_stage() -> None:
 
         result: CompressResult = pending.approve()
         print(f"\n  Approved without guidance: ratio={result.compression_ratio:.1%}")
+
+        print(f"\n  Conversation AFTER compression:")
+        ctx_after = t.compile()
+        print(f"    {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
+        ctx_after.pprint(style="compact")
 
 
 if __name__ == "__main__":

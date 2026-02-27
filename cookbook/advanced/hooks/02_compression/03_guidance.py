@@ -46,6 +46,11 @@ def guidance() -> None:
     ) as t:
         _seed_conversation(t)
 
+        print(f"\n  Conversation BEFORE compression:")
+        ctx_before = t.compile()
+        print(f"    {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
+        ctx_before.pprint(style="compact")
+
         # Get pending to inspect guidance
         pending: PendingCompress = t.compress(target_tokens=150, review=True)
 
@@ -71,6 +76,11 @@ def guidance() -> None:
         result: CompressResult = pending.approve()
         print(f"\n  Approved with guidance. Compression ratio: {result.compression_ratio:.1%}")
 
+        print(f"\n  Conversation AFTER compression:")
+        ctx_after = t.compile()
+        print(f"    {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
+        ctx_after.pprint(style="compact")
+
         # --- Hook handler that uses guidance ---
         print("\n  Hook handler that auto-sets guidance:")
 
@@ -87,12 +97,22 @@ def guidance() -> None:
         t.on("compress", guided_compressor, name="guided-compressor")
         _seed_conversation(t)
 
+        print(f"\n    BEFORE compression:")
+        ctx_before = t.compile()
+        print(f"      {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
+        ctx_before.pprint(style="compact")
+
         result: CompressResult | PendingCompress = t.compress(target_tokens=150)
 
         if isinstance(result, CompressResult):
-            print(f"    Compressed: ratio={result.compression_ratio:.1%}")
+            print(f"\n    Compressed: ratio={result.compression_ratio:.1%}")
         else:
             result.pprint()
+
+        print(f"\n    AFTER compression:")
+        ctx_after = t.compile()
+        print(f"      {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
+        ctx_after.pprint(style="compact")
 
         t.print_hooks()
 

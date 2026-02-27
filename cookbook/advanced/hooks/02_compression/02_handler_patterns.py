@@ -56,13 +56,23 @@ def hook_handler_patterns() -> None:
         t.on("compress", enforce_word_limit, name="word-limiter")
         _seed_conversation(t)
 
+        print(f"\n    BEFORE compression:")
+        ctx_before = t.compile()
+        print(f"      {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
+        ctx_before.pprint(style="compact")
+
         # compress() fires the hook automatically (no review=True needed)
         result: CompressResult | PendingCompress = t.compress(target_tokens=150)
 
         if isinstance(result, CompressResult):
-            print(f"    Compressed: ratio={result.compression_ratio:.1%}")
+            print(f"\n    Compressed: ratio={result.compression_ratio:.1%}")
         else:
             result.pprint()
+
+        print(f"\n    AFTER compression:")
+        ctx_after = t.compile()
+        print(f"      {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
+        ctx_after.pprint(style="compact")
 
         # print_hooks() shows registered handlers and recent hook log
         t.print_hooks()
@@ -89,13 +99,22 @@ def hook_handler_patterns() -> None:
         t.on("compress", quality_gate, name="quality-gate")
         _seed_conversation(t)
 
+        print(f"\n    BEFORE compression attempt:")
+        ctx_before = t.compile()
+        print(f"      {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
+        ctx_before.pprint(style="compact")
+
         result: CompressResult | PendingCompress = t.compress(target_tokens=150)
 
         # result is PendingCompress (rejected) -- pprint shows status + reason
         if isinstance(result, CompressResult):
-            print(f"    Compressed: ratio={result.compression_ratio:.1%}")
+            print(f"\n    Compressed: ratio={result.compression_ratio:.1%}")
         else:
             result.pprint()
+
+        print(f"\n    AFTER rejection (context unchanged):")
+        ctx_after = t.compile()
+        print(f"      {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
 
         # hook_log shows the reject event
         for evt in t.hook_log:
