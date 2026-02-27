@@ -6,8 +6,12 @@ import os
 
 from dotenv import load_dotenv
 
+from typing import Any
+
 from tract import Tract
+from tract.hooks.event import HookEvent
 from tract.hooks.rebase import PendingRebase
+from tract.models.commit import CommitInfo
 
 load_dotenv()
 
@@ -16,7 +20,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def rebase_hooks():
+def rebase_hooks() -> None:
     print("=" * 60)
     print("PendingRebase: Review Before Replay")
     print("=" * 60)
@@ -31,7 +35,7 @@ def rebase_hooks():
 
         # Create a feature branch with several commits
         t.branch("feature")
-        feature_commits = []
+        feature_commits: list[CommitInfo] = []
         feature_questions = [
             "What about adding cardio on off days?",
             "How many sets and reps should I aim for?",
@@ -45,9 +49,9 @@ def rebase_hooks():
             "When you can complete all sets with good form, add 5 lbs for upper body, 10 for lower.",
         ]
         for q, a in zip(feature_questions, feature_answers):
-            ci = t.user(q)
+            ci: CommitInfo = t.user(q)
             feature_commits.append(ci)
-            ci2 = t.assistant(a)
+            ci2: CommitInfo = t.assistant(a)
             feature_commits.append(ci2)
 
         # Add a commit on main so rebase has something to do
@@ -63,13 +67,13 @@ def rebase_hooks():
         pending.pprint()
 
         # --- Exclude a commit: skip it during replay ---
-        drop_hash = pending.replay_plan[0]
+        drop_hash: str = pending.replay_plan[0]
         pending.exclude(drop_hash)
         print(f"\n  Excluded {drop_hash[:12]} from replay")
         print(f"    replay_plan: {len(pending.replay_plan)} commits (was {len(pending.replay_plan) + 1})")
 
         # --- Approve ---
-        result = pending.approve()
+        result: Any = pending.approve()
         print(f"\n  Approved! Rebase complete")
         pending.pprint()
 
@@ -97,7 +101,7 @@ def rebase_hooks():
         t.assistant("Start by tracking protein intake — aim for 0.7-1g per pound of bodyweight daily.")
         t.switch("experiment")
 
-        def warn_and_approve(pending: PendingRebase):
+        def warn_and_approve(pending: PendingRebase) -> None:
             """Log the replay plan, then approve."""
             pending.pprint()
             if pending.warnings:

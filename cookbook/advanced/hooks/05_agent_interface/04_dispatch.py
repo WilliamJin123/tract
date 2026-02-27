@@ -9,9 +9,12 @@ import os
 
 from dotenv import load_dotenv
 
+from typing import Any
+
 from tract import Tract
 from tract.hooks.gc import PendingGC
 from tract.hooks.tool_result import PendingToolResult
+from tract.models.compression import GCResult
 
 load_dotenv()
 
@@ -20,7 +23,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def dispatch_demo():
+def dispatch_demo() -> None:
     print("\n" + "=" * 60)
     print("PART 4 — apply_decision() / execute_tool()")
     print("=" * 60)
@@ -47,7 +50,7 @@ def dispatch_demo():
 
         # --- execute_tool(): call by name ---
         print(f"\n  execute_tool('exclude', {{'commit_hash': ...}}):")
-        first_hash = pending.commits_to_remove[0]
+        first_hash: str = pending.commits_to_remove[0]
         pending.execute_tool("exclude", {"commit_hash": first_hash})
         print(f"    Excluded {first_hash[:12]}")
         print(f"    Remaining: {len(pending.commits_to_remove)} commits")
@@ -56,13 +59,13 @@ def dispatch_demo():
         print(f"\n  apply_decision() — simulating LLM response:")
 
         # Simulate what an LLM would return after seeing to_tools()
-        llm_decision = {
+        llm_decision: dict[str, Any] = {
             "action": "approve",
             "args": {},
         }
         print(f"    LLM decision: {json.dumps(llm_decision)}")
 
-        result = pending.apply_decision(llm_decision)
+        result: GCResult = pending.apply_decision(llm_decision)
         print(f"    Dispatched! status={pending.status}")
 
     # --- Whitelist security ---

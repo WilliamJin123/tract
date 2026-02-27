@@ -8,6 +8,9 @@ import os
 from dotenv import load_dotenv
 
 from tract import Tract
+from tract.hooks.event import HookEvent
+from tract.models.commit import CommitInfo
+from tract.protocols import CompiledContext
 
 load_dotenv()
 
@@ -21,7 +24,7 @@ def _safe(text: str) -> str:
     return text.encode("ascii", "replace").decode("ascii")
 
 
-def declarative_config():
+def declarative_config() -> None:
     print("\n" + "=" * 60)
     print("PART 3 -- configure_tool_summarization()")
     print("=" * 60)
@@ -59,8 +62,8 @@ def declarative_config():
             ["src/", "tests/", "docs/", "config/", "README.md", "setup.py"]
             + [f"module_{i:02d}.py" for i in range(25)]
         )
-        ci1 = t.tool_result("d1", "list_directory", big_listing)
-        stored1 = t.get_content(ci1)
+        ci1: CommitInfo = t.tool_result("d1", "list_directory", big_listing)
+        stored1: str = t.get_content(ci1)
         print(f"\n  list_directory:")
         print(f"    Original: {len(big_listing)} chars")
         print(f"    Stored:   {_safe(stored1[:100])}")
@@ -71,8 +74,8 @@ def declarative_config():
                             "arguments": {"path": "src/main.py"}}],
         })
         big_file = "\n".join([f"# Line {i}: some code here" for i in range(50)])
-        ci2 = t.tool_result("d2", "read_file", big_file)
-        stored2 = t.get_content(ci2)
+        ci2: CommitInfo = t.tool_result("d2", "read_file", big_file)
+        stored2: str = t.get_content(ci2)
         print(f"\n  read_file:")
         print(f"    Original: {len(big_file)} chars")
         print(f"    Stored:   {_safe(stored2[:100])}")
@@ -85,8 +88,8 @@ def declarative_config():
         big_search = "\n".join(
             [f"module_{i:02d}.py:1: import os" for i in range(30)]
         )
-        ci3 = t.tool_result("d3", "search_code", big_search)
-        stored3 = t.get_content(ci3)
+        ci3: CommitInfo = t.tool_result("d3", "search_code", big_search)
+        stored3: str = t.get_content(ci3)
         print(f"\n  search_code (default instructions, over threshold):")
         print(f"    Original: {len(big_search)} chars")
         print(f"    Stored:   {_safe(stored3[:100])}")
@@ -96,8 +99,8 @@ def declarative_config():
             "tool_calls": [{"id": "d4", "name": "check_version",
                             "arguments": {}}],
         })
-        ci4 = t.tool_result("d4", "check_version", "v2.4.1")
-        stored4 = t.get_content(ci4)
+        ci4: CommitInfo = t.tool_result("d4", "check_version", "v2.4.1")
+        stored4: str = t.get_content(ci4)
         print(f"\n  check_version (under threshold, pass-through):")
         print(f"    Original: v2.4.1")
         print(f"    Stored:   {_safe(stored4)}")

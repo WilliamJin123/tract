@@ -20,7 +20,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn support conversation to give compress something to work with."""
     sys_ci = t.system("You are a customer support agent for TechFlow, a project management SaaS platform.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -31,7 +31,7 @@ def _seed_conversation(t):
     t.chat("Can you just email me the report directly? My deadline is tomorrow.")
 
 
-def guidance():
+def guidance() -> None:
     print("\n" + "=" * 60)
     print("PART 3 -- Guidance (Steering the Summarizer)")
     print("=" * 60)
@@ -68,7 +68,7 @@ def guidance():
         print(f"    guidance_source: {pending.guidance_source}")
 
         # Approve with the user's guidance in place
-        result = pending.approve()
+        result: CompressResult = pending.approve()
         print(f"\n  Approved with guidance. Compression ratio: {result.compression_ratio:.1%}")
 
         # --- Hook handler that uses guidance ---
@@ -79,7 +79,7 @@ def guidance():
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        def guided_compressor(pending: PendingCompress):
+        def guided_compressor(pending: PendingCompress) -> None:
             """Set guidance before approving to steer the output."""
             pending.edit_guidance("Keep only actionable details. Remove conversational filler.")
             pending.approve()
@@ -87,7 +87,7 @@ def guidance():
         t.on("compress", guided_compressor, name="guided-compressor")
         _seed_conversation(t)
 
-        result = t.compress(target_tokens=150)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150)
 
         if isinstance(result, CompressResult):
             print(f"    Compressed: ratio={result.compression_ratio:.1%}")

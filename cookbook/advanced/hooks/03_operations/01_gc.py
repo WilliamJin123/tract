@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from tract import Tract
 from tract.hooks.gc import PendingGC
+from tract.models.compression import GCResult
 
 load_dotenv()
 
@@ -16,7 +17,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def gc_hooks():
+def gc_hooks() -> None:
     print("=" * 60)
     print("PendingGC: Selective Garbage Collection")
     print("=" * 60)
@@ -55,14 +56,14 @@ def gc_hooks():
 
         # --- Exclude one commit: keep it despite being orphaned ---
         if len(pending.commits_to_remove) > 1:
-            keep_hash = pending.commits_to_remove[0]
-            original_count = len(pending.commits_to_remove)
+            keep_hash: str = pending.commits_to_remove[0]
+            original_count: int = len(pending.commits_to_remove)
             pending.exclude(keep_hash)
             print(f"\n  Excluded {keep_hash[:12]} from removal")
             print(f"    commits_to_remove: {len(pending.commits_to_remove)} (was {original_count})")
 
         # --- Approve the reduced plan ---
-        result = pending.approve()
+        result: GCResult = pending.approve()
         print(f"\n  Approved! GC complete")
         pending.pprint()
 
@@ -86,7 +87,7 @@ def gc_hooks():
             t.switch("main")
             t.delete_branch(branch_name, force=True)
 
-        def protect_large_orphans(pending: PendingGC):
+        def protect_large_orphans(pending: PendingGC) -> None:
             """Keep orphans that might have substantial content."""
             # Note: PendingGC doesn't expose per-commit token counts publicly.
             # In practice, you'd use your own tracking or inspect via t.log().

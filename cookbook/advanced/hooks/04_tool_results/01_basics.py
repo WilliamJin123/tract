@@ -8,7 +8,9 @@ import os
 from dotenv import load_dotenv
 
 from tract import Tract
+from tract.hooks.event import HookEvent
 from tract.hooks.tool_result import PendingToolResult
+from tract.models.commit import CommitInfo
 
 load_dotenv()
 
@@ -17,7 +19,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def hook_basics():
+def hook_basics() -> None:
     print("=" * 60)
     print("PART 1 -- Tool Result Hook Basics")
     print("=" * 60)
@@ -33,9 +35,9 @@ def hook_basics():
         t.system("You are a code analysis assistant with access to development tools.")
         t.user("Find all Python files in the project.")
 
-        tool_log = []
+        tool_log: list[dict[str, object]] = []
 
-        def log_tool_results(pending: PendingToolResult):
+        def log_tool_results(pending: PendingToolResult) -> None:
             """Log every tool result, then approve."""
             tool_log.append({
                 "tool": pending.tool_name,

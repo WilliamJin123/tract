@@ -8,8 +8,12 @@ import os
 
 from dotenv import load_dotenv
 
+from collections.abc import Callable
+
 from tract import Priority, Tract
 from tract.hooks.compress import PendingCompress
+from tract.models.compression import CompressResult
+from tract.protocols import CompiledContext
 
 load_dotenv()
 
@@ -18,7 +22,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn code review conversation for tolerance demos."""
     sys_ci = t.system("You are a senior Python code reviewer focusing on correctness and performance.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -29,14 +33,14 @@ def _seed_conversation(t):
     t.chat("Here's the updated version with your suggestions. Any final thoughts?")
 
 
-def auto_truncate():
+def auto_truncate() -> None:
     print("\n" + "=" * 60)
     print("PART 2 — Auto-Truncate")
     print("=" * 60)
 
-    def make_truncator(max_tokens: int):
+    def make_truncator(max_tokens: int) -> Callable[[PendingCompress], None]:
         """Factory: truncate summaries to fit within max_tokens."""
-        def truncate_to_budget(pending: PendingCompress):
+        def truncate_to_budget(pending: PendingCompress) -> None:
             for i, summary in enumerate(pending.summaries):
                 actual = pending.tract._token_counter.count_text(summary)
                 if actual <= max_tokens:
@@ -64,10 +68,10 @@ def auto_truncate():
         t.on("compress", make_truncator(max_tokens=200))
         _seed_conversation(t)
 
-        result = t.compress(target_tokens=200, token_tolerance=10000)
+        result: CompressResult = t.compress(target_tokens=200, token_tolerance=10000)
         print(f"  Compressed: ratio={result.compression_ratio:.1%}")
 
-        ctx = t.compile()
+        ctx: CompiledContext = t.compile()
         ctx.pprint(style="compact")
 
 

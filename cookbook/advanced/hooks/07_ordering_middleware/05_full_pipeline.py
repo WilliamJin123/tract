@@ -20,7 +20,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn research conversation for middleware demos."""
     sys_ci = t.system("You are a research assistant helping analyze technology adoption trends.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -31,7 +31,7 @@ def _seed_conversation(t):
     t.chat("What metrics should we track to measure ROI on LLM investments?")
 
 
-def full_pipeline():
+def full_pipeline() -> None:
     """A realistic multi-handler production pipeline."""
     print("\n" + "=" * 60)
     print("PART 5 — Composing a Full Pipeline")
@@ -40,11 +40,11 @@ def full_pipeline():
     print("  Pipeline:  rate_limiter -> budget_checker -> quality_validator -> approver")
     print("  Each middleware uses pass_through() to delegate downstream.")
 
-    last_compress = {"ts": 0.0}
-    pipeline_trace = []
+    last_compress: dict[str, float] = {"ts": 0.0}
+    pipeline_trace: list[str] = []
 
     # --- Handler 1: Rate limiter ---
-    def rate_limiter(pending: PendingCompress):
+    def rate_limiter(pending: PendingCompress) -> None:
         """Reject if compressed within last second, else pass through."""
         elapsed = time.time() - last_compress["ts"]
         pipeline_trace.append(f"rate_limiter (elapsed={elapsed:.1f}s)")
@@ -54,7 +54,7 @@ def full_pipeline():
         pending.pass_through()
 
     # --- Handler 2: Token budget checker ---
-    def budget_checker(pending: PendingCompress):
+    def budget_checker(pending: PendingCompress) -> None:
         """Reject if estimated tokens exceed 80% of original."""
         pipeline_trace.append(f"budget_checker (est={pending.estimated_tokens})")
         if pending.original_tokens > 0:
@@ -68,7 +68,7 @@ def full_pipeline():
         pending.pass_through()
 
     # --- Handler 3: Quality validator ---
-    def quality_validator(pending: PendingCompress):
+    def quality_validator(pending: PendingCompress) -> None:
         """Reject if any summary is suspiciously short."""
         pipeline_trace.append(f"quality_validator ({len(pending.summaries)} summaries)")
         for i, summary in enumerate(pending.summaries):
@@ -81,7 +81,7 @@ def full_pipeline():
         pending.pass_through()
 
     # --- Handler 4: Final approver (safety net) ---
-    def final_approver(pending: PendingCompress):
+    def final_approver(pending: PendingCompress) -> None:
         """Catch-all: approve if every middleware passed through."""
         pipeline_trace.append("final_approver")
         pending.approve()
@@ -102,7 +102,7 @@ def full_pipeline():
         print(f"\n  Registered pipeline: {t.hook_names}")
 
         # --- First compress ---
-        result = t.compress(target_tokens=150, token_tolerance=10000)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
         last_compress["ts"] = time.time()
 
         if isinstance(result, CompressResult):

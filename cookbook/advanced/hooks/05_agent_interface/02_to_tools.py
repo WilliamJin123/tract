@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from tract import Priority, Tract
 from tract.hooks.compress import PendingCompress
+from tract.models.commit import CommitInfo
 
 load_dotenv()
 
@@ -18,7 +19,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def to_tools_demo():
+def to_tools_demo() -> None:
     print("\n" + "=" * 60)
     print("PART 2 — to_tools(): JSON Schema Tool Definitions")
     print("=" * 60)
@@ -32,7 +33,7 @@ def to_tools_demo():
         model=MODEL_ID,
     ) as t:
         # Get a PendingCompress to show rich tool schemas
-        sys_ci = t.system("You are a science tutor.")
+        sys_ci: CommitInfo = t.system("You are a science tutor.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
         t.chat("What is DNA?")
         t.chat("How does DNA replication work?")
@@ -43,7 +44,7 @@ def to_tools_demo():
         # Show pending state, then the tool schemas (the lesson)
         pending.pprint()
 
-        tools = pending.to_tools()
+        tools: list[dict] = pending.to_tools()
         print(f"\n  PendingCompress.to_tools() — {len(tools)} tools:")
         for tool in tools:
             fn = tool["function"]
@@ -58,7 +59,7 @@ def to_tools_demo():
 
         # Raw JSON for one tool — this is what you pass to an LLM API
         print(f"\n  Raw JSON for 'edit_summary':")
-        edit_tool = next(t for t in tools if t["function"]["name"] == "edit_summary")
+        edit_tool: dict = next(t for t in tools if t["function"]["name"] == "edit_summary")
         print(json.dumps(edit_tool, indent=4))
 
         print(f"\n  Pass to OpenAI: client.chat.completions.create(tools=pending.to_tools())")

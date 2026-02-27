@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from tract import Priority, Tract
 from tract.hooks.compress import PendingCompress
 from tract.models.compression import CompressResult
+from tract.protocols import CompiledContext
 
 load_dotenv()
 
@@ -20,7 +21,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn support conversation to give compress something to work with."""
     sys_ci = t.system("You are a customer support agent for TechFlow, a project management SaaS platform.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -31,7 +32,7 @@ def _seed_conversation(t):
     t.chat("Can you just email me the report directly? My deadline is tomorrow.")
 
 
-def pending_lifecycle():
+def pending_lifecycle() -> None:
     print("=" * 60)
     print("PART 1 -- PendingCompress Lifecycle")
     print("=" * 60)
@@ -47,7 +48,7 @@ def pending_lifecycle():
         _seed_conversation(t)
 
         print("\n  BEFORE compression:")
-        ctx_before = t.compile()
+        ctx_before: CompiledContext = t.compile()
         print(f"    {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
         ctx_before.pprint(style="compact")
 
@@ -60,17 +61,17 @@ def pending_lifecycle():
         pending.pprint(verbose=True)
 
         # --- Edit a summary before committing ---
-        original = pending.summaries[0]
+        original: str = pending.summaries[0]
         pending.edit_summary(0, original.rstrip(".") + " -- reviewed and approved.")
         print(f"\n  After edit_summary(0, ...):")
         print(f"    Draft [0]: {pending.summaries[0][:100]}...")
 
         # Context hasn't changed yet (nothing committed)
-        ctx_still = t.compile()
+        ctx_still: CompiledContext = t.compile()
         print(f"\n  Context unchanged: {ctx_still.token_count} tokens (nothing committed yet)")
 
         # --- Approve: NOW it commits ---
-        result = pending.approve()
+        result: CompressResult = pending.approve()
 
         # pprint shows the updated status (approved) and final token ratio
         print("\n  Approved!")
@@ -82,7 +83,7 @@ def pending_lifecycle():
         print(f"    new_head:          {result.new_head[:12]}")
 
         print("\n  AFTER compression:")
-        ctx_after = t.compile()
+        ctx_after: CompiledContext = t.compile()
         print(f"    {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
         ctx_after.pprint(style="compact")
 

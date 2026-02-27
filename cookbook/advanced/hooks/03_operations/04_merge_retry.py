@@ -7,10 +7,13 @@ import os
 
 from dotenv import load_dotenv
 
+from typing import Any
+
 from tract import Tract
 from tract.hooks.merge import PendingMerge
 from tract.hooks.retry import auto_retry
 from tract.hooks.validation import HookRejection, ValidationResult
+from tract.models.commit import CommitInfo
 
 load_dotenv()
 
@@ -19,7 +22,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def merge_retry_and_validate():
+def merge_retry_and_validate() -> None:
     print("=" * 60)
     print("PendingMerge: Retry and Validate")
     print("=" * 60)
@@ -37,8 +40,8 @@ def merge_retry_and_validate():
         model=MODEL_ID,
     ) as t:
         # Build a conflict: both branches EDIT the same message
-        sys_ci = t.system("You are a helpful assistant.")
-        user_ci = t.user("Explain machine learning.")
+        sys_ci: CommitInfo = t.system("You are a helpful assistant.")
+        user_ci: CommitInfo = t.user("Explain machine learning.")
         t.assistant("Machine learning is a subset of AI.")
 
         # Feature branch edits the assistant message
@@ -64,7 +67,7 @@ def merge_retry_and_validate():
         # --- Clear resolutions to demonstrate validate() failing ---
         # (In real use, resolutions might be missing if review=True
         #  was called without a resolver, or if the resolver failed.)
-        saved_resolutions = dict(pending.resolutions)
+        saved_resolutions: dict[str, str] = dict(pending.resolutions)
         pending.resolutions.clear()
 
         print(f"\n  Cleared resolutions to simulate missing data:")
@@ -91,7 +94,7 @@ def merge_retry_and_validate():
         print(f"    diagnosis: {result2.diagnosis}")
 
         # --- Approve ---
-        merge_result = pending.approve()
+        merge_result: Any = pending.approve()
         print(f"\n  Approved! Merge complete")
         pending.pprint()
 
@@ -124,7 +127,7 @@ def merge_retry_and_validate():
         pending2.pprint()
         print(f"\n  Calling auto_retry(pending, max_retries=3)...")
 
-        result = auto_retry(pending2, max_retries=3)
+        result: Any | HookRejection = auto_retry(pending2, max_retries=3)
         print(f"\n  auto_retry returned: {type(result).__name__}")
 
         if isinstance(result, HookRejection):
@@ -163,7 +166,7 @@ def merge_retry_and_validate():
         # (simulates a resolver that keeps producing bad output)
         original_retry = pending3.retry
 
-        def broken_retry(**kwargs):
+        def broken_retry(**kwargs: Any) -> None:
             """Simulate a resolver that always produces empty resolutions."""
             original_retry(**kwargs)
             # Wipe resolutions after each retry to force failure
@@ -174,7 +177,7 @@ def merge_retry_and_validate():
         print(f"\n  Simulating a resolver that always fails...")
         print(f"  Calling auto_retry(pending, max_retries=2)...")
 
-        result = auto_retry(pending3, max_retries=2)
+        result: Any | HookRejection = auto_retry(pending3, max_retries=2)
         print(f"\n  auto_retry returned: {type(result).__name__}")
 
         if isinstance(result, HookRejection):

@@ -19,7 +19,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn research conversation for middleware demos."""
     sys_ci = t.system("You are a research assistant helping analyze technology adoption trends.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -30,7 +30,7 @@ def _seed_conversation(t):
     t.chat("What metrics should we track to measure ROI on LLM investments?")
 
 
-def dynamic_insertion():
+def dynamic_insertion() -> None:
     """Add and remove named handlers at runtime."""
     print("\n" + "=" * 60)
     print("PART 4 — Inserting Hooks Dynamically")
@@ -44,7 +44,7 @@ def dynamic_insertion():
         _seed_conversation(t)
 
         # --- Step 1: Start with a basic approver ---
-        def basic_approver(pending: PendingCompress):
+        def basic_approver(pending: PendingCompress) -> None:
             pending.approve()
 
         t.on("compress", basic_approver, name="approver")
@@ -52,9 +52,9 @@ def dynamic_insertion():
         print(f"    hook_names = {t.hook_names}")
 
         # --- Step 2: Insert a logging middleware BEFORE the approver ---
-        log_entries = []
+        log_entries: list[dict[str, int]] = []
 
-        def logging_middleware(pending: PendingCompress):
+        def logging_middleware(pending: PendingCompress) -> None:
             log_entries.append({
                 "original": pending.original_tokens,
                 "estimated": pending.estimated_tokens,
@@ -66,7 +66,7 @@ def dynamic_insertion():
         print(f"    hook_names = {t.hook_names}")
 
         # --- Step 3: Insert a rate limiter at the very front ---
-        def rate_limiter(pending: PendingCompress):
+        def rate_limiter(pending: PendingCompress) -> None:
             pending.pass_through()  # always pass in this demo
 
         t.on("compress", rate_limiter, name="rate_limiter", before=True)
@@ -74,7 +74,7 @@ def dynamic_insertion():
         print(f"    hook_names = {t.hook_names}")
 
         # --- Run compress to show all three fire ---
-        result = t.compress(target_tokens=150, token_tolerance=10000)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
 
         if isinstance(result, CompressResult):
             print(f"\n  Compressed: ratio={result.compression_ratio:.1%}")

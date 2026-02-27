@@ -20,7 +20,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn code review conversation for tolerance demos."""
     sys_ci = t.system("You are a senior Python code reviewer focusing on correctness and performance.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -31,7 +31,7 @@ def _seed_conversation(t):
     t.chat("Here's the updated version with your suggestions. Any final thoughts?")
 
 
-def middleware_and_enforcer():
+def middleware_and_enforcer() -> None:
     print("\n" + "=" * 60)
     print("PART 3 — Middleware + Enforcer (pass_through)")
     print("=" * 60)
@@ -39,11 +39,11 @@ def middleware_and_enforcer():
     print("  The logger calls pass_through() — it inspects without deciding.")
     print("  The enforcer fires next and makes the approve/reject decision.")
 
-    audit_log = []
+    audit_log: list[dict[str, object]] = []
 
-    def compression_logger(pending: PendingCompress):
+    def compression_logger(pending: PendingCompress) -> None:
         """Middleware: inspect and log, then pass through to next handler."""
-        entry = {
+        entry: dict[str, object] = {
             "summaries": len(pending.summaries),
             "original_tokens": pending.original_tokens,
             "estimated_tokens": pending.estimated_tokens,
@@ -53,7 +53,7 @@ def middleware_and_enforcer():
         audit_log.append(entry)
         pending.pass_through()  # explicit: "I'm not the decision-maker"
 
-    def budget_enforcer(pending: PendingCompress):
+    def budget_enforcer(pending: PendingCompress) -> None:
         """Approve if estimated tokens are within budget, reject otherwise."""
         budget = 300
         if pending.estimated_tokens <= budget:
@@ -71,7 +71,7 @@ def middleware_and_enforcer():
         t.on("compress", budget_enforcer, name="enforcer")
         _seed_conversation(t)
 
-        result = t.compress(target_tokens=150, token_tolerance=10000)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
 
         if isinstance(result, CompressResult):
             print(f"  Compressed: ratio={result.compression_ratio:.1%}")

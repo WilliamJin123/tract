@@ -23,7 +23,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn support conversation to give compress something to work with."""
     sys_ci = t.system("You are a customer support agent for TechFlow, a project management SaaS platform.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -34,7 +34,7 @@ def _seed_conversation(t):
     t.chat("Can you just email me the report directly? My deadline is tomorrow.")
 
 
-def retry_and_validate():
+def retry_and_validate() -> None:
     print("\n" + "=" * 60)
     print("PART 4 -- Retry and Validate")
     print("=" * 60)
@@ -65,7 +65,7 @@ def retry_and_validate():
         print(f"    index:     {result.index}")
 
         # Force a bad summary to demonstrate failure + fix
-        original = pending.summaries[0]
+        original: str = pending.summaries[0]
         pending.edit_summary(0, "Bad.")  # Suspiciously short (< 10 chars)
 
         result = pending.validate()
@@ -82,7 +82,7 @@ def retry_and_validate():
         print(f"    diagnosis: {result.diagnosis}")
 
         # Approve after passing validation -- pprint shows final state
-        compress_result = pending.approve()
+        compress_result: CompressResult = pending.approve()
         print(f"\n  Approved after validation:")
         pending.pprint()
         print(f"    ratio={compress_result.compression_ratio:.1%}")
@@ -101,7 +101,7 @@ def retry_and_validate():
 
         # auto_retry validates, retries failing summaries with diagnosis
         # as guidance, then approves if all pass.
-        result = auto_retry(pending, max_retries=3)
+        result: CompressResult | HookRejection = auto_retry(pending, max_retries=3)
 
         print(f"\n  auto_retry() result: {type(result).__name__}")
         if isinstance(result, HookRejection):
@@ -129,7 +129,7 @@ def retry_and_validate():
         # auto_retry will retry (which regenerates via LLM), but if the
         # regenerated summary also fails, it retries again up to max_retries.
         # With max_retries=1, it gets one shot.
-        result = auto_retry(pending, max_retries=1)
+        result: CompressResult | HookRejection = auto_retry(pending, max_retries=1)
 
         print(f"\n  auto_retry(max_retries=1) result: {type(result).__name__}")
         if isinstance(result, HookRejection):

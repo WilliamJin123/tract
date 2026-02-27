@@ -21,7 +21,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn support conversation to give compress something to work with."""
     sys_ci = t.system("You are a customer support agent for TechFlow, a project management SaaS platform.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -32,7 +32,7 @@ def _seed_conversation(t):
     t.chat("Can you just email me the report directly? My deadline is tomorrow.")
 
 
-def two_stage():
+def two_stage() -> None:
     print("\n" + "=" * 60)
     print("PART 5 -- Two-Stage Compression (Guidance Generation)")
     print("=" * 60)
@@ -78,7 +78,7 @@ def two_stage():
         pending.pprint(verbose=True)
 
         # Regenerate guidance from LLM (gets a fresh take)
-        new_guidance = pending.regenerate_guidance()
+        new_guidance: str = pending.regenerate_guidance()
         print(f"\n  After regenerate_guidance():")
         print(f"    guidance_source: {pending.guidance_source}")
         pending.pprint(verbose=True)
@@ -106,7 +106,7 @@ def two_stage():
         print(f"    guidance_source: {pending.guidance_source}")
 
         # Approve with user-edited guidance
-        result = pending.approve()
+        result: CompressResult = pending.approve()
         print(f"\n  Approved with user guidance: ratio={result.compression_ratio:.1%}")
 
     # --- 5d: two_stage=False (default) skips guidance ---
@@ -127,7 +127,7 @@ def two_stage():
         print(f"    guidance_source: {pending.guidance_source}")
         print(f"    (None because two_stage defaults to False)")
 
-        result = pending.approve()
+        result: CompressResult = pending.approve()
         print(f"\n  Approved without guidance: ratio={result.compression_ratio:.1%}")
 
 

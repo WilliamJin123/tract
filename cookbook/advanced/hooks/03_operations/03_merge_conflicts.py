@@ -7,8 +7,11 @@ import os
 
 from dotenv import load_dotenv
 
+from typing import Any
+
 from tract import Tract
 from tract.hooks.merge import PendingMerge
+from tract.models.commit import CommitInfo
 
 load_dotenv()
 
@@ -17,7 +20,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def merge_conflict_hooks():
+def merge_conflict_hooks() -> None:
     print("=" * 60)
     print("PendingMerge: Conflict Resolution Hooks")
     print("=" * 60)
@@ -31,8 +34,8 @@ def merge_conflict_hooks():
         model=MODEL_ID,
     ) as t:
         # Build a conflict: both branches EDIT the same message
-        sys_ci = t.system("You are a helpful assistant.")
-        user_ci = t.user("What is Python?")
+        sys_ci: CommitInfo = t.system("You are a helpful assistant.")
+        user_ci: CommitInfo = t.user("What is Python?")
         t.assistant("Python is a programming language.")
 
         # Feature branch edits the assistant message
@@ -56,7 +59,7 @@ def merge_conflict_hooks():
         pending.pprint()
 
         # --- edit_resolution: replace one ---
-        first_key = list(pending.resolutions.keys())[0]
+        first_key: str = list(pending.resolutions.keys())[0]
         pending.edit_resolution(
             first_key,
             "Python is a high-level language popular in data science, web dev, and automation.",
@@ -70,7 +73,7 @@ def merge_conflict_hooks():
         print(f"  guidance_source: {pending.guidance_source}")
 
         # --- Approve ---
-        result = pending.approve()
+        result: Any = pending.approve()
         print(f"\n  Approved! Merge complete")
         pending.pprint()
 
@@ -98,7 +101,7 @@ def merge_conflict_hooks():
             text="Rust is a modern compiled language.",
         )
 
-        def prefer_incoming(pending: PendingMerge):
+        def prefer_incoming(pending: PendingMerge) -> None:
             """Always pick the incoming (source branch) version."""
             for conflict in pending.conflicts:
                 key = getattr(conflict, "target_hash", None)
@@ -107,7 +110,7 @@ def merge_conflict_hooks():
             pending.approve()
 
         t.on("merge", prefer_incoming, name="prefer-incoming")
-        result = t.merge("feature2")
+        result: Any = t.merge("feature2")
 
         t.print_hooks()
 

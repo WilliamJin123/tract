@@ -20,7 +20,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn research conversation for middleware demos."""
     sys_ci = t.system("You are a research assistant helping analyze technology adoption trends.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -31,7 +31,7 @@ def _seed_conversation(t):
     t.chat("What metrics should we track to measure ROI on LLM investments?")
 
 
-def pass_through_pipeline():
+def pass_through_pipeline() -> None:
     """Three resolution actions: approve(), reject(), pass_through()."""
     print("\n" + "=" * 60)
     print("PART 2 — The pass_through() Pattern")
@@ -45,9 +45,9 @@ def pass_through_pipeline():
     print("  If ALL handlers call pass_through(), the pending auto-approves.")
 
     # Track the last compression time for the rate limiter
-    last_compress_time = {"ts": 0.0}
+    last_compress_time: dict[str, float] = {"ts": 0.0}
 
-    def rate_limiter(pending: PendingCompress):
+    def rate_limiter(pending: PendingCompress) -> None:
         """Middleware: reject if compressed too recently, else pass through."""
         elapsed = time.time() - last_compress_time["ts"]
         if elapsed < 2.0 and last_compress_time["ts"] > 0:
@@ -55,7 +55,7 @@ def pass_through_pipeline():
             return
         pending.pass_through()  # not rate limited, let next handler decide
 
-    def quality_checker(pending: PendingCompress):
+    def quality_checker(pending: PendingCompress) -> None:
         """Middleware: inspect summary quality, pass through if OK."""
         for i, summary in enumerate(pending.summaries):
             if len(summary.strip()) < 10:
@@ -63,7 +63,7 @@ def pass_through_pipeline():
                 return
         pending.pass_through()  # summaries look fine, let next handler decide
 
-    def final_approver(pending: PendingCompress):
+    def final_approver(pending: PendingCompress) -> None:
         """Catch-all: if we got this far, approve."""
         pending.approve()
 
@@ -80,7 +80,7 @@ def pass_through_pipeline():
         print(f"\n  Pipeline: {t.hook_names}")
 
         # First compress — should pass through rate limiter and quality checker
-        result = t.compress(target_tokens=150, token_tolerance=10000)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
         last_compress_time["ts"] = time.time()
 
         if isinstance(result, CompressResult):

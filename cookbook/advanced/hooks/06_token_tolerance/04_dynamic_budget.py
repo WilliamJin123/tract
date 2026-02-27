@@ -19,7 +19,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn code review conversation for tolerance demos."""
     sys_ci = t.system("You are a senior Python code reviewer focusing on correctness and performance.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -30,12 +30,12 @@ def _seed_conversation(t):
     t.chat("Here's the updated version with your suggestions. Any final thoughts?")
 
 
-def dynamic_budget():
+def dynamic_budget() -> None:
     print("\n" + "=" * 60)
     print("PART 4 — Dynamic Budget")
     print("=" * 60)
 
-    def dynamic_tolerance(pending: PendingCompress):
+    def dynamic_tolerance(pending: PendingCompress) -> None:
         """Tolerance = 10% of original tokens, clamped to [50, 500]."""
         original = pending.original_tokens
         tolerance = max(50, min(500, int(original * 0.10)))
@@ -58,7 +58,7 @@ def dynamic_budget():
         t.on("compress", dynamic_tolerance)
         _seed_conversation(t)
 
-        result = t.compress(target_tokens=150, token_tolerance=10000)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
 
         if isinstance(result, CompressResult):
             print(f"  Compressed: ratio={result.compression_ratio:.1%}")

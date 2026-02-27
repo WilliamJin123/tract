@@ -19,7 +19,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def to_dict_demo():
+def to_dict_demo() -> None:
     print("=" * 60)
     print("PART 1 — to_dict(): Structured Serialization")
     print("=" * 60)
@@ -51,7 +51,7 @@ def to_dict_demo():
         pending_gc.pprint()
 
         # The lesson: to_dict() output is what you send to an LLM
-        gc_dict = pending_gc.to_dict()
+        gc_dict: dict = pending_gc.to_dict()
         print(f"\n  PendingGC.to_dict():")
         print(json.dumps(gc_dict, indent=4))
 
@@ -79,7 +79,7 @@ def to_dict_demo():
         pending_tr: PendingToolResult = t.tool_result(
             "x1", "grep", "main.py:10: # TODO fix this", review=True,
         )
-        tr_dict = pending_tr.to_dict()
+        tr_dict: dict = pending_tr.to_dict()
         print(f"\n  PendingToolResult.to_dict():")
         print(json.dumps(tr_dict, indent=4))
 

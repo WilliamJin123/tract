@@ -20,7 +20,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn support conversation to give compress something to work with."""
     sys_ci = t.system("You are a customer support agent for TechFlow, a project management SaaS platform.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -31,7 +31,7 @@ def _seed_conversation(t):
     t.chat("Can you just email me the report directly? My deadline is tomorrow.")
 
 
-def hook_handler_patterns():
+def hook_handler_patterns() -> None:
     print("\n" + "=" * 60)
     print("PART 2 -- Hook Handler Patterns")
     print("=" * 60)
@@ -44,7 +44,7 @@ def hook_handler_patterns():
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        def enforce_word_limit(pending: PendingCompress):
+        def enforce_word_limit(pending: PendingCompress) -> None:
             """Truncate any summary over 30 words, then approve."""
             max_words = 30
             for i, summary in enumerate(pending.summaries):
@@ -57,7 +57,7 @@ def hook_handler_patterns():
         _seed_conversation(t)
 
         # compress() fires the hook automatically (no review=True needed)
-        result = t.compress(target_tokens=150)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150)
 
         if isinstance(result, CompressResult):
             print(f"    Compressed: ratio={result.compression_ratio:.1%}")
@@ -75,7 +75,7 @@ def hook_handler_patterns():
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        def quality_gate(pending: PendingCompress):
+        def quality_gate(pending: PendingCompress) -> None:
             """Reject if any summary exceeds character budget."""
             max_chars = 50  # Very strict -- will likely reject
             for i, summary in enumerate(pending.summaries):
@@ -89,7 +89,7 @@ def hook_handler_patterns():
         t.on("compress", quality_gate, name="quality-gate")
         _seed_conversation(t)
 
-        result = t.compress(target_tokens=150)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150)
 
         # result is PendingCompress (rejected) -- pprint shows status + reason
         if isinstance(result, CompressResult):

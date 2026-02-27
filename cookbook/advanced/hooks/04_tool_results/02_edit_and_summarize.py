@@ -17,7 +17,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def edit_and_summarize():
+def edit_and_summarize() -> None:
     print("\n" + "=" * 60)
     print("PART 2 -- Edit and Summarize")
     print("=" * 60)

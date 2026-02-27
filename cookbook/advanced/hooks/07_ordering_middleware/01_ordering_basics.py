@@ -19,7 +19,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn research conversation for middleware demos."""
     sys_ci = t.system("You are a research assistant helping analyze technology adoption trends.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -30,7 +30,7 @@ def _seed_conversation(t):
     t.chat("What metrics should we track to measure ROI on LLM investments?")
 
 
-def ordering_basics():
+def ordering_basics() -> None:
     """Named handlers, before=True, after='name' control execution order."""
     print("=" * 60)
     print("PART 1 — Handler Ordering Basics")
@@ -44,14 +44,14 @@ def ordering_basics():
         _seed_conversation(t)
 
         # Track call order with a shared list
-        call_order = []
+        call_order: list[str] = []
 
-        def handler_a(pending: PendingCompress):
+        def handler_a(pending: PendingCompress) -> None:
             """First registered handler."""
             call_order.append("validator")
             pending.pass_through()
 
-        def handler_b(pending: PendingCompress):
+        def handler_b(pending: PendingCompress) -> None:
             """Second registered handler — final approver."""
             call_order.append("formatter")
             pending.approve()
@@ -64,7 +64,7 @@ def ordering_basics():
         print(f"    hook_names = {t.hook_names}")
 
         # --- Prepend: before=True ---
-        def rate_limiter(pending: PendingCompress):
+        def rate_limiter(pending: PendingCompress) -> None:
             call_order.append("rate_limit")
             pending.pass_through()
 
@@ -74,7 +74,7 @@ def ordering_basics():
         print(f"    hook_names = {t.hook_names}")
 
         # --- Insert relative to named handler: after='validator' ---
-        def auditor(pending: PendingCompress):
+        def auditor(pending: PendingCompress) -> None:
             call_order.append("auditor")
             pending.pass_through()
 
@@ -89,7 +89,7 @@ def ordering_basics():
 
         # --- Run compress to prove the firing order ---
         print("\n  Running compress()...")
-        result = t.compress(target_tokens=150, token_tolerance=10000)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
 
         if isinstance(result, CompressResult):
             print(f"  Compressed: ratio={result.compression_ratio:.1%}")

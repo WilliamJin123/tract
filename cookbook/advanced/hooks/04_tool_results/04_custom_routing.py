@@ -8,7 +8,10 @@ import re
 from dotenv import load_dotenv
 
 from tract import Tract
+from tract.hooks.event import HookEvent
 from tract.hooks.tool_result import PendingToolResult
+from tract.models.commit import CommitInfo
+from tract.protocols import CompiledContext
 
 load_dotenv()
 
@@ -17,7 +20,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def custom_routing():
+def custom_routing() -> None:
     print("\n" + "=" * 60)
     print("PART 4 -- Custom Routing Handler")
     print("=" * 60)
@@ -33,11 +36,11 @@ def custom_routing():
         t.system("You are a security-conscious assistant.")
         t.user("Audit the system configuration.")
 
-        BLOCKED_TOOLS = {"run_shell", "delete_file"}
-        REDACT_TOOLS = {"read_env", "get_secrets"}
-        SUMMARIZE_TOOLS = {"read_file", "search_files", "list_directory"}
+        BLOCKED_TOOLS: set[str] = {"run_shell", "delete_file"}
+        REDACT_TOOLS: set[str] = {"read_env", "get_secrets"}
+        SUMMARIZE_TOOLS: set[str] = {"read_file", "search_files", "list_directory"}
 
-        def smart_router(pending: PendingToolResult):
+        def smart_router(pending: PendingToolResult) -> None:
             """Route each tool through the appropriate strategy."""
             tool = pending.tool_name
 
@@ -70,7 +73,7 @@ def custom_routing():
             "tool_calls": [{"id": "r1", "name": "run_shell",
                             "arguments": {"cmd": "rm -rf /"}}],
         })
-        result1 = t.tool_result("r1", "run_shell", "Command output here")
+        result1: CommitInfo | PendingToolResult = t.tool_result("r1", "run_shell", "Command output here")
         if isinstance(result1, PendingToolResult):
             print("  Blocked tool returned PendingToolResult:")
             result1.pprint()
@@ -106,7 +109,7 @@ def custom_routing():
             print(f"  [{ts}] {evt.operation} -> {evt.handler_name}: {evt.result}")
 
         print(f"\n  Final context:")
-        ctx = t.compile()
+        ctx: CompiledContext = t.compile()
         print(f"    {len(ctx.messages)} messages, {ctx.token_count} tokens")
 
         t.print_hooks()

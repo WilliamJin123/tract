@@ -17,7 +17,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def describe_api_demo():
+def describe_api_demo() -> None:
     print("\n" + "=" * 60)
     print("PART 3 — describe_api(): Markdown Documentation")
     print("=" * 60)
@@ -39,7 +39,7 @@ def describe_api_demo():
         t.delete_branch("temp", force=True)
 
         pending: PendingGC = t.gc(orphan_retention_days=0, review=True)
-        api_doc = pending.describe_api()
+        api_doc: str = pending.describe_api()
 
         print(f"\n  PendingGC.describe_api():\n")
         print(api_doc)
@@ -61,7 +61,7 @@ def describe_api_demo():
         pending_tr: PendingToolResult = t.tool_result(
             "y1", "test", "test output", review=True,
         )
-        api_doc_tr = pending_tr.describe_api()
+        api_doc_tr: str = pending_tr.describe_api()
         print(f"\n  PendingToolResult.describe_api():\n")
         print(api_doc_tr)
 

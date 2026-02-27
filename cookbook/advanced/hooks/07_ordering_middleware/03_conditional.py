@@ -19,7 +19,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def _seed_conversation(t):
+def _seed_conversation(t: Tract) -> None:
     """Build a multi-turn research conversation for middleware demos."""
     sys_ci = t.system("You are a research assistant helping analyze technology adoption trends.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
@@ -30,7 +30,7 @@ def _seed_conversation(t):
     t.chat("What metrics should we track to measure ROI on LLM investments?")
 
 
-def conditional_middleware():
+def conditional_middleware() -> None:
     """Handlers that only intervene when they have an opinion."""
     print("\n" + "=" * 60)
     print("PART 3 — Conditional Middleware")
@@ -39,7 +39,7 @@ def conditional_middleware():
     print("  A handler can use pass_through() conditionally:")
     print("  small contexts pass through silently, large ones get scrutinized.")
 
-    def size_gate(pending: PendingCompress):
+    def size_gate(pending: PendingCompress) -> None:
         """Only intervene for large compressions."""
         if pending.original_tokens < 500:
             pending.pass_through()  # small context, don't care
@@ -50,7 +50,7 @@ def conditional_middleware():
         else:
             pending.pass_through()  # meets the bar, let next handler decide
 
-    def always_approve(pending: PendingCompress):
+    def always_approve(pending: PendingCompress) -> None:
         """Safety net: approve if no earlier handler objected."""
         pending.approve()
 
@@ -65,7 +65,7 @@ def conditional_middleware():
 
         print(f"\n  Pipeline: {t.hook_names}")
 
-        result = t.compress(target_tokens=150, token_tolerance=10000)
+        result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
 
         if isinstance(result, CompressResult):
             print(f"\n  Compressed: ratio={result.compression_ratio:.1%}")

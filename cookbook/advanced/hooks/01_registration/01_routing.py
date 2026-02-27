@@ -1,15 +1,25 @@
-"""Three-tier hook routing: review=True > registered hook > auto-approve.
+"""Three-tier hook routing across different operations.
 
-Register a handler with t.on(), see how the three routing tiers determine
-which code fires when a hookable operation runs, and remove hooks with t.off().
+The routing logic is universal -- it works identically for tool_result,
+compress, gc, and any future hookable operation.  This demo uses three
+different operations (one per tier) to prove the point:
+
+  Tier 3 (auto-approve):  tool_result with no hook registered
+  Tier 2 (registered hook): compress with a handler
+  Tier 1 (review=True):    tool_result with manual control
 """
 
 import os
 
 from dotenv import load_dotenv
 
-from tract import Tract
-from tract.hooks.gc import PendingGC
+from tract import Priority, Tract
+from tract.hooks.compress import PendingCompress
+from tract.hooks.event import HookEvent
+from tract.hooks.tool_result import PendingToolResult
+from tract.models.commit import CommitInfo
+from tract.models.compression import CompressResult
+from tract.protocols import CompiledContext
 
 load_dotenv()
 
@@ -18,75 +28,151 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 
-def registration_and_routing():
-    """t.on() registers, t.off() removes, three tiers decide what fires."""
+def three_tier_routing() -> None:
+    """Each tier uses a different operation to show the routing is universal."""
+    # -----------------------------------------------------------------
+    # Tier 3 (auto-approve): tool_result with NO hook registered
+    # -----------------------------------------------------------------
     print("=" * 60)
-    print("PART 1 — Registration and Three-Tier Routing")
+    print("TIER 3 -- Auto-Approve (no hook): tool_result")
     print("=" * 60)
-
-    # Helper: create orphaned commits by branching then deleting
-    def _make_orphans(t: Tract, branch_name="temp", count=3):
-        """Branch, add commits, delete branch -> orphaned commits."""
-        t.branch(branch_name)
-        for i in range(count):
-            t.user(f"Throwaway experiment {branch_name}: question {i}")
-            t.assistant(f"Response to {branch_name} experiment {i}")
-        t.switch("main")
-        t.delete_branch(branch_name, force=True)
+    print()
+    print("  No hook registered for tool_result.")
+    print("  The operation commits directly and hook_log records 'auto-approved'.")
 
     with Tract.open(
         api_key=TRACT_OPENAI_API_KEY,
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        t.system("You are a DevOps assistant helping engineers with CI/CD pipelines and infrastructure.")
-        t.chat("How do I set up GitHub Actions for a Python project with pytest and linting?")
+        sys_ci = t.system("You are a code assistant with access to development tools.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        # --- Tier 3 (default): No hook registered -> auto-approve ----------
-        print("\n  Tier 3 (no hook): gc() auto-approves silently")
-        _make_orphans(t, "tier3-temp")
-        result = t.gc(orphan_retention_days=0)
-        print(f"    gc returned: {type(result).__name__}")
+        t.assistant("I'll search the codebase for that pattern.", metadata={
+            "tool_calls": [{"id": "call_001", "name": "grep", "arguments": {"pattern": "TODO"}}],
+        })
+
+        # No t.on("tool_result", ...) -- tier 3 fires
+        result: CommitInfo = t.tool_result(
+            "call_001", "grep",
+            "src/main.py:42: # TODO refactor this\nsrc/utils.py:15: # TODO add tests",
+        )
+        print(f"\n  tool_result returned: {type(result).__name__}")
 
         # hook_log captures the auto-approve even with no handler
-        last_event = t.hook_log[-1]
-        print(f"    hook_log: {last_event.handler_name} -> {last_event.result}")
+        last_event: HookEvent = t.hook_log[-1]
+        print(f"  hook_log: handler={last_event.handler_name}, result={last_event.result}")
+        print(f"  (No hook was called -- the system auto-approved silently.)")
 
-        # --- Tier 2: Registered hook fires ---------------------------------
-        print("\n  Tier 2 (hook registered): gc() fires the handler")
-
-        def my_gc_hook(pending: PendingGC):
-            """Handler that inspects the pending and approves it."""
-            pending.pprint()
-            pending.approve()
-
-        t.on("gc", my_gc_hook, name="my_gc_hook")
         t.print_hooks()
 
-        _make_orphans(t, "tier2-temp")
-        t.gc(orphan_retention_days=0)
+    # -----------------------------------------------------------------
+    # Tier 2 (registered hook): compress with a handler
+    # -----------------------------------------------------------------
+    print()
+    print("=" * 60)
+    print("TIER 2 -- Registered Hook: compress")
+    print("=" * 60)
+    print()
+    print("  A compress hook inspects the PendingCompress and approves.")
+    print("  This is the bread-and-butter: register once, it fires every time.")
+
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    ) as t:
+        # Seed a conversation worth compressing
+        sys_ci = t.system("You are a DevOps assistant helping engineers with CI/CD pipelines and infrastructure.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
+
+        t.chat("How do I set up GitHub Actions for a Python project with pytest and linting?")
+        t.chat("What about adding Docker build and push steps to the pipeline?")
+        t.chat("How should I handle secrets and environment variables in CI?")
+        t.chat("What's the best strategy for running tests in parallel?")
+
+        ctx_before: CompiledContext = t.compile()
+        print(f"\n  Before compress: {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
+
+        # Register a compress hook that inspects and approves
+        def review_compress(pending: PendingCompress) -> None:
+            """Inspect summaries, show token savings, approve."""
+            print(f"\n  [hook] PendingCompress received:")
+            pending.pprint(verbose=True)
+
+            ratio = pending.estimated_tokens / max(pending.original_tokens, 1)
+            print(f"  [hook] Token ratio: {ratio:.2f} ({int((1 - ratio) * 100)}% reduction)")
+            print(f"  [hook] Approving compression.")
+            pending.approve()
+
+        t.on("compress", review_compress, name="review_compress")
+        t.print_hooks()
+
+        # Trigger compress -- the hook fires (tier 2)
+        result: CompressResult = t.compress(target_tokens=200)
+        assert isinstance(result, CompressResult), f"Expected CompressResult, got {type(result).__name__}"
+        print(f"\n  compress returned: {type(result).__name__}")
+        print(f"  compression_ratio: {result.compression_ratio:.1%}")
 
         # hook_log shows the handler that fired
-        last_event = t.hook_log[-1]
-        print(f"    hook_log: {last_event.handler_name} -> {last_event.result}")
+        last_event: HookEvent = t.hook_log[-1]
+        print(f"  hook_log: handler={last_event.handler_name}, result={last_event.result}")
 
-        # --- Tier 1: review=True bypasses hooks entirely -------------------
-        print("\n  Tier 1 (review=True): returns pending to caller")
+        ctx_after: CompiledContext = t.compile()
+        print(f"  After compress: {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
 
-        _make_orphans(t, "tier1-temp")
-        pending = t.gc(orphan_retention_days=0, review=True)
-        print(f"    gc(review=True) returned PendingGC (hook NOT called)")
+    # -----------------------------------------------------------------
+    # Tier 1 (review=True): tool_result with manual control
+    # -----------------------------------------------------------------
+    print()
+    print("=" * 60)
+    print("TIER 1 -- review=True: tool_result (manual control)")
+    print("=" * 60)
+    print()
+    print("  review=True returns PendingToolResult to the caller.")
+    print("  Even if a hook is registered, review=True bypasses it.")
+
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    ) as t:
+        sys_ci = t.system("You are a code assistant with access to development tools.")
+        t.annotate(sys_ci.commit_hash, Priority.PINNED)
+
+        t.assistant("I'll search the codebase for that pattern.", metadata={
+            "tool_calls": [{"id": "call_002", "name": "grep", "arguments": {"pattern": "TODO"}}],
+        })
+
+        # Even register a hook -- review=True should bypass it
+        hook_fired: list[bool] = []
+
+        def should_not_fire(pending: PendingToolResult) -> None:
+            hook_fired.append(True)
+            pending.approve()
+
+        t.on("tool_result", should_not_fire, name="should_not_fire")
+
+        # review=True -- tier 1, returns PendingToolResult
+        pending: PendingToolResult = t.tool_result(
+            "call_002", "grep",
+            "src/main.py:42: # TODO refactor this\nsrc/utils.py:15: # TODO add tests",
+            review=True,
+        )
+        print(f"\n  tool_result(review=True) returned: {type(pending).__name__}")
         pending.pprint()
 
-        # Approve manually
-        pending.approve()
-        print(f"    After approve(): status={pending.status}")
+        # The registered hook was NOT called
+        print(f"  Hook fired? {bool(hook_fired)} (should be False)")
+        assert not hook_fired, "review=True should bypass registered hooks"
 
-        # --- t.off() removes the hook --------------------------------------
-        print("\n  t.off('gc') removes the handler:")
-        t.off("gc")
+        # Approve manually
+        result: CommitInfo = pending.approve()
+        print(f"\n  After approve(): status={pending.status}")
+        print(f"  Committed: {type(result).__name__}")
+
         t.print_hooks()
 
 
 if __name__ == "__main__":
-    registration_and_routing()
+    three_tier_routing()
