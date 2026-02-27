@@ -7,6 +7,7 @@ Subclasses add operation-specific fields and methods.
 
 from __future__ import annotations
 
+import io
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -292,7 +293,7 @@ class Pending:
         status = self.status.value if hasattr(self.status, 'value') else str(self.status)
         return f"<{type(self).__name__}: {self.operation}, {status}, id={self.pending_id[:8]}>"
 
-    def pprint(self, *, verbose: bool = False) -> None:
+    def pprint(self, *, verbose: bool = False, compact: bool = False) -> None:
         """Pretty-print this Pending using Rich.
 
         Shows operation type, status, pending_id, all public fields
@@ -300,15 +301,25 @@ class Pending:
 
         Args:
             verbose: If True, show additional details via _pprint_details().
+            compact: If True, show a single colored line (useful for listing).
         """
         import dataclasses
+        import sys
 
         from rich.console import Console
         from rich.table import Table
 
-        console = Console()
+        # Force UTF-8 output so LLM-generated Unicode (e.g. non-breaking
+        # hyphens) doesn't crash on Windows cp1252 consoles.
+        # closefd=False prevents closing stdout when the wrapper is GC'd.
+        # Fall back to default Console when fileno() is unavailable (pytest).
+        try:
+            out = open(sys.stdout.fileno(), "w", encoding="utf-8", errors="replace", closefd=False)
+            console = Console(file=out)
+        except (io.UnsupportedOperation, OSError):
+            console = Console()
 
-        # Header
+        # Status color mapping (shared by compact and full modes)
         status_color = {
             PendingStatus.PENDING: "yellow",
             PendingStatus.APPROVED: "green",
@@ -316,18 +327,39 @@ class Pending:
             PendingStatus.PASSED_THROUGH: "cyan",
         }.get(self.status, "white")
 
+        # -- Compact: single colored line -----------------------------------
+        if compact:
+            detail = self._compact_detail()
+            parts = [
+                f"[bold]{type(self).__name__}[/bold]",
+                f"[bright_cyan]{self.pending_id[:8]}[/bright_cyan]",
+                f"[bold]{self.operation}[/bold]",
+                f"[{status_color}]{self.status}[/{status_color}]",
+            ]
+            if detail:
+                parts.append(detail)
+            console.print("  ".join(parts))
+            return
+
+        # -- Full mode ------------------------------------------------------
+
+        # Header
         console.print(
-            f"[bold]{type(self).__name__}[/bold] "
-            f"[dim]id={self.pending_id}[/dim]"
+            f"[bold]{type(self).__name__}[/bold]  "
+            f"id=[bright_cyan]{self.pending_id}[/bright_cyan]"
         )
         console.print(
             f"  operation: [bold]{self.operation}[/bold]  "
             f"status: [{status_color}]{self.status}[/{status_color}]"
         )
         if self.triggered_by:
-            console.print(f"  triggered_by: {self.triggered_by}")
+            console.print(f"  triggered_by: [italic bright_magenta]{self.triggered_by}[/italic bright_magenta]")
         if self.rejection_reason:
             console.print(f"  rejection_reason: [red]{self.rejection_reason}[/red]")
+
+        # Created timestamp
+        if self.created_at:
+            self._print_created_at(console)
 
         # Fields table
         skip_fields = {
@@ -348,12 +380,42 @@ class Pending:
 
         console.print(table)
 
+        # Result summary (if approved)
+        if self.status == PendingStatus.APPROVED and self._result is not None:
+            result_str = repr(self._result)
+            if len(result_str) > 120:
+                result_str = result_str[:117] + "..."
+            console.print(f"  [bold]Result:[/bold] {result_str}")
+
         # Available actions
         actions = sorted(self._public_actions)
         console.print(f"  [bold]Available actions:[/bold] {', '.join(actions)}")
 
         # Subclass-specific details
         self._pprint_details(console, verbose=verbose)
+
+    def _compact_detail(self) -> str:
+        """Return a short detail string for compact pprint mode.
+
+        Subclasses override this to provide operation-specific summaries.
+        Returns empty string by default.
+        """
+        return ""
+
+    def _print_created_at(self, console) -> None:
+        """Print the created_at timestamp with relative time."""
+        now = datetime.now(timezone.utc)
+        delta = now - self.created_at
+        seconds = int(delta.total_seconds())
+        if seconds < 60:
+            rel = f"{seconds}s ago"
+        elif seconds < 3600:
+            rel = f"{seconds // 60}m ago"
+        elif seconds < 86400:
+            rel = f"{seconds // 3600}h ago"
+        else:
+            rel = self.created_at.strftime("%Y-%m-%d %H:%M UTC")
+        console.print(f"  created: [dim]{rel}[/dim]")
 
     def _pprint_details(self, console, *, verbose: bool = False) -> None:
         """Hook for subclasses to add operation-specific display details.

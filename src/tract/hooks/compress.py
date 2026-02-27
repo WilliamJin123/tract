@@ -280,6 +280,12 @@ class PendingCompress(GuidanceMixin, Pending):
             pct = f", {int((1 - self.estimated_tokens / self.original_tokens) * 100)}% reduction"
         return f"<PendingCompress: {len(self.summaries)} summaries, {self.original_tokens}->{self.estimated_tokens} tokens{pct}, {status}>"
 
+    def _compact_detail(self) -> str:
+        pct = ""
+        if self.original_tokens > 0:
+            pct = f" ({int((1 - self.estimated_tokens / self.original_tokens) * 100)}%)"
+        return f"{self.original_tokens}->{self.estimated_tokens} tokens{pct}"
+
     def _pprint_details(self, console, *, verbose: bool = False) -> None:
         """Show compression-specific details: token ratio, summaries, guidance."""
         from rich.panel import Panel

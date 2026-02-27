@@ -49,6 +49,25 @@ class PendingToolResult(Pending):
         status = self.status.value if hasattr(self.status, 'value') else str(self.status)
         return f"<PendingToolResult: {self.tool_name}, {self.token_count} tokens, {status}>"
 
+    def _compact_detail(self) -> str:
+        error_tag = " [error]" if self.is_error else ""
+        return f"{self.tool_name} ({self.token_count} tokens{error_tag})"
+
+    def _pprint_details(self, console, *, verbose: bool = False) -> None:
+        """Show tool result details: tool name, tokens, content preview."""
+        error_str = " [red](error)[/red]" if self.is_error else ""
+        console.print(
+            f"  Tool: [bold]{self.tool_name}[/bold]  "
+            f"{self.token_count} tokens{error_str}"
+        )
+        if self.original_content is not None:
+            console.print("  [dim](content has been edited)[/dim]")
+        if verbose and self.content:
+            preview = self.content[:120]
+            if len(self.content) > 120:
+                preview += "..."
+            console.print(f"  [bold]Content preview:[/bold]\n    {preview}")
+
     def __post_init__(self) -> None:
         if not self.operation:
             self.operation = "tool_result"

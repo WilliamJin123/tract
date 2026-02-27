@@ -104,3 +104,19 @@ class PendingPolicy(Pending):
     def __repr__(self):
         status = self.status.value if hasattr(self.status, 'value') else str(self.status)
         return f"<PendingPolicy: {self.policy_name}, {self.action_type}, {status}>"
+
+    def _compact_detail(self) -> str:
+        return f"{self.policy_name} -> {self.action_type}"
+
+    def _pprint_details(self, console, *, verbose: bool = False) -> None:
+        """Show policy-specific details: policy name, action, reason, params."""
+        console.print(
+            f"  Policy: [bold]{self.policy_name}[/bold] -> "
+            f"[bold]{self.action_type}[/bold]"
+        )
+        if self.reason:
+            console.print(f"  Reason: {self.reason}")
+        if verbose and self.action_params:
+            console.print("  [bold]Action params:[/bold]")
+            for k, v in self.action_params.items():
+                console.print(f"    {k}: {v!r}")

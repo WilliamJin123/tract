@@ -36,7 +36,7 @@ def _make_tract() -> Tract:
     return t
 
 
-def _capture_pprint(pending, *, verbose: bool = False) -> str:
+def _capture_pprint(pending, *, verbose: bool = False, compact: bool = False) -> str:
     """Capture pprint output by monkeypatching Console creation.
 
     Since pprint() creates its own Console, we monkeypatch the Rich Console
@@ -63,7 +63,7 @@ def _capture_pprint(pending, *, verbose: bool = False) -> str:
         original_rc = rich.console.Console
         rich.console.Console = CapturingConsole  # type: ignore[misc]
         try:
-            pending.pprint(verbose=verbose)
+            pending.pprint(verbose=verbose, compact=compact)
         finally:
             rich.console.Console = original_rc
     finally:
@@ -420,4 +420,328 @@ class TestMergePprintDetails:
         output = _capture_pprint(p)
         assert "Guidance" in output
         assert "Prefer the incoming version" in output
+        t.close()
+
+
+# ===========================================================================
+# 5. Compact mode
+# ===========================================================================
+
+
+class TestPprintCompact:
+    """Verify pprint(compact=True) produces single-line output."""
+
+    def test_pending_compact(self):
+        t = _make_tract()
+        p = Pending(operation="test_op", tract=t)
+        output = _capture_pprint(p, compact=True)
+        assert "Pending" in output
+        assert p.pending_id[:8] in output
+        assert "test_op" in output
+        assert "pending" in output
+        # Compact should NOT contain a Fields table
+        assert "Fields" not in output
+        t.close()
+
+    def test_compress_compact_shows_tokens(self):
+        t = _make_tract()
+        p = PendingCompress(
+            operation="compress", tract=t,
+            summaries=["s"], original_tokens=1000, estimated_tokens=300,
+        )
+        output = _capture_pprint(p, compact=True)
+        assert "1000->300" in output
+        assert "70%" in output
+        t.close()
+
+    def test_merge_compact_shows_branches(self):
+        t = _make_tract()
+        p = PendingMerge(
+            operation="merge", tract=t,
+            source_branch="feat", target_branch="main",
+            conflicts=["c1", "c2"], resolutions={"c1": "r"},
+        )
+        output = _capture_pprint(p, compact=True)
+        assert "feat->main" in output
+        assert "1/2 resolved" in output
+        t.close()
+
+    def test_gc_compact_shows_count(self):
+        t = _make_tract()
+        p = PendingGC(
+            operation="gc", tract=t,
+            commits_to_remove=["a", "b"], tokens_to_free=500,
+        )
+        output = _capture_pprint(p, compact=True)
+        assert "2 commits" in output
+        assert "500 tokens" in output
+        t.close()
+
+    def test_rebase_compact_shows_target(self):
+        t = _make_tract()
+        p = PendingRebase(
+            operation="rebase", tract=t,
+            replay_plan=["a", "b", "c"], target_base="deadbeef12345678",
+        )
+        output = _capture_pprint(p, compact=True)
+        assert "3 commits onto deadbeef" in output
+        t.close()
+
+    def test_policy_compact_shows_action(self):
+        t = _make_tract()
+        p = PendingPolicy(
+            operation="policy", tract=t,
+            policy_name="auto_pin", action_type="pin",
+        )
+        output = _capture_pprint(p, compact=True)
+        assert "auto_pin -> pin" in output
+        t.close()
+
+    def test_tool_result_compact_shows_tool(self):
+        t = _make_tract()
+        p = PendingToolResult(
+            operation="tool_result", tract=t,
+            tool_name="web_search", token_count=250,
+        )
+        output = _capture_pprint(p, compact=True)
+        assert "web_search" in output
+        assert "250 tokens" in output
+        t.close()
+
+
+# ===========================================================================
+# 6. Header display: id, created_at, triggered_by, result
+# ===========================================================================
+
+
+class TestPprintHeader:
+    """Verify the improved header display in pprint()."""
+
+    def test_id_shown_without_dim_wrapper(self):
+        """The id value should appear in the output, not swallowed by [dim]."""
+        t = _make_tract()
+        p = Pending(operation="test_op", tract=t)
+        output = _capture_pprint(p)
+        # With no_color=True, Rich strips markup. The id should be present.
+        assert f"id={p.pending_id}" in output
+        t.close()
+
+    def test_created_at_shown(self):
+        t = _make_tract()
+        p = Pending(operation="test_op", tract=t)
+        output = _capture_pprint(p)
+        assert "created:" in output
+        # Should contain relative time (e.g. "0s ago" or "1s ago")
+        assert "ago" in output
+        t.close()
+
+    def test_triggered_by_shown(self):
+        t = _make_tract()
+        p = Pending(operation="test_op", tract=t, triggered_by="policy:auto_compress")
+        output = _capture_pprint(p)
+        assert "triggered_by:" in output
+        assert "policy:auto_compress" in output
+        t.close()
+
+    def test_rejection_reason_shown(self):
+        t = _make_tract()
+        p = Pending(operation="test_op", tract=t)
+        p.status = "rejected"
+        p.rejection_reason = "Quality too low"
+        output = _capture_pprint(p)
+        assert "rejection_reason:" in output
+        assert "Quality too low" in output
+        t.close()
+
+    def test_approved_result_shown(self):
+        t = _make_tract()
+        p = Pending(operation="test_op", tract=t)
+        p.status = "approved"
+        p._result = {"commit_hash": "abc123", "tokens_saved": 500}
+        output = _capture_pprint(p)
+        assert "Result:" in output
+        assert "abc123" in output
+        t.close()
+
+    def test_no_result_when_pending(self):
+        t = _make_tract()
+        p = Pending(operation="test_op", tract=t)
+        output = _capture_pprint(p)
+        assert "Result:" not in output
+        t.close()
+
+
+# ===========================================================================
+# 7. GC pprint details
+# ===========================================================================
+
+
+class TestGCPprintDetails:
+    """Verify PendingGC._pprint_details() shows targets and commits."""
+
+    def test_gc_targets_shown(self):
+        t = _make_tract()
+        p = PendingGC(
+            operation="gc", tract=t,
+            commits_to_remove=["abc123def", "789012ghi"],
+            tokens_to_free=1200,
+        )
+        output = _capture_pprint(p)
+        assert "2" in output
+        assert "1200" in output
+        assert "GC targets" in output
+        t.close()
+
+    def test_gc_verbose_shows_commits(self):
+        t = _make_tract()
+        p = PendingGC(
+            operation="gc", tract=t,
+            commits_to_remove=["abcdef1234567890", "1234567890abcdef"],
+            tokens_to_free=800,
+        )
+        output = _capture_pprint(p, verbose=True)
+        assert "Commits to remove" in output
+        assert "abcdef12" in output
+        assert "12345678" in output
+        t.close()
+
+
+# ===========================================================================
+# 8. Rebase pprint details
+# ===========================================================================
+
+
+class TestRebasePprintDetails:
+    """Verify PendingRebase._pprint_details() shows replay plan and warnings."""
+
+    def test_rebase_target_shown(self):
+        t = _make_tract()
+        p = PendingRebase(
+            operation="rebase", tract=t,
+            replay_plan=["a", "b"],
+            target_base="deadbeef12345678",
+        )
+        output = _capture_pprint(p)
+        assert "Rebase" in output
+        assert "2" in output
+        assert "deadbeef" in output
+        t.close()
+
+    def test_rebase_warnings_shown(self):
+        t = _make_tract()
+        p = PendingRebase(
+            operation="rebase", tract=t,
+            replay_plan=["a"],
+            target_base="deadbeef",
+            warnings=["Diverged branch detected"],
+        )
+        output = _capture_pprint(p)
+        assert "Warnings" in output
+        assert "Diverged branch detected" in output
+        t.close()
+
+    def test_rebase_verbose_shows_plan(self):
+        t = _make_tract()
+        p = PendingRebase(
+            operation="rebase", tract=t,
+            replay_plan=["abcdef1234567890", "1234567890abcdef"],
+            target_base="deadbeef",
+        )
+        output = _capture_pprint(p, verbose=True)
+        assert "Replay plan" in output
+        assert "abcdef12" in output
+        t.close()
+
+
+# ===========================================================================
+# 9. Policy pprint details
+# ===========================================================================
+
+
+class TestPolicyPprintDetails:
+    """Verify PendingPolicy._pprint_details() shows policy info."""
+
+    def test_policy_info_shown(self):
+        t = _make_tract()
+        p = PendingPolicy(
+            operation="policy", tract=t,
+            policy_name="auto_compress",
+            action_type="compress",
+            reason="Token count exceeds threshold",
+        )
+        output = _capture_pprint(p)
+        assert "Policy" in output
+        assert "auto_compress" in output
+        assert "compress" in output
+        assert "Token count exceeds threshold" in output
+        t.close()
+
+    def test_policy_verbose_shows_params(self):
+        t = _make_tract()
+        p = PendingPolicy(
+            operation="policy", tract=t,
+            policy_name="auto_branch",
+            action_type="branch",
+            action_params={"branch_name": "overflow-1", "max_tokens": 4000},
+        )
+        output = _capture_pprint(p, verbose=True)
+        assert "Action params" in output
+        assert "branch_name" in output
+        assert "overflow-1" in output
+        t.close()
+
+
+# ===========================================================================
+# 10. ToolResult pprint details
+# ===========================================================================
+
+
+class TestToolResultPprintDetails:
+    """Verify PendingToolResult._pprint_details() shows tool info."""
+
+    def test_tool_info_shown(self):
+        t = _make_tract()
+        p = PendingToolResult(
+            operation="tool_result", tract=t,
+            tool_name="web_search", token_count=350,
+        )
+        output = _capture_pprint(p)
+        assert "Tool" in output
+        assert "web_search" in output
+        assert "350" in output
+        t.close()
+
+    def test_error_flag_shown(self):
+        t = _make_tract()
+        p = PendingToolResult(
+            operation="tool_result", tract=t,
+            tool_name="api_call", token_count=50,
+            is_error=True,
+        )
+        output = _capture_pprint(p)
+        assert "error" in output.lower()
+        t.close()
+
+    def test_edited_content_noted(self):
+        t = _make_tract()
+        p = PendingToolResult(
+            operation="tool_result", tract=t,
+            tool_name="search", token_count=100,
+            content="edited content",
+            original_content="original content",
+        )
+        output = _capture_pprint(p)
+        assert "edited" in output.lower()
+        t.close()
+
+    def test_verbose_shows_content_preview(self):
+        t = _make_tract()
+        p = PendingToolResult(
+            operation="tool_result", tract=t,
+            tool_name="search", token_count=100,
+            content="This is the full content of the search result that will be shown in verbose mode.",
+        )
+        output = _capture_pprint(p, verbose=True)
+        assert "Content preview" in output
+        assert "search result" in output
         t.close()

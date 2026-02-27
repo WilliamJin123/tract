@@ -109,3 +109,17 @@ class PendingGC(Pending):
     def __repr__(self):
         status = self.status.value if hasattr(self.status, 'value') else str(self.status)
         return f"<PendingGC: {len(self.commits_to_remove)} commits, ~{self.tokens_to_free} tokens, {status}>"
+
+    def _compact_detail(self) -> str:
+        return f"{len(self.commits_to_remove)} commits, ~{self.tokens_to_free} tokens"
+
+    def _pprint_details(self, console, *, verbose: bool = False) -> None:
+        """Show GC-specific details: commit count, token estimate, commit list."""
+        console.print(
+            f"  GC targets: [bold]{len(self.commits_to_remove)}[/bold] commits, "
+            f"~[bold]{self.tokens_to_free}[/bold] tokens to free"
+        )
+        if verbose and self.commits_to_remove:
+            console.print("  [bold]Commits to remove:[/bold]")
+            for h in self.commits_to_remove:
+                console.print(f"    [bright_cyan]{h[:8]}[/bright_cyan]  {h}")

@@ -332,6 +332,9 @@ class PendingMerge(GuidanceMixin, Pending):
         status = self.status.value if hasattr(self.status, 'value') else str(self.status)
         return f"<PendingMerge: {self.source_branch}->{self.target_branch}, {len(self.resolutions)}/{len(self.conflicts)} resolved, {status}>"
 
+    def _compact_detail(self) -> str:
+        return f"{self.source_branch}->{self.target_branch} ({len(self.resolutions)}/{len(self.conflicts)} resolved)"
+
     def _pprint_details(self, console, *, verbose: bool = False) -> None:
         """Show merge-specific details: branch info, conflicts, guidance."""
         from rich.panel import Panel
