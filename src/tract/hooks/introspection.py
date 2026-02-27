@@ -168,9 +168,11 @@ def method_to_tool_schema(method: Any, name: str) -> dict:
 
         prop = _python_type_to_json_schema(annotation)
 
-        # Add description from docstring
+        # Add description from docstring (truncated for token efficiency)
         param_desc = _extract_param_description(docstring, param_name)
         if param_desc:
+            if len(param_desc) > 80:
+                param_desc = param_desc[:77] + "..."
             prop["description"] = param_desc
 
         properties[param_name] = prop
@@ -196,11 +198,28 @@ def method_to_tool_schema(method: Any, name: str) -> dict:
     }
 
 
+def _truncate_for_llm(value: Any) -> Any:
+    """Truncate large values for LLM consumption in to_dict().
+
+    Keeps payloads bounded so agent context windows aren't blown by
+    large summaries, commit lists, or tool output content.
+    """
+    if isinstance(value, str) and len(value) > 500:
+        return value[:500] + "..."
+    if isinstance(value, list) and len(value) > 5:
+        return {"_truncated": True, "_total": len(value), "items": value[:3]}
+    if isinstance(value, dict) and len(value) > 10:
+        keys = list(value.keys())[:5]
+        return {"_truncated": True, "_total": len(value), "items": {k: value[k] for k in keys}}
+    return value
+
+
 def pending_to_dict(pending: Any) -> dict:
     """Serialize a Pending to a structured dict for LLM consumption.
 
     Extracts all public fields (not starting with _), the operation name,
-    pending_id, status, and available actions.
+    pending_id, status, and available actions. Large values are truncated
+    to keep the payload bounded for agent context windows.
 
     Args:
         pending: A Pending instance (or subclass).
@@ -232,8 +251,8 @@ def pending_to_dict(pending: Any) -> dict:
         if f.name in skip_fields:
             continue
         value = getattr(pending, f.name)
-        # Convert non-serializable types to strings
-        fields[f.name] = _serialize_value(value)
+        # Truncate large values, then convert to JSON-serializable form
+        fields[f.name] = _serialize_value(_truncate_for_llm(value))
 
     return {
         "operation": pending.operation,
@@ -301,16 +320,13 @@ def pending_describe_api(pending: Any) -> str:
     class_name = type(pending).__name__
 
     lines.append(f"## {class_name} API")
-    lines.append("")
 
-    # Class docstring
+    # Class docstring (first line only)
     class_doc = inspect.getdoc(type(pending))
     if class_doc:
-        first_line = class_doc.split("\n")[0].strip()
-        lines.append(first_line)
-        lines.append("")
+        lines.append(class_doc.split("\n")[0].strip())
 
-    # Fields
+    # Fields (type only — values are in to_dict())
     lines.append("### Fields")
     skip_fields = {"operation", "pending_id", "status", "tract", "triggered_by", "rejection_reason", "created_at"}
     for f in dataclasses.fields(pending):
@@ -318,12 +334,10 @@ def pending_describe_api(pending: Any) -> str:
             continue
         if f.name in skip_fields:
             continue
-        value = getattr(pending, f.name)
         type_name = _format_type_name(f.type) if isinstance(f.type, type) else str(f.type)
-        lines.append(f"- **{f.name}**: {type_name} = {_format_field_value(value)}")
-    lines.append("")
+        lines.append(f"- {f.name}: {type_name}")
 
-    # Actions
+    # Actions (signature + one-line doc, no return types)
     lines.append("### Actions")
     for action_name in sorted(pending._public_actions):
         method = getattr(pending, action_name, None)
@@ -331,7 +345,6 @@ def pending_describe_api(pending: Any) -> str:
             continue
 
         sig = inspect.signature(method)
-        # Build a simplified signature string (skip self)
         params = []
         for pname, param in sig.parameters.items():
             if pname == "self":
@@ -350,21 +363,11 @@ def pending_describe_api(pending: Any) -> str:
 
         params_str = ", ".join(params)
 
-        # Return type
-        return_annotation = sig.return_annotation
-        if return_annotation is not inspect.Signature.empty:
-            return_str = f" -> {_format_type_name(return_annotation)}"
-        else:
-            return_str = ""
-
-        # Docstring first line
         doc = inspect.getdoc(method) or ""
         doc_line = doc.split("\n")[0].strip() if doc else ""
         desc = f" -- {doc_line}" if doc_line else ""
 
-        lines.append(f"- **{action_name}**({params_str}){return_str}{desc}")
-
-    lines.append("")
+        lines.append(f"- {action_name}({params_str}){desc}")
     return "\n".join(lines)
 
 

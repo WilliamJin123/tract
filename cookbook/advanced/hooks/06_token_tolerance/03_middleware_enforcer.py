@@ -25,10 +25,10 @@ def _seed_conversation(t: Tract) -> None:
     sys_ci = t.system("You are a senior Python code reviewer focusing on correctness and performance.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-    t.chat("Review this function:\ndef calculate_discount(price, tier):\n    if tier == 'gold': return price * 0.8\n    if tier == 'silver': return price * 0.9\n    return price")
-    t.chat("What about edge cases — can price be negative? What if tier is None?")
-    t.chat("Should I add type hints and input validation? Here's what I'm thinking.")
-    t.chat("Here's the updated version with your suggestions. Any final thoughts?")
+    t.chat("Review this function:\ndef calculate_discount(price, tier):\n    if tier == 'gold': return price * 0.8\n    if tier == 'silver': return price * 0.9\n    return price", max_tokens=500)
+    t.chat("What about edge cases — can price be negative? What if tier is None?", max_tokens=500)
+    t.chat("Should I add type hints and input validation? Here's what I'm thinking.", max_tokens=500)
+    t.chat("Here's the updated version with your suggestions. Any final thoughts?", max_tokens=500)
 
 
 def middleware_and_enforcer() -> None:

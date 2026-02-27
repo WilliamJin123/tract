@@ -31,7 +31,7 @@ def rebase_hooks() -> None:
         model=MODEL_ID,
     ) as t:
         t.system("You are a fitness coach helping design personalized workout plans.")
-        t.chat("I want to start strength training three days a week. What's a good beginner split?")
+        t.chat("I want to start strength training three days a week. What's a good beginner split?", max_tokens=500)
 
         # Create a feature branch with several commits
         t.branch("feature")
@@ -86,7 +86,7 @@ def rebase_hooks() -> None:
         model=MODEL_ID,
     ) as t:
         t.system("You are a fitness coach helping design personalized workout plans.")
-        t.chat("I want to start strength training three days a week. What's a good beginner split?")
+        t.chat("I want to start strength training three days a week. What's a good beginner split?", max_tokens=500)
 
         t.branch("experiment")
         t.user("What about training for a 5K while strength training?")

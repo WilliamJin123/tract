@@ -47,10 +47,10 @@ def recursion_guard() -> None:
         sys_ci = t.system("You are a DevOps assistant helping engineers with CI/CD pipelines and infrastructure.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-        t.chat("How do I set up GitHub Actions for a Python project with pytest and linting?")
-        t.chat("What about adding Docker build and push steps to the pipeline?")
-        t.chat("How should I handle secrets and environment variables in CI?")
-        t.chat("What's the best strategy for running tests in parallel?")
+        t.chat("How do I set up GitHub Actions for a Python project with pytest and linting?", max_tokens=500)
+        t.chat("What about adding Docker build and push steps to the pipeline?", max_tokens=500)
+        t.chat("How should I handle secrets and environment variables in CI?", max_tokens=500)
+        t.chat("What's the best strategy for running tests in parallel?", max_tokens=500)
 
         # Set up a tool call assistant message so tool_result has context
         t.assistant("Let me check the codebase.", metadata={

@@ -26,10 +26,10 @@ def _seed_conversation(t: Tract) -> None:
     sys_ci = t.system("You are a customer support agent for TechFlow, a project management SaaS platform.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-    t.chat("Hi, I can't export my project reports to PDF. The button just spins and nothing happens.")
-    t.chat("I'm on Chrome, macOS. The project has about 200 tasks with file attachments.")
-    t.chat("Tried Firefox too — same issue. Is there a file size limit for exports?")
-    t.chat("Can you just email me the report directly? My deadline is tomorrow.")
+    t.chat("Hi, I can't export my project reports to PDF. The button just spins and nothing happens.", max_tokens=500)
+    t.chat("I'm on Chrome, macOS. The project has about 200 tasks with file attachments.", max_tokens=500)
+    t.chat("Tried Firefox too — same issue. Is there a file size limit for exports?", max_tokens=500)
+    t.chat("Can you just email me the report directly? My deadline is tomorrow.", max_tokens=500)
 
 
 def two_stage() -> None:

@@ -32,7 +32,7 @@ def gc_hooks() -> None:
     ) as t:
         # Build a main conversation
         t.system("You are a home cooking assistant specializing in quick weeknight meals.")
-        t.chat("What's a good 30-minute pasta recipe for two people?")
+        t.chat("What's a good 30-minute pasta recipe for two people?", max_tokens=500)
 
         # Create a throwaway branch with several commits
         t.branch("throwaway")
@@ -76,7 +76,7 @@ def gc_hooks() -> None:
         model=MODEL_ID,
     ) as t:
         t.system("You are a home cooking assistant specializing in quick weeknight meals.")
-        t.chat("What can I make with chicken, rice, and broccoli?")
+        t.chat("What can I make with chicken, rice, and broccoli?", max_tokens=500)
 
         # Create and delete two branches to make orphans
         for branch_name in ["experiment-a", "experiment-b"]:

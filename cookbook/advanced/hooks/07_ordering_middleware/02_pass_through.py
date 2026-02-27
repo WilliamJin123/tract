@@ -25,10 +25,10 @@ def _seed_conversation(t: Tract) -> None:
     sys_ci = t.system("You are a research assistant helping analyze technology adoption trends.")
     t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
-    t.chat("What are the main factors driving enterprise adoption of LLMs in 2025?")
-    t.chat("How does the cost-benefit analysis compare between fine-tuning and RAG approaches?")
-    t.chat("Can you summarize the key risks companies should consider before deploying?")
-    t.chat("What metrics should we track to measure ROI on LLM investments?")
+    t.chat("What are the main factors driving enterprise adoption of LLMs in 2025?", max_tokens=500)
+    t.chat("How does the cost-benefit analysis compare between fine-tuning and RAG approaches?", max_tokens=500)
+    t.chat("Can you summarize the key risks companies should consider before deploying?", max_tokens=500)
+    t.chat("What metrics should we track to measure ROI on LLM investments?", max_tokens=500)
 
 
 def pass_through_pipeline() -> None:

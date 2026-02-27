@@ -31,7 +31,7 @@ def describe_api_demo() -> None:
         model=MODEL_ID,
     ) as t:
         t.system("You are a technical writing assistant helping with documentation.")
-        t.chat("How should I structure API reference docs for a Python library?")
+        t.chat("How should I structure API reference docs for a Python library?", max_tokens=500)
         t.branch("temp")
         t.user("Temp Q")
         t.assistant("Temp A")

@@ -34,7 +34,7 @@ def dispatch_demo() -> None:
         model=MODEL_ID,
     ) as t:
         t.system("You are a project management assistant helping track sprints and deliverables.")
-        t.chat("We have 5 stories in this sprint. How should we prioritize when two are blocked?")
+        t.chat("We have 5 stories in this sprint. How should we prioritize when two are blocked?", max_tokens=500)
 
         t.branch("work")
         for i in range(3):

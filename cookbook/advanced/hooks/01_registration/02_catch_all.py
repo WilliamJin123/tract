@@ -69,10 +69,10 @@ def catch_all() -> None:
         print("\n--- Step 2: compress ---")
 
         # Seed enough conversation for compress to work with
-        t.chat("How do I set up GitHub Actions for a Python project with pytest and linting?")
-        t.chat("What about adding Docker build and push steps to the pipeline?")
-        t.chat("How should I handle secrets and environment variables in CI?")
-        t.chat("What's the best strategy for running tests in parallel?")
+        t.chat("How do I set up GitHub Actions for a Python project with pytest and linting?", max_tokens=500)
+        t.chat("What about adding Docker build and push steps to the pipeline?", max_tokens=500)
+        t.chat("How should I handle secrets and environment variables in CI?", max_tokens=500)
+        t.chat("What's the best strategy for running tests in parallel?", max_tokens=500)
 
         t.compress(target_tokens=200)
 
@@ -132,8 +132,8 @@ def catch_all() -> None:
 
         # Trigger another compress -- should hit specific handler, NOT "*"
         print("\n--- compress (should hit specific handler) ---")
-        t.chat("How do I configure Dependabot for automatic dependency updates?")
-        t.chat("What about setting up CodeQL for security scanning?")
+        t.chat("How do I configure Dependabot for automatic dependency updates?", max_tokens=500)
+        t.chat("What about setting up CodeQL for security scanning?", max_tokens=500)
         t.compress(target_tokens=200)
 
         # Trigger another gc -- still hits "*"

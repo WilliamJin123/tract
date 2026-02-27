@@ -35,9 +35,9 @@ def to_tools_demo() -> None:
         # Get a PendingCompress to show rich tool schemas
         sys_ci: CommitInfo = t.system("You are a science tutor.")
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
-        t.chat("What is DNA?")
-        t.chat("How does DNA replication work?")
-        t.chat("What are the main enzymes involved?")
+        t.chat("What is DNA?", max_tokens=500)
+        t.chat("How does DNA replication work?", max_tokens=500)
+        t.chat("What are the main enzymes involved?", max_tokens=500)
 
         pending: PendingCompress = t.compress(target_tokens=300, review=True)
 

@@ -35,7 +35,7 @@ def to_dict_demo() -> None:
         # --- PendingGC ---
         # GC removes orphaned commits. Create orphans by branching then deleting.
         t.system("You are a data analysis assistant helping with pandas and visualization.")
-        t.chat("How do I merge two DataFrames on a composite key in pandas?")
+        t.chat("How do I merge two DataFrames on a composite key in pandas?", max_tokens=500)
 
         t.branch("temp")
         for i in range(3):
