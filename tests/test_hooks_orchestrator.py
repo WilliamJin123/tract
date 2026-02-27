@@ -220,7 +220,7 @@ class TestHookHandlerWithTract:
         """auto_approve can be registered with t.on() for any hookable op."""
         tract.on("compress", auto_approve)
         assert "compress" in tract.hooks
-        assert tract.hooks["compress"] is auto_approve
+        assert auto_approve in tract.hooks["compress"]
 
     def test_reject_all_registered_as_hook(self, tract):
         """reject_all can be registered with t.on()."""

@@ -28,6 +28,7 @@ class PendingStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    PASSED_THROUGH = "passed_through"
 
     def __str__(self) -> str:
         return self.value
@@ -96,7 +97,7 @@ class Pending:
     # Subclasses override this with their allowed action names.
     # Frozen by default; use register_action() for dynamic extension.
     _public_actions: frozenset[str] = field(
-        default_factory=lambda: frozenset({"approve", "reject"}), repr=False
+        default_factory=lambda: frozenset({"approve", "reject", "pass_through"}), repr=False
     )
 
     # -- Status guards --------------------------------------------------
@@ -171,6 +172,18 @@ class Pending:
         self._require_pending()
         self.status = PendingStatus.REJECTED
         self.rejection_reason = reason
+
+    def pass_through(self) -> None:
+        """Signal that this handler is done but not making a decision.
+
+        The next handler in the stack will fire. If no more handlers
+        remain, the pending is auto-approved (nobody objected).
+
+        Raises:
+            RuntimeError: If status is not "pending".
+        """
+        self._require_pending()
+        self.status = PendingStatus.PASSED_THROUGH
 
     # -- Agent interface (auto-generated from subclass methods) ----------
 
@@ -300,6 +313,7 @@ class Pending:
             PendingStatus.PENDING: "yellow",
             PendingStatus.APPROVED: "green",
             PendingStatus.REJECTED: "red",
+            PendingStatus.PASSED_THROUGH: "cyan",
         }.get(self.status, "white")
 
         console.print(

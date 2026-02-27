@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import uuid
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, overload
 
 from pydantic import BaseModel
 
+from tract.hooks.event import HookEvent
 from tract.engine.cache import CacheManager
 from tract.engine.commit import CommitEngine
 from tract.engine.compiler import DefaultContextCompiler
@@ -105,6 +106,14 @@ def _fallback_message(content_type: str, text: str) -> str:
     return preview
 
 
+@dataclass
+class _HookEntry:
+    """Internal named wrapper for a registered hook handler."""
+
+    name: str
+    handler: object  # Callable -- use object to avoid TYPE_CHECKING issues
+
+
 class Tract:
     """Primary entry point for Trace -- git-like version control for LLM context.
 
@@ -181,8 +190,9 @@ class Tract:
         self._operation_configs: OperationConfigs = OperationConfigs()
         self._operation_clients: OperationClients = OperationClients()
         self._active_tools: list[dict] | None = None
-        self._hooks: dict[str, Callable] = {}
+        self._hooks: dict[str, list[_HookEntry]] = {}
         self._in_hook: bool = False
+        self._hook_log: list[HookEvent] = []
         self._tool_summarization_config: ToolSummarizationConfig | None = None
         self._commit_reasoning: bool = True
         self._auto_summarize: bool = False
@@ -1204,18 +1214,10 @@ class Tract:
         if review:
             return pending
 
-        has_hook = "tool_result" in self._hooks or "*" in self._hooks
-        if has_hook and not self._in_hook:
-            self._fire_hook(pending)
-            if pending.status == "approved":
-                return pending._result
-            elif pending.status == "rejected":
-                return pending
-            return pending  # Unresolved
-
-        # No hook: auto-commit
-        pending.approve()
-        return pending._result
+        self._fire_hook(pending)
+        if pending.status == "approved":
+            return pending._result
+        return pending  # Rejected or unresolved
 
     def configure_tool_summarization(
         self,
@@ -3401,15 +3403,10 @@ class Tract:
             if review:
                 return pending
 
-            if has_hook and not self._in_hook:
-                self._fire_hook(pending)
-                if pending.status == "approved" and pending._result is not None:
-                    return pending._result
-                return pending
-
-            # No hook: auto-approve if all conflicts resolved
-            if len(result.resolutions) >= len(result.conflicts):
-                return pending.approve()
+            self._fire_hook(pending)
+            if pending.status == "approved" and pending._result is not None:
+                return pending._result
+            return pending
 
         # Conflict without resolutions (no resolver): return as-is
         self._session.commit()
@@ -3674,14 +3671,10 @@ class Tract:
         if review:
             return pending
 
-        has_hook = "rebase" in self._hooks or "*" in self._hooks
-        if has_hook and not self._in_hook:
-            self._fire_hook(pending)
-            if pending.status == "approved" and pending._result is not None:
-                return pending._result
-            return pending
-
-        return pending.approve()
+        self._fire_hook(pending)
+        if pending.status == "approved" and pending._result is not None:
+            return pending._result
+        return pending
 
     def compress(
         self,
@@ -3701,6 +3694,7 @@ class Tract:
         llm_config: LLMConfig | None = None,
         validator: Callable[[str], tuple[bool, str | None]] | None = None,
         max_retries: int = 3,
+        token_tolerance: int | None = None,
         triggered_by: str | None = None,
         two_stage: bool | None = None,
     ) -> CompressResult | PendingCompress:
@@ -3755,6 +3749,10 @@ class Tract:
                 Takes the summary text, returns (ok, diagnosis). When provided,
                 each LLM summarization is wrapped with retry_with_steering.
             max_retries: Maximum retry attempts when validator is set (default 3).
+            token_tolerance: Additive token tolerance for summary validation.
+                When set, summaries up to ``target_tokens + token_tolerance``
+                are accepted. Defaults to 500 when ``None``. Use 0 for strict
+                enforcement (only ``target_tokens`` allowed).
             triggered_by: Optional provenance string (e.g. "policy:auto_compress").
                 Passed to the PendingCompress for policy feedback routing.
             two_stage: When True and LLM is available, generate guidance first
@@ -3834,6 +3832,7 @@ class Tract:
             type_registry=self._custom_type_registry,
             validator=validator,
             max_retries=max_retries,
+            token_tolerance=token_tolerance,
             triggered_by=triggered_by,
             two_stage=two_stage or False,
         )
@@ -3847,16 +3846,11 @@ class Tract:
         if review:
             return pending
 
-        # 2. Hook registered: fire the hook handler
-        has_hook = "compress" in self._hooks or "*" in self._hooks
-        if has_hook and not self._in_hook:
-            self._fire_hook(pending)
-            if pending.status == "approved" and pending._result is not None:
-                return pending._result
-            return pending
-
-        # 3. No hook: auto-execute (call approve directly to get CompressResult)
-        return pending.approve()
+        # 2. Fire hook system (handles stacked handlers, auto-approve, logging)
+        self._fire_hook(pending)
+        if pending.status == "approved" and pending._result is not None:
+            return pending._result
+        return pending
 
     def _finalize_compression(
         self, pending: PendingCompress,
@@ -4197,14 +4191,10 @@ class Tract:
         if review:
             return pending
 
-        has_hook = "gc" in self._hooks or "*" in self._hooks
-        if has_hook and not self._in_hook:
-            self._fire_hook(pending)
-            if pending.status == "approved" and pending._result is not None:
-                return pending._result
-            return pending
-
-        return pending.approve()
+        self._fire_hook(pending)
+        if pending.status == "approved" and pending._result is not None:
+            return pending._result
+        return pending
 
     def record_usage(
         self,
@@ -4778,64 +4768,185 @@ class Tract:
 
     _HOOKABLE_OPS: set[str] = {"compress", "gc", "rebase", "merge", "policy", "tool_result"}
 
-    def on(self, operation: str, handler: Callable) -> None:
+    def on(
+        self,
+        operation: str,
+        handler: Callable,
+        *,
+        name: str | None = None,
+        before: str | bool | None = None,
+        after: str | None = None,
+        at: int | None = None,
+    ) -> None:
         """Register a hook handler for an operation.
 
-        If a handler is already registered for this operation, it will be
-        replaced and a warning will be emitted. Use a wrapper function to
-        compose multiple handlers.
+        Multiple handlers can be stacked for the same operation. They fire
+        in registration order; the first handler that resolves the pending
+        (approve/reject/pass_through) stops iteration.
 
         Args:
             operation: Operation name ("compress", "gc", "rebase", "merge",
                 "policy", "tool_result", or "*" for catch-all).
             handler: Callable that takes a Pending subclass. Handler calls
-                methods on the Pending (approve, reject, edit_summary, etc.).
+                methods on the Pending (approve, reject, pass_through, etc.).
+            name: Display name for the handler. Defaults to
+                ``handler.__name__`` or ``repr(handler)``.
+            before: Insert before a named handler. ``True`` to prepend.
+                ``False`` is ignored (treated as ``None``).
+            after: Insert after a named handler.
+            at: Insert at a specific index (0-based). ``len(list)`` appends.
 
         Raises:
-            ValueError: If operation is not hookable.
+            ValueError: If operation is not hookable, duplicate name,
+                multiple positioning args, or named target not found.
+            IndexError: If ``at`` is out of range.
         """
-        import warnings
-
         if operation != "*" and operation not in self._HOOKABLE_OPS:
             raise ValueError(
                 f"Cannot hook '{operation}': not a hookable operation. "
                 f"Hookable operations: {', '.join(sorted(self._HOOKABLE_OPS))}"
             )
-        if operation in self._hooks:
-            warnings.warn(
-                f"Replacing existing hook handler for '{operation}'. "
-                f"Previous handler will no longer fire.",
-                stacklevel=2,
-            )
-        self._hooks[operation] = handler
 
-    def off(self, operation: str) -> None:
-        """Remove a hook handler for an operation.
+        # Normalize before=False to None
+        if before is False:
+            before = None
+
+        # Validate at most one positioning arg
+        positioning_count = sum(x is not None for x in (before, after, at))
+        if positioning_count > 1:
+            raise ValueError(
+                "Only one of 'before', 'after', or 'at' can be specified."
+            )
+
+        # Resolve name
+        explicit_name = name is not None
+        entry_name = name if explicit_name else getattr(handler, "__name__", repr(handler))
+
+        # Ensure list exists
+        if operation not in self._hooks:
+            self._hooks[operation] = []
+
+        entries = self._hooks[operation]
+        existing_names = {e.name for e in entries}
+
+        # Check name uniqueness -- strict for explicit names, auto-suffix for auto-derived
+        if entry_name in existing_names:
+            if explicit_name:
+                raise ValueError(
+                    f"A handler named {entry_name!r} is already registered for "
+                    f"'{operation}'. Use a unique name or remove the existing handler first."
+                )
+            # Auto-suffix: find the next available index
+            base = entry_name
+            idx = 2
+            while entry_name in existing_names:
+                entry_name = f"{base}_{idx}"
+                idx += 1
+
+        entry = _HookEntry(name=entry_name, handler=handler)
+
+        # Positioning
+        if before is True:
+            entries.insert(0, entry)
+        elif isinstance(before, str):
+            idx = self._find_hook_entry_index(entries, before, "before")
+            entries.insert(idx, entry)
+        elif after is not None:
+            idx = self._find_hook_entry_index(entries, after, "after")
+            entries.insert(idx + 1, entry)
+        elif at is not None:
+            if at < 0 or at > len(entries):
+                raise IndexError(
+                    f"Index {at} is out of range for {len(entries)} handlers "
+                    f"on '{operation}'. Valid range: 0..{len(entries)}."
+                )
+            entries.insert(at, entry)
+        else:
+            entries.append(entry)
+
+    @staticmethod
+    def _find_hook_entry_index(
+        entries: list[_HookEntry], target_name: str, param: str
+    ) -> int:
+        """Find the index of a named hook entry, or raise ValueError."""
+        for i, e in enumerate(entries):
+            if e.name == target_name:
+                return i
+        raise ValueError(
+            f"No handler named {target_name!r} found ({param}= target). "
+            f"Registered names: {[e.name for e in entries]}"
+        )
+
+    def off(self, operation: str, handler: Callable | str | None = None) -> None:
+        """Remove hook handler(s) for an operation.
 
         Args:
             operation: Operation name to remove the handler for.
+            handler: If a Callable, remove by identity.  If a str, remove
+                by name.  If ``None`` (default), remove *all* handlers for
+                the operation.
         """
-        self._hooks.pop(operation, None)
+        if handler is None:
+            self._hooks.pop(operation, None)
+        elif isinstance(handler, str):
+            entries = self._hooks.get(operation, [])
+            self._hooks[operation] = [e for e in entries if e.name != handler]
+            if not self._hooks.get(operation):
+                self._hooks.pop(operation, None)
+        else:
+            entries = self._hooks.get(operation, [])
+            self._hooks[operation] = [e for e in entries if e.handler is not handler]
+            if not self._hooks.get(operation):
+                self._hooks.pop(operation, None)
 
     @property
-    def hooks(self) -> dict[str, Callable]:
+    def hooks(self) -> dict[str, list[Callable]]:
         """Currently registered hook handlers (copy)."""
-        return dict(self._hooks)
+        return {op: [e.handler for e in entries] for op, entries in self._hooks.items()}
+
+    @property
+    def hook_names(self) -> dict[str, list[str]]:
+        """Names of registered hook handlers."""
+        return {op: [e.name for e in entries] for op, entries in self._hooks.items()}
+
+    @property
+    def hook_log(self) -> list[HookEvent]:
+        """Hook activity log (copy)."""
+        return list(self._hook_log)
+
+    def print_hooks(self) -> None:
+        """Print registered hooks and recent activity."""
+        print("=== Registered Hooks ===")
+        if not self._hooks:
+            print("  (none)")
+        for op, entries in sorted(self._hooks.items()):
+            for e in entries:
+                print(f"  {op}: {e.name}")
+        print(f"\n=== Hook Log ({len(self._hook_log)} events) ===")
+        for evt in self._hook_log[-20:]:
+            ts = evt.timestamp.strftime("%H:%M:%S")
+            print(f"  [{ts}] {evt.operation} -> {evt.handler_name}: {evt.result}")
 
     def _fire_hook(self, pending: Pending) -> None:
         """Route a Pending through the hook system.
 
         Three-tier routing:
-        1. Specific hook for this operation
-        2. Catch-all ``"*"`` hook
-        3. Auto-approve (no hook)
+        1. Specific hook(s) for this operation
+        2. Catch-all ``"*"`` hook(s)
+        3. Auto-approve (no hooks)
+
+        Stacked handlers fire in registration order. The first handler that
+        resolves the pending (approve/reject) stops iteration.  Handlers
+        that call ``pass_through()`` are logged and iteration continues;
+        if no handler ultimately approves or rejects, the pending is
+        auto-approved (nobody objected).
 
         Recursion guard: if already inside a hook handler, auto-approve.
         This prevents direct recursion (compress -> hook -> compress) and
         indirect cycles (compress -> hook -> gc -> hook -> compress).
 
-        Unresolved handler guard: if the handler returns without calling
-        approve() or reject(), emit a warning.
+        Unresolved handler guard: if all handlers return without calling
+        approve(), reject(), or pass_through(), emit a warning.
 
         Args:
             pending: A Pending subclass instance.
@@ -4845,21 +4956,50 @@ class Tract:
 
         from tract.hooks.pending import PendingStatus
 
+        now = datetime.now
+
         # Recursion guard
         if self._in_hook:
             pending.approve()
+            self._hook_log.append(
+                HookEvent(now(), pending.operation, "(recursion guard)", True, "skipped")
+            )
             return
 
-        # Find handler: specific > catch-all > auto-approve
-        handler = self._hooks.get(pending.operation) or self._hooks.get("*")
+        # Find handlers: specific > catch-all > auto-approve
+        entries = self._hooks.get(pending.operation) or self._hooks.get("*")
 
-        if handler is None:
+        if not entries:
             pending.approve()
+            self._hook_log.append(
+                HookEvent(now(), pending.operation, "(none)", True, "auto-approved")
+            )
             return
 
         self._in_hook = True
+        last_handler_name = "(unknown)"
         try:
-            handler(pending)
+            for entry in entries:
+                last_handler_name = entry.name
+                entry.handler(pending)
+
+                if pending.status == PendingStatus.APPROVED:
+                    self._hook_log.append(
+                        HookEvent(now(), pending.operation, last_handler_name, True, "approved")
+                    )
+                    break
+                elif pending.status == PendingStatus.REJECTED:
+                    self._hook_log.append(
+                        HookEvent(now(), pending.operation, last_handler_name, True, "rejected")
+                    )
+                    break
+                elif pending.status == PendingStatus.PASSED_THROUGH:
+                    self._hook_log.append(
+                        HookEvent(now(), pending.operation, last_handler_name, True, "passed_through")
+                    )
+                    # Reset to PENDING so the next handler can act
+                    pending.status = PendingStatus.PENDING
+                # else: status is still PENDING (handler did nothing) -- continue
         except Exception:
             logger = logging.getLogger(__name__)
             logger.warning(
@@ -4872,13 +5012,33 @@ class Tract:
         finally:
             self._in_hook = False
 
-        # Unresolved handler guard
+        # Post-loop resolution
         if pending.status == PendingStatus.PENDING:
-            warnings.warn(
-                f"Hook handler for '{pending.operation}' returned without calling "
-                f"approve() or reject(). The pending operation remains unresolved.",
-                stacklevel=2,
-            )
+            # Check if the last handler logged a pass_through (meaning all
+            # handlers either passed through or did nothing).  If the most
+            # recent log entry for this operation is "passed_through", treat
+            # as auto-approve.
+            recent = [
+                e for e in self._hook_log
+                if e.operation == pending.operation
+            ]
+            if recent and recent[-1].result == "passed_through":
+                # All handlers passed through -- auto-approve (nobody objected)
+                pending.status = PendingStatus.APPROVED
+                if pending._execute_fn is not None:
+                    pending._result = pending._execute_fn(pending)
+                self._hook_log.append(
+                    HookEvent(now(), pending.operation, "(auto)", True, "auto-approved")
+                )
+            else:
+                self._hook_log.append(
+                    HookEvent(now(), pending.operation, last_handler_name, False, "unresolved")
+                )
+                warnings.warn(
+                    f"Hook handler for '{pending.operation}' returned without calling "
+                    f"approve() or reject(). The pending operation remains unresolved.",
+                    stacklevel=2,
+                )
 
     def close(self) -> None:
         """Close the session and dispose the engine."""

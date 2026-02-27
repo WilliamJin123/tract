@@ -263,8 +263,8 @@ class TestHookRegistration:
         assert "*" in t.hooks
         t.close()
 
-    def test_second_on_replaces_first(self):
-        """Registering a second hook for the same operation replaces the first."""
+    def test_second_on_stacks(self):
+        """Registering a second hook for the same operation stacks handlers."""
         t = Tract.open(":memory:")
         calls = []
 
@@ -274,17 +274,18 @@ class TestHookRegistration:
         t.on("compress", handler1)
         t.on("compress", handler2)
 
-        # Only one hook should be registered
+        # One key for "compress", but with two handlers
         assert len([k for k in t.hooks if k == "compress"]) == 1
+        assert len(t.hooks["compress"]) == 2
 
-        # The second handler should be the active one
+        # The first handler resolves -> second never fires
         t.system("sys")
         t.user("hello")
         t.assistant("hi")
         t.compress(content="summary")
 
-        assert "handler2" in calls
-        assert "handler1" not in calls
+        assert "handler1" in calls
+        assert "handler2" not in calls
         t.close()
 
     def test_non_hookable_operations_raise_valueerror(self):

@@ -184,8 +184,8 @@ def build_summarize_prompt(
 
     if target_tokens is not None:
         prompt += (
-            f"\nIMPORTANT: Your summary MUST be approximately {target_tokens} tokens. "
-            f"This is a hard limit. Aim for {target_tokens} tokens or fewer."
+            f"\nIMPORTANT: Aim for approximately {target_tokens} tokens. "
+            f"Keep your summary concise and within this target."
         )
 
     if retention_instructions:

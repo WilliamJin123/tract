@@ -1152,7 +1152,8 @@ class TestToolSummarizationConfig:
             t.configure_tool_summarization(
                 instructions={"grep": "filenames only"},
             )
-            # Override with custom handler
+            # Override with custom handler (clear auto-handler first, then add custom)
+            t.off("tool_result")
             def custom(pending):
                 pending.edit_result("custom edited")
                 pending.approve()
@@ -1500,14 +1501,15 @@ class TestTargetTokensEnforcement:
         """When first response exceeds target, retry fires and shorter response is accepted."""
         t, hashes = make_tract_with_commits(3)
 
-        # First response is long (~1000 tokens), second is short
+        # First response is long (~200 tokens), second is short
         long_response = "word " * 200  # ~200 tokens (well over a target of 50)
         short_response = "Short summary."
 
         mock = MockLLMClient(responses=[long_response, short_response])
         t.configure_llm(mock)
 
-        result = t.compress(target_tokens=50)
+        # Use token_tolerance=0 for strict enforcement so 200 tokens exceeds target=50
+        result = t.compress(target_tokens=50, token_tolerance=0)
 
         assert isinstance(result, CompressResult)
         # Retry should have been triggered: 2 calls total
@@ -1540,5 +1542,6 @@ class TestTargetTokensEnforcement:
         mock = MockLLMClient(responses=[long_response])
         t.configure_llm(mock)
 
+        # Use token_tolerance=0 for strict enforcement so 200 tokens exceeds target=50
         with pytest.raises(RetryExhaustedError):
-            t.compress(target_tokens=50, max_retries=2)
+            t.compress(target_tokens=50, token_tolerance=0, max_retries=2)

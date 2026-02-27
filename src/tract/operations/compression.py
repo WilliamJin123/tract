@@ -503,6 +503,7 @@ def compress_range(
     type_registry: dict[str, type] | None = None,
     validator: object | None = None,
     max_retries: int = 3,
+    token_tolerance: int | None = None,
     triggered_by: str | None = None,
     two_stage: bool = False,
 ) -> PendingCompress:
@@ -539,6 +540,9 @@ def compress_range(
         llm_kwargs: Optional per-operation LLM config (model, temperature, etc.).
         generation_config: Optional generation config to record on summary commits.
         type_registry: Optional custom content type registry.
+        token_tolerance: Additive token tolerance for summary validation.
+            When set, summaries up to target_tokens + token_tolerance are
+            accepted. Defaults to 500 when None. Use 0 for strict mode.
         triggered_by: Optional provenance string (e.g. "policy:auto_compress").
 
     Returns:
@@ -660,7 +664,7 @@ def compress_range(
             # Build a combined validator: user-supplied + retention + token count
             def _make_combined_validator(
                 user_validator, retention_criteria,
-                target_tok, tok_counter,
+                target_tok, tok_counter, tok_tolerance,
             ):
                 """Build a validator that checks user + retention + token count."""
                 def _combined(result: str) -> tuple[bool, str | None]:
@@ -676,7 +680,8 @@ def compress_range(
                     # Then check token count if target_tokens is set
                     if target_tok is not None:
                         actual = tok_counter.count_text(result)
-                        limit = int(target_tok * 2.0)
+                        tol = tok_tolerance if tok_tolerance is not None else 500
+                        limit = target_tok + tol
                         if actual > limit:
                             return (
                                 False,
@@ -698,7 +703,7 @@ def compress_range(
 
                 combined_validator = _make_combined_validator(
                     validator, g_retention,
-                    target_tokens, token_counter,
+                    target_tokens, token_counter, token_tolerance,
                 )
 
                 # Mutable instructions for steering

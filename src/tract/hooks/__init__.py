@@ -21,6 +21,7 @@ Public API:
 """
 
 from tract.hooks.compress import PendingCompress
+from tract.hooks.event import HookEvent
 from tract.hooks.gc import PendingGC
 from tract.hooks.guidance import GuidanceMixin
 from tract.hooks.merge import PendingMerge
@@ -40,6 +41,7 @@ __all__ = [
     "PendingMerge",
     "PendingPolicy",
     "PendingToolResult",
+    "HookEvent",
     "GuidanceMixin",
     "ValidationResult",
     "HookRejection",
