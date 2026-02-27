@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from tract.tract import Tract
 
 
-@dataclass
+@dataclass(repr=False)
 class PendingGC(Pending):
     """A garbage collection operation that has been planned but not yet executed.
 
@@ -105,4 +105,7 @@ class PendingGC(Pending):
         self.commits_to_remove.remove(commit_hash)
 
     # -- Display --------------------------------------------------------
-    # Inherits Rich-based pprint() from Pending base class.
+
+    def __repr__(self):
+        status = self.status.value if hasattr(self.status, 'value') else str(self.status)
+        return f"<PendingGC: {len(self.commits_to_remove)} commits, ~{self.tokens_to_free} tokens, {status}>"

@@ -504,6 +504,7 @@ def compress_range(
     validator: object | None = None,
     max_retries: int = 3,
     triggered_by: str | None = None,
+    two_stage: bool = False,
 ) -> PendingCompress:
     """Core compression operation.
 
@@ -601,6 +602,36 @@ def compress_range(
                         ret_instructions.append(rc.instructions)
         group_retention.append(criteria)
         group_retention_instructions.append(ret_instructions)
+
+    # f0. Two-stage guidance generation (if enabled)
+    guidance_text: str | None = None
+    if two_stage and llm_client is not None:
+        from tract.prompts.guidance import (
+            COMPRESS_GUIDANCE_SYSTEM,
+            build_compress_guidance_prompt,
+        )
+
+        # Build combined messages text for all groups
+        all_text = "\n\n".join(
+            _build_messages_text(group, blob_repo) for group in groups
+        )
+        guidance_response = llm_client.chat(
+            [
+                {"role": "system", "content": COMPRESS_GUIDANCE_SYSTEM},
+                {"role": "user", "content": build_compress_guidance_prompt(
+                    all_text, instructions=instructions
+                )},
+            ],
+            **(llm_kwargs or {}),
+        )
+        guidance_text = guidance_response["choices"][0]["message"]["content"]
+        # Prepend guidance to instructions for all subsequent summarize calls
+        instructions = f"Guidance:\n{guidance_text}\n\n{instructions or ''}"
+    elif two_stage and llm_client is None and content is None:
+        raise CompressionError(
+            "two_stage=True requires an LLM client. "
+            "Call configure_llm() or pass api_key to Tract.open()."
+        )
 
     # f. Generate summaries
     if content is not None:
@@ -751,6 +782,10 @@ def compress_range(
     pending._system_prompt = system_prompt
     pending._head_hash = head_hash
     pending._generation_config = generation_config
+    pending._two_stage = two_stage
+    if two_stage and guidance_text is not None:
+        pending.guidance = guidance_text
+        pending.guidance_source = "llm"
     return pending
 
 

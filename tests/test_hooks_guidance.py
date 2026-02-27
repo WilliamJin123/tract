@@ -182,29 +182,29 @@ class TestEditGuidanceMerge:
 
 
 # ===========================================================================
-# 4. regenerate_guidance() raises NotImplementedError
+# 4. regenerate_guidance() raises RuntimeError without LLM
 # ===========================================================================
 
 
 class TestRegenerateGuidance:
-    """Tests for regenerate_guidance() stub."""
+    """Tests for regenerate_guidance() without LLM client."""
 
-    def test_regenerate_guidance_raises_on_compress(self):
-        """regenerate_guidance() raises NotImplementedError on PendingCompress."""
+    def test_regenerate_guidance_raises_on_compress_without_llm(self):
+        """regenerate_guidance() raises RuntimeError on PendingCompress without LLM."""
         pending = _make_pending_compress()
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
+        with pytest.raises(RuntimeError, match="requires an LLM client"):
             pending.regenerate_guidance()
 
-    def test_regenerate_guidance_raises_on_merge(self):
-        """regenerate_guidance() raises NotImplementedError on PendingMerge."""
+    def test_regenerate_guidance_raises_on_merge_without_llm(self):
+        """regenerate_guidance() raises RuntimeError on PendingMerge without LLM."""
         pending = _make_pending_merge()
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
+        with pytest.raises(RuntimeError, match="requires an LLM client"):
             pending.regenerate_guidance()
 
-    def test_regenerate_guidance_raises_with_overrides(self):
-        """regenerate_guidance() raises even with llm_overrides kwargs."""
+    def test_regenerate_guidance_raises_with_overrides_without_llm(self):
+        """regenerate_guidance() raises RuntimeError even with llm_overrides kwargs."""
         pending = _make_pending_compress()
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(RuntimeError, match="requires an LLM client"):
             pending.regenerate_guidance(model="gpt-4", temperature=0.5)
 
 
@@ -319,11 +319,11 @@ class TestTwoStageParameter:
         t.close()
 
     def test_two_stage_none_is_default(self):
-        """compress() with no two_stage arg defaults to None."""
+        """compress() with no two_stage arg defaults to False."""
         t = _make_compressible_tract()
         pending = t.compress(content="summary", review=True)
-        # _two_stage is stored on the pending
-        assert pending._two_stage is None  # type: ignore[attr-defined]
+        # _two_stage is a proper field, defaulting to False (None is coerced)
+        assert pending._two_stage is False  # type: ignore[attr-defined]
         t.close()
 
     def test_two_stage_stored_on_pending(self):

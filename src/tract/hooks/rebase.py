@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from tract.tract import Tract
 
 
-@dataclass
+@dataclass(repr=False)
 class PendingRebase(Pending):
     """A rebase operation that has been planned but not yet executed.
 
@@ -115,4 +115,8 @@ class PendingRebase(Pending):
         self.replay_plan.remove(commit_hash)
 
     # -- Display --------------------------------------------------------
-    # Inherits Rich-based pprint() from Pending base class.
+
+    def __repr__(self):
+        status = self.status.value if hasattr(self.status, 'value') else str(self.status)
+        base_short = self.target_base[:8] if self.target_base else "???"
+        return f"<PendingRebase: {len(self.replay_plan)} commits onto {base_short}..., {status}>"

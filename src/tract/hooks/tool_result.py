@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from tract.tract import Tract
 
 
-@dataclass
+@dataclass(repr=False)
 class PendingToolResult(Pending):
     """A tool result that has been received but not yet committed.
 
@@ -44,6 +44,10 @@ class PendingToolResult(Pending):
         }),
         repr=False,
     )
+
+    def __repr__(self):
+        status = self.status.value if hasattr(self.status, 'value') else str(self.status)
+        return f"<PendingToolResult: {self.tool_name}, {self.token_count} tokens, {status}>"
 
     def __post_init__(self) -> None:
         if not self.operation:

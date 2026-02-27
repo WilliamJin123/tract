@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from tract.tract import Tract
 
 
-@dataclass
+@dataclass(repr=False)
 class PendingPolicy(Pending):
     """A policy-triggered action that requires approval.
 
@@ -100,4 +100,7 @@ class PendingPolicy(Pending):
         self.action_params.update(params)
 
     # -- Display --------------------------------------------------------
-    # Inherits Rich-based pprint() from Pending base class.
+
+    def __repr__(self):
+        status = self.status.value if hasattr(self.status, 'value') else str(self.status)
+        return f"<PendingPolicy: {self.policy_name}, {self.action_type}, {status}>"

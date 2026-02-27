@@ -66,8 +66,9 @@ class GuidanceMixin:
     def regenerate_guidance(self, **llm_overrides: Any) -> str:
         """Re-generate guidance using LLM.
 
-        This is a stub -- actual LLM call will be wired when two_stage
-        compress is implemented. For now, raise NotImplementedError.
+        Determines the operation type (compress or merge) and calls the
+        appropriate LLM with guidance prompts. Updates self.guidance and
+        self.guidance_source.
 
         Args:
             **llm_overrides: Override LLM parameters for guidance generation.
@@ -76,8 +77,84 @@ class GuidanceMixin:
             The newly generated guidance text.
 
         Raises:
-            NotImplementedError: Until two_stage=True is fully wired.
+            RuntimeError: If status is not "pending" or no LLM client available.
         """
-        raise NotImplementedError(
-            "regenerate_guidance() is not yet implemented. Use edit_guidance() to set guidance manually."
+        self._require_pending()
+
+        from tract.prompts.guidance import (
+            COMPRESS_GUIDANCE_SYSTEM,
+            MERGE_GUIDANCE_SYSTEM,
+            build_compress_guidance_prompt,
+            build_merge_guidance_prompt,
         )
+
+        operation = self.operation  # type: ignore[attr-defined]
+        tract = self.tract  # type: ignore[attr-defined]
+
+        if operation == "compress":
+            from tract.operations.compression import _build_messages_text
+
+            if not tract._has_llm_client("compress"):
+                raise RuntimeError(
+                    "regenerate_guidance() requires an LLM client. "
+                    "Call configure_llm() or pass api_key to Tract.open()."
+                )
+            llm_client = tract._resolve_llm_client("compress")
+
+            # Build combined messages text for all groups
+            groups = self._groups  # type: ignore[attr-defined]
+            if groups is None:
+                raise RuntimeError(
+                    "Cannot regenerate guidance: no compression groups available. "
+                    "This PendingCompress was created with content= (manual mode)."
+                )
+            blob_repo = tract._blob_repo
+            all_text = "\n\n".join(
+                _build_messages_text(group, blob_repo) for group in groups
+            )
+
+            response = llm_client.chat(
+                [
+                    {"role": "system", "content": COMPRESS_GUIDANCE_SYSTEM},
+                    {"role": "user", "content": build_compress_guidance_prompt(
+                        all_text, instructions=self._instructions  # type: ignore[attr-defined]
+                    )},
+                ],
+                **llm_overrides,
+            )
+
+        elif operation == "merge":
+            if not tract._has_llm_client("merge"):
+                raise RuntimeError(
+                    "regenerate_guidance() requires an LLM client. "
+                    "Call configure_llm() or pass api_key to Tract.open()."
+                )
+            llm_client = tract._resolve_llm_client("merge")
+
+            # Concatenate conflict descriptions
+            conflicts = self.conflicts  # type: ignore[attr-defined]
+            conflicts_text = "\n\n".join(str(c) for c in conflicts)
+
+            response = llm_client.chat(
+                [
+                    {"role": "system", "content": MERGE_GUIDANCE_SYSTEM},
+                    {"role": "user", "content": build_merge_guidance_prompt(
+                        conflicts_text
+                    )},
+                ],
+                **llm_overrides,
+            )
+        else:
+            raise RuntimeError(
+                f"regenerate_guidance() is not supported for operation {operation!r}"
+            )
+
+        guidance_text = response["choices"][0]["message"]["content"]
+        self.guidance = guidance_text
+        # Track source: if user had previously edited, it's now user+llm
+        if self.guidance_source == "user":
+            self.guidance_source = "user+llm"
+        else:
+            self.guidance_source = "llm"
+
+        return guidance_text

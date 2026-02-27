@@ -846,6 +846,7 @@ class Tract:
         priority: Priority | None = None,
         retain: str | None = None,
         retain_match: list[str] | None = None,
+        improve: bool = False,
     ) -> CommitInfo:
         """Commit a system instruction.
 
@@ -865,6 +866,9 @@ class Tract:
                 Overrides the default PINNED annotation.
             retain: Fuzzy retention instructions (for IMPORTANT priority).
             retain_match: Deterministic retention patterns (for IMPORTANT priority).
+            improve: If True, use LLM to improve the text and apply as
+                an EDIT commit on top of the original.  Requires an LLM
+                client to be configured.
 
         Returns:
             :class:`CommitInfo` for the new commit.
@@ -883,6 +887,15 @@ class Tract:
                 info.commit_hash, priority,
                 retain=retain, retain_match=retain_match,
             )
+        if improve:
+            if not self._has_llm_client("improve"):
+                raise ValueError(
+                    "improve=True requires an LLM client. "
+                    "Call configure_llm() or pass api_key to Tract.open()."
+                )
+            improved = self._improve_commit(info, text, "system")
+            if improved is not None:
+                info = improved
         return info
 
     def user(
@@ -896,6 +909,7 @@ class Tract:
         priority: Priority | None = None,
         retain: str | None = None,
         retain_match: list[str] | None = None,
+        improve: bool = False,
     ) -> CommitInfo:
         """Commit a user message.
 
@@ -911,6 +925,9 @@ class Tract:
             priority: Optional priority annotation to set on the commit.
             retain: Fuzzy retention instructions (for IMPORTANT priority).
             retain_match: Deterministic retention patterns (for IMPORTANT priority).
+            improve: If True, use LLM to improve the text and apply as
+                an EDIT commit on top of the original.  Requires an LLM
+                client to be configured.
 
         Returns:
             :class:`CommitInfo` for the new commit.
@@ -929,6 +946,15 @@ class Tract:
                 info.commit_hash, priority,
                 retain=retain, retain_match=retain_match,
             )
+        if improve:
+            if not self._has_llm_client("improve"):
+                raise ValueError(
+                    "improve=True requires an LLM client. "
+                    "Call configure_llm() or pass api_key to Tract.open()."
+                )
+            improved = self._improve_commit(info, text, "user")
+            if improved is not None:
+                info = improved
         return info
 
     def assistant(
@@ -943,6 +969,7 @@ class Tract:
         priority: Priority | None = None,
         retain: str | None = None,
         retain_match: list[str] | None = None,
+        improve: bool = False,
     ) -> CommitInfo:
         """Commit an assistant response.
 
@@ -959,6 +986,9 @@ class Tract:
             priority: Optional priority annotation to set on the commit.
             retain: Fuzzy retention instructions (for IMPORTANT priority).
             retain_match: Deterministic retention patterns (for IMPORTANT priority).
+            improve: If True, use LLM to improve the text and apply as
+                an EDIT commit on top of the original.  Requires an LLM
+                client to be configured.
 
         Returns:
             :class:`CommitInfo` for the new commit.
@@ -978,7 +1008,76 @@ class Tract:
                 info.commit_hash, priority,
                 retain=retain, retain_match=retain_match,
             )
+        if improve:
+            if not self._has_llm_client("improve"):
+                raise ValueError(
+                    "improve=True requires an LLM client. "
+                    "Call configure_llm() or pass api_key to Tract.open()."
+                )
+            improved = self._improve_commit(info, text, "assistant")
+            if improved is not None:
+                info = improved
         return info
+
+    def _improve_commit(
+        self,
+        original_info: CommitInfo,
+        text: str,
+        role: str,
+    ) -> CommitInfo | None:
+        """LLM-improve text and apply as EDIT commit.
+
+        Args:
+            original_info: The :class:`CommitInfo` of the original commit.
+            text: The original text content.
+            role: The message role (``"system"``, ``"user"``, ``"assistant"``).
+
+        Returns:
+            :class:`CommitInfo` for the EDIT commit, or ``None`` if
+            improvement was skipped (LLM failure, empty result, or
+            identical text).
+        """
+        from tract.prompts.improve import IMPROVE_CONTENT_SYSTEM, build_improve_prompt
+
+        try:
+            client = self._resolve_llm_client("improve")
+            llm_kwargs = (
+                self._resolve_llm_config("improve")
+                if self._has_llm_client("improve")
+                else {}
+            )
+            messages = [
+                {"role": "system", "content": IMPROVE_CONTENT_SYSTEM},
+                {"role": "user", "content": build_improve_prompt(text, context=role)},
+            ]
+            response = client.chat(messages, **llm_kwargs)
+            improved_text = self._extract_content(response, client=client).strip()
+            if not improved_text or improved_text == text:
+                return None  # No improvement or same text
+        except Exception:
+            import warnings
+
+            warnings.warn(
+                f"LLM improvement failed for {role} message; keeping original.",
+                stacklevel=3,
+            )
+            return None
+
+        # Apply as EDIT
+        from tract.models.content import DialogueContent, InstructionContent
+
+        if role == "system":
+            content = InstructionContent(text=improved_text)
+        else:
+            content = DialogueContent(role=role, text=improved_text)
+
+        edit_info = self.commit(
+            content,
+            operation=CommitOperation.EDIT,
+            edit_target=original_info.commit_hash,
+            message=f"improve: {role} message",
+        )
+        return edit_info
 
     def reasoning(
         self,
@@ -3661,10 +3760,8 @@ class Tract:
             two_stage: When True and LLM is available, generate guidance first
                 (what should the summary focus on?) then generate summaries using
                 that guidance. The guidance is stored on PendingCompress and is
-                editable via edit_guidance(). When None, uses the per-operation
-                config default. When False, uses one-shot summarization.
-                Full two-stage flow is a TODO -- parameter is threaded through
-                but the guidance generation step is not yet wired.
+                editable via edit_guidance(). When None/False, uses one-shot
+                summarization.
 
         Returns:
             :class:`CompressResult` (if auto-approved or hook approves) or
@@ -3738,17 +3835,12 @@ class Tract:
             validator=validator,
             max_retries=max_retries,
             triggered_by=triggered_by,
+            two_stage=two_stage or False,
         )
 
         # Wire the PendingCompress to this Tract instance
         pending.tract = self  # type: ignore[assignment]
         pending._execute_fn = self._finalize_compression
-
-        # Store two_stage flag on the pending for future wiring.
-        # TODO: When two_stage is True and LLM is available, generate guidance
-        # first (using prompts/guidance.py), store on pending.guidance, then
-        # generate summaries using that guidance in the prompt.
-        pending._two_stage = two_stage  # type: ignore[attr-defined]
 
         # Three-tier routing:
         # 1. review=True: return to caller for manual inspection

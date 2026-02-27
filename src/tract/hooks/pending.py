@@ -61,7 +61,7 @@ def _format_value_for_display(value: Any) -> str:
     return repr(value)
 
 
-@dataclass
+@dataclass(repr=False)
 class Pending:
     """Base class for all hookable pending operations.
 
@@ -275,11 +275,18 @@ class Pending:
 
     # -- Display --------------------------------------------------------
 
-    def pprint(self) -> None:
+    def __repr__(self):
+        status = self.status.value if hasattr(self.status, 'value') else str(self.status)
+        return f"<{type(self).__name__}: {self.operation}, {status}, id={self.pending_id[:8]}>"
+
+    def pprint(self, *, verbose: bool = False) -> None:
         """Pretty-print this Pending using Rich.
 
         Shows operation type, status, pending_id, all public fields
         in a table, and available actions.
+
+        Args:
+            verbose: If True, show additional details via _pprint_details().
         """
         import dataclasses
 
@@ -330,6 +337,21 @@ class Pending:
         # Available actions
         actions = sorted(self._public_actions)
         console.print(f"  [bold]Available actions:[/bold] {', '.join(actions)}")
+
+        # Subclass-specific details
+        self._pprint_details(console, verbose=verbose)
+
+    def _pprint_details(self, console, *, verbose: bool = False) -> None:
+        """Hook for subclasses to add operation-specific display details.
+
+        Called by pprint() after the base fields table and available actions.
+        Override in subclasses to show additional information.
+
+        Args:
+            console: The Rich Console instance to print to.
+            verbose: If True, show more detailed information.
+        """
+        pass
 
     def review(self, *, prompt_fn: Callable[[str], str] | None = None) -> None:
         """Interactive review flow: pprint then prompt for approve/reject.

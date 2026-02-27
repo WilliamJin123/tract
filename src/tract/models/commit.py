@@ -75,6 +75,15 @@ class CommitInfo(BaseModel):
             msg = msg[:57] + "..."
         return f"{short_hash} {msg}"
 
+    def __repr__(self) -> str:
+        short_hash = self.commit_hash[:8]
+        msg = self.message or ""
+        if len(msg) > 60:
+            msg = msg[:57] + "..."
+        role = self.content_type
+        op = self.operation.value
+        return f"CommitInfo({short_hash} {op} {role} {msg!r})"
+
     def pprint(self, *, max_chars: int | None = None) -> None:
         """Pretty-print this commit using rich formatting.
 

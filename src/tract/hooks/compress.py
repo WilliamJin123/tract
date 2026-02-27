@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from tract.tract import Tract
 
 
-@dataclass
+@dataclass(repr=False)
 class PendingCompress(GuidanceMixin, Pending):
     """A compression operation that has been planned but not yet committed.
 
@@ -74,6 +74,7 @@ class PendingCompress(GuidanceMixin, Pending):
     _system_prompt: str | None = field(default=None, repr=False)
     _head_hash: str | None = field(default=None, repr=False)
     _generation_config: dict | None = field(default=None, repr=False)
+    _two_stage: bool = field(default=False, repr=False)
 
     # -- Whitelist for agent dispatch -----------------------------------
 
@@ -83,6 +84,8 @@ class PendingCompress(GuidanceMixin, Pending):
             "reject",
             "edit_summary",
             "edit_guidance",
+            "retry",
+            "validate",
         }),
         repr=False,
     )
@@ -142,7 +145,7 @@ class PendingCompress(GuidanceMixin, Pending):
         self._require_pending()
         self.summaries[index] = new_text
 
-    # -- Retry and validation stubs -------------------------------------
+    # -- Retry and validation -------------------------------------------
 
     def retry(self, index: int, *, guidance: str = "", **llm_overrides: Any) -> None:
         """Re-run LLM generation for one summary group.
@@ -157,24 +160,103 @@ class PendingCompress(GuidanceMixin, Pending):
                 (e.g. model, temperature).
 
         Raises:
-            NotImplementedError: Until Phase 1 wiring is complete.
+            RuntimeError: If status is not "pending".
+            IndexError: If index is out of range.
+            RuntimeError: If no groups are available for retry.
         """
-        raise NotImplementedError(
-            "retry() is not yet implemented. Use edit_summary() for manual corrections."
+        self._require_pending()
+
+        if index < 0 or index >= len(self.summaries):
+            raise IndexError(
+                f"Summary index {index} is out of range. "
+                f"Valid indices: 0..{len(self.summaries) - 1}"
+            )
+
+        if not self._groups or index >= len(self._groups):
+            raise RuntimeError(
+                "Cannot retry: no compression groups available. "
+                "This PendingCompress may have been created with content= (manual mode)."
+            )
+
+        # Deferred imports to avoid circular dependencies
+        from tract.operations.compression import _build_messages_text, _summarize_group
+
+        group = self._groups[index]
+        messages_text = _build_messages_text(group, self.tract._blob_repo)
+
+        # Combine instructions: self._instructions base + guidance overlay
+        combined = self._instructions or ""
+        if self.guidance:
+            combined = (self.guidance + "\n" + combined) if combined else self.guidance
+        if guidance:
+            combined = (combined + "\n" + guidance) if combined else guidance
+
+        new_summary = _summarize_group(
+            messages_text,
+            self.tract._resolve_llm_client("compress"),
+            self.tract._token_counter,
+            target_tokens=self._target_tokens,
+            instructions=combined or None,
+            system_prompt=self._system_prompt,
+            llm_kwargs=llm_overrides or None,
+        )
+
+        self.summaries[index] = new_summary
+
+        # Recalculate estimated tokens
+        self.estimated_tokens = sum(
+            self.tract._token_counter.count_text(s) for s in self.summaries
         )
 
     def validate(self) -> ValidationResult:
         """Validate the current summaries against quality criteria.
 
+        Checks each summary for:
+        1. Non-empty (no blank summaries)
+        2. Not trivially short (< 10 chars = suspiciously truncated)
+        3. Token ratio: if _target_tokens is set, individual summary
+           should not exceed _target_tokens * 1.5
+
         Returns:
             ValidationResult indicating whether all summaries pass.
-
-        Raises:
-            NotImplementedError: Until Phase 1 wiring is complete.
         """
-        raise NotImplementedError(
-            "validate() is not yet implemented."
-        )
+        for i, summary in enumerate(self.summaries):
+            # Check non-empty
+            if not summary or not summary.strip():
+                return ValidationResult(
+                    passed=False,
+                    diagnosis=f"Summary at index {i} is empty.",
+                    index=i,
+                )
+
+            # Check not trivially short
+            if len(summary.strip()) < 10:
+                return ValidationResult(
+                    passed=False,
+                    diagnosis=(
+                        f"Summary at index {i} is suspiciously short "
+                        f"({len(summary.strip())} chars). "
+                        f"Content: {summary.strip()!r}"
+                    ),
+                    index=i,
+                )
+
+            # Check token ratio if target set
+            if self._target_tokens is not None:
+                token_count = self.tract._token_counter.count_text(summary)
+                max_tokens = int(self._target_tokens * 1.5)
+                if token_count > max_tokens:
+                    return ValidationResult(
+                        passed=False,
+                        diagnosis=(
+                            f"Summary at index {i} exceeds token budget: "
+                            f"{token_count} tokens > {max_tokens} "
+                            f"(target={self._target_tokens} * 1.5)."
+                        ),
+                        index=i,
+                    )
+
+        return ValidationResult(passed=True)
 
     def edit_interactive(self) -> None:
         """Launch an interactive editing session for summaries.
@@ -190,4 +272,39 @@ class PendingCompress(GuidanceMixin, Pending):
         )
 
     # -- Display --------------------------------------------------------
-    # Inherits Rich-based pprint() from Pending base class.
+
+    def __repr__(self):
+        status = self.status.value if hasattr(self.status, 'value') else str(self.status)
+        pct = ""
+        if self.original_tokens > 0:
+            pct = f", {int((1 - self.estimated_tokens / self.original_tokens) * 100)}% reduction"
+        return f"<PendingCompress: {len(self.summaries)} summaries, {self.original_tokens}->{self.estimated_tokens} tokens{pct}, {status}>"
+
+    def _pprint_details(self, console, *, verbose: bool = False) -> None:
+        """Show compression-specific details: token ratio, summaries, guidance."""
+        from rich.panel import Panel
+
+        # Token ratio summary
+        if self.original_tokens > 0:
+            pct = int((1 - self.estimated_tokens / self.original_tokens) * 100)
+            console.print(
+                f"  Compression: {self.original_tokens} -> {self.estimated_tokens} "
+                f"tokens ({pct}% reduction)"
+            )
+        else:
+            console.print(
+                f"  Compression: {self.original_tokens} -> {self.estimated_tokens} tokens"
+            )
+
+        # Verbose: show summary previews
+        if verbose and self.summaries:
+            console.print("  [bold]Summary previews:[/bold]")
+            for i, summary in enumerate(self.summaries):
+                preview = summary[:120]
+                if len(summary) > 120:
+                    preview += "..."
+                console.print(f"    [{i}] {preview}")
+
+        # Guidance panel
+        if self.guidance:
+            console.print(Panel(self.guidance, title="Guidance", style="cyan"))

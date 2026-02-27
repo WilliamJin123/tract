@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING, Any
 
 from tract.hooks.guidance import GuidanceMixin
 from tract.hooks.pending import Pending, PendingStatus
+from tract.hooks.validation import ValidationResult
 
 if TYPE_CHECKING:
     from tract.models.merge import MergeResult
     from tract.tract import Tract
 
 
-@dataclass
+@dataclass(repr=False)
 class PendingMerge(GuidanceMixin, Pending):
     """A merge operation with conflicts that has been planned but not yet executed.
 
@@ -73,6 +74,8 @@ class PendingMerge(GuidanceMixin, Pending):
             "set_resolution",
             "edit_interactive",
             "edit_guidance",
+            "retry",
+            "validate",
         }),
         repr=False,
     )
@@ -139,16 +142,80 @@ class PendingMerge(GuidanceMixin, Pending):
     def retry(self, *, guidance: str = "", **llm_overrides: Any) -> None:
         """Re-run LLM conflict resolution with updated guidance.
 
+        Re-resolves all conflicts using the tract's configured LLM merge resolver.
+
         Args:
             guidance: Feedback text to inject into the retry prompt.
-            **llm_overrides: Override LLM parameters for this retry.
+                If provided, updates self.guidance and self.guidance_source.
+            **llm_overrides: Override LLM parameters for this retry
+                (e.g. model, temperature, max_tokens, system_prompt).
 
         Raises:
-            NotImplementedError: Until Phase 2 wiring is complete.
+            RuntimeError: If status is not "pending".
         """
-        raise NotImplementedError(
-            "retry() is not yet implemented. Use edit_resolution() for manual corrections."
-        )
+        self._require_pending()
+
+        from tract.llm.resolver import OpenAIResolver
+
+        client = self.tract._resolve_llm_client("merge")
+        resolver_kwargs = {
+            k: v
+            for k, v in llm_overrides.items()
+            if k in ("model", "temperature", "max_tokens", "system_prompt")
+        }
+        resolver = OpenAIResolver(client, **resolver_kwargs)
+
+        for conflict in self.conflicts:
+            target_hash = getattr(conflict, "target_hash", None)
+            if target_hash is None:
+                continue
+            resolution = resolver(conflict)
+            if resolution.content_text is not None:
+                self.resolutions[target_hash] = resolution.content_text
+
+        if guidance:
+            self.guidance = guidance
+            self.guidance_source = "user"
+
+    def validate(self) -> ValidationResult:
+        """Validate that all conflicts have non-empty resolutions.
+
+        Checks:
+        1. Every conflict with a target_hash has a corresponding resolution.
+        2. No resolution is empty.
+
+        Returns:
+            ValidationResult indicating whether all resolutions pass.
+        """
+        for i, conflict in enumerate(self.conflicts):
+            target_hash = getattr(conflict, "target_hash", None)
+            if target_hash is None:
+                continue
+
+            # Check resolution exists
+            if target_hash not in self.resolutions:
+                return ValidationResult(
+                    passed=False,
+                    diagnosis=(
+                        f"Conflict at index {i} (target_hash={target_hash[:8]}...) "
+                        f"has no resolution."
+                    ),
+                    index=i,
+                )
+
+            # Check resolution is not empty
+            resolution = self.resolutions[target_hash]
+            if not resolution or not resolution.strip():
+                return ValidationResult(
+                    passed=False,
+                    diagnosis=(
+                        f"Conflict at index {i} (target_hash={target_hash[:8]}...) "
+                        f"has an empty resolution."
+                    ),
+                    index=i,
+                )
+
+        return ValidationResult(passed=True)
 
     def set_resolution(self, key: str, content: str) -> None:
         """Set or replace a conflict resolution (does not require key to exist).
@@ -260,4 +327,38 @@ class PendingMerge(GuidanceMixin, Pending):
             # choice == "s": skip
 
     # -- Display --------------------------------------------------------
-    # Inherits Rich-based pprint() from Pending base class.
+
+    def __repr__(self):
+        status = self.status.value if hasattr(self.status, 'value') else str(self.status)
+        return f"<PendingMerge: {self.source_branch}->{self.target_branch}, {len(self.resolutions)}/{len(self.conflicts)} resolved, {status}>"
+
+    def _pprint_details(self, console, *, verbose: bool = False) -> None:
+        """Show merge-specific details: branch info, conflicts, guidance."""
+        from rich.panel import Panel
+
+        # Branch info
+        console.print(
+            f"  Merge: {self.source_branch} -> {self.target_branch}"
+        )
+
+        # Conflict list with resolution status
+        if self.conflicts:
+            console.print(f"  [bold]Conflicts ({len(self.conflicts)}):[/bold]")
+            for i, conflict in enumerate(self.conflicts):
+                key = getattr(conflict, 'target_hash', None)
+                if key is None and isinstance(conflict, dict):
+                    key = conflict.get('target_hash')
+                elif key is None and isinstance(conflict, str):
+                    key = conflict
+
+                if key and key in self.resolutions:
+                    mark = "[green]v[/green]"
+                else:
+                    mark = "[red]x[/red]"
+
+                label = key[:8] if key else f"conflict-{i}"
+                console.print(f"    {mark} [{i}] {label}")
+
+        # Guidance panel
+        if self.guidance:
+            console.print(Panel(self.guidance, title="Guidance", style="cyan"))
