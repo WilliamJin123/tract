@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from tract.hooks.compress import PendingCompress
     from tract.hooks.gc import PendingGC
     from tract.hooks.merge import PendingMerge
+    from tract.hooks.pending import Pending
     from tract.hooks.rebase import PendingRebase
     from tract.hooks.tool_result import PendingToolResult
     from tract.models.branch import BranchInfo
@@ -3289,7 +3290,6 @@ class Tract:
                         force=True,
                     )
                     self._session.commit()
-                p._committed_result = committed_result  # type: ignore[attr-defined]
                 return committed_result
 
             pending._execute_fn = _execute_merge_fn
@@ -3304,8 +3304,8 @@ class Tract:
 
             if has_hook and not self._in_hook:
                 self._fire_hook(pending)
-                if pending.status == "approved" and hasattr(pending, "_committed_result"):
-                    return pending._committed_result  # type: ignore[attr-defined]
+                if pending.status == "approved" and pending._result is not None:
+                    return pending._result
                 return pending
 
             # No hook: auto-approve if all conflicts resolved
@@ -3567,7 +3567,6 @@ class Tract:
             )
             self._session.commit()
             self._cache.clear()
-            p._rebase_result = result  # type: ignore[attr-defined]
             return result
 
         pending._execute_fn = _execute_rebase_fn
@@ -3579,8 +3578,8 @@ class Tract:
         has_hook = "rebase" in self._hooks or "*" in self._hooks
         if has_hook and not self._in_hook:
             self._fire_hook(pending)
-            if pending.status == "approved" and hasattr(pending, "_rebase_result"):
-                return pending._rebase_result  # type: ignore[attr-defined]
+            if pending.status == "approved" and pending._result is not None:
+                return pending._result
             return pending
 
         return pending.approve()
@@ -3760,13 +3759,8 @@ class Tract:
         has_hook = "compress" in self._hooks or "*" in self._hooks
         if has_hook and not self._in_hook:
             self._fire_hook(pending)
-            # After hook fires, the pending may be approved (result committed),
-            # rejected, or still pending (unresolved handler).
-            # If approved, _finalize_compression was called and the result is
-            # stored on pending._compress_result by our wrapper.
-            if pending.status == "approved" and hasattr(pending, "_compress_result"):
-                return pending._compress_result  # type: ignore[attr-defined]
-            # Otherwise return the pending for caller to inspect
+            if pending.status == "approved" and pending._result is not None:
+                return pending._result
             return pending
 
         # 3. No hook: auto-execute (call approve directly to get CompressResult)
@@ -3825,9 +3819,6 @@ class Tract:
 
         self._session.commit()
         self._cache.clear()
-
-        # Store result on the pending for hook callers to retrieve
-        pending._compress_result = result  # type: ignore[attr-defined]
 
         return result
 
@@ -4106,7 +4097,6 @@ class Tract:
             )
             self._cache.clear()
             self._session.commit()
-            p._gc_result = result  # type: ignore[attr-defined]
             return result
 
         pending._execute_fn = _execute_gc_fn
@@ -4118,8 +4108,8 @@ class Tract:
         has_hook = "gc" in self._hooks or "*" in self._hooks
         if has_hook and not self._in_hook:
             self._fire_hook(pending)
-            if pending.status == "approved" and hasattr(pending, "_gc_result"):
-                return pending._gc_result  # type: ignore[attr-defined]
+            if pending.status == "approved" and pending._result is not None:
+                return pending._result
             return pending
 
         return pending.approve()
@@ -4699,6 +4689,10 @@ class Tract:
     def on(self, operation: str, handler: Callable) -> None:
         """Register a hook handler for an operation.
 
+        If a handler is already registered for this operation, it will be
+        replaced and a warning will be emitted. Use a wrapper function to
+        compose multiple handlers.
+
         Args:
             operation: Operation name ("compress", "gc", "rebase", "merge",
                 "policy", "tool_result", or "*" for catch-all).
@@ -4708,10 +4702,18 @@ class Tract:
         Raises:
             ValueError: If operation is not hookable.
         """
+        import warnings
+
         if operation != "*" and operation not in self._HOOKABLE_OPS:
             raise ValueError(
                 f"Cannot hook '{operation}': not a hookable operation. "
                 f"Hookable operations: {', '.join(sorted(self._HOOKABLE_OPS))}"
+            )
+        if operation in self._hooks:
+            warnings.warn(
+                f"Replacing existing hook handler for '{operation}'. "
+                f"Previous handler will no longer fire.",
+                stacklevel=2,
             )
         self._hooks[operation] = handler
 
@@ -4728,7 +4730,7 @@ class Tract:
         """Currently registered hook handlers (copy)."""
         return dict(self._hooks)
 
-    def _fire_hook(self, pending: object) -> None:
+    def _fire_hook(self, pending: Pending) -> None:
         """Route a Pending through the hook system.
 
         Three-tier routing:
@@ -4744,33 +4746,44 @@ class Tract:
         approve() or reject(), emit a warning.
 
         Args:
-            pending: A Pending subclass instance with `operation` and `status`
-                attributes, and `approve()` method.
+            pending: A Pending subclass instance.
         """
+        import logging
         import warnings
+
+        from tract.hooks.pending import PendingStatus
 
         # Recursion guard
         if self._in_hook:
-            pending.approve()  # type: ignore[union-attr]
+            pending.approve()
             return
 
         # Find handler: specific > catch-all > auto-approve
-        handler = self._hooks.get(pending.operation) or self._hooks.get("*")  # type: ignore[union-attr]
+        handler = self._hooks.get(pending.operation) or self._hooks.get("*")
 
         if handler is None:
-            pending.approve()  # type: ignore[union-attr]
+            pending.approve()
             return
 
         self._in_hook = True
         try:
             handler(pending)
+        except Exception:
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "Hook handler for '%s' raised an exception. "
+                "The pending operation remains unresolved.",
+                pending.operation,
+                exc_info=True,
+            )
+            raise
         finally:
             self._in_hook = False
 
         # Unresolved handler guard
-        if pending.status == "pending":  # type: ignore[union-attr]
+        if pending.status == PendingStatus.PENDING:
             warnings.warn(
-                f"Hook handler for '{pending.operation}' returned without calling "  # type: ignore[union-attr]
+                f"Hook handler for '{pending.operation}' returned without calling "
                 f"approve() or reject(). The pending operation remains unresolved.",
                 stacklevel=2,
             )

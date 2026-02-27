@@ -609,18 +609,18 @@ class TestDynamicPublicActions:
     """Tests that adding a method to _public_actions makes it visible."""
 
     def test_adding_action_appears_in_to_dict(self):
-        """Adding a method name to _public_actions makes it appear in to_dict()."""
+        """Using register_action() makes it appear in to_dict()."""
         gc = _make_standalone_gc()
-        # Dynamically add a method
+        # Dynamically add a method via register_action()
         gc.custom_action = lambda: "custom"
-        gc._public_actions.add("custom_action")
+        gc.register_action("custom_action")
 
         d = gc.to_dict()
         assert "custom_action" in d["available_actions"]
         gc.tract.close()
 
     def test_adding_action_appears_in_to_tools(self):
-        """Adding a method to _public_actions makes it appear in to_tools()."""
+        """Using register_action() makes it appear in to_tools()."""
         gc = _make_standalone_gc()
 
         def my_custom_method(text: str) -> None:
@@ -628,7 +628,7 @@ class TestDynamicPublicActions:
             pass
 
         gc.my_custom_method = my_custom_method
-        gc._public_actions.add("my_custom_method")
+        gc.register_action("my_custom_method")
 
         tools = gc.to_tools()
         tool_names = {t["function"]["name"] for t in tools}
@@ -636,10 +636,10 @@ class TestDynamicPublicActions:
         gc.tract.close()
 
     def test_adding_action_appears_in_describe_api(self):
-        """Adding a method to _public_actions makes it appear in describe_api()."""
+        """Using register_action() makes it appear in describe_api()."""
         gc = _make_standalone_gc()
         gc.my_action = lambda: None
-        gc._public_actions.add("my_action")
+        gc.register_action("my_action")
 
         desc = gc.describe_api()
         assert "my_action" in desc

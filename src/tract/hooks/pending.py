@@ -11,10 +11,26 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tract.tract import Tract
+
+
+class PendingStatus(str, Enum):
+    """Status of a pending operation.
+
+    Uses ``str, Enum`` dual inheritance for Python 3.10+ compatibility
+    while keeping string comparison and serialization working.
+    """
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 def _format_value_for_display(value: Any) -> str:
@@ -67,27 +83,52 @@ class Pending:
     tract: Tract
     pending_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    status: str = "pending"
+    status: PendingStatus = PendingStatus.PENDING
     triggered_by: str | None = None
     rejection_reason: str | None = None
 
     # Internal -- set by the creating operation, not by users
     _execute_fn: Callable[..., Any] | None = field(default=None, repr=False)
 
-    # Subclasses override this with their allowed action names
-    _public_actions: set[str] = field(
-        default_factory=lambda: {"approve", "reject"}, repr=False
+    # Result stored by approve() for uniform retrieval
+    _result: Any = field(default=None, repr=False)
+
+    # Subclasses override this with their allowed action names.
+    # Frozen by default; use register_action() for dynamic extension.
+    _public_actions: frozenset[str] = field(
+        default_factory=lambda: frozenset({"approve", "reject"}), repr=False
     )
 
     # -- Status guards --------------------------------------------------
 
     def _require_pending(self) -> None:
         """Raise if this pending has already been resolved."""
-        if self.status != "pending":
+        if self.status != PendingStatus.PENDING:
             raise RuntimeError(
                 f"Cannot modify a {self.operation} pending with status "
                 f"{self.status!r}. Only 'pending' items can be approved or rejected."
             )
+
+    def register_action(self, name: str) -> None:
+        """Register an additional public action for agent dispatch.
+
+        Creates a new frozenset with the added action name. This is the
+        safe way to extend the whitelist at runtime.
+
+        Args:
+            name: Method name to add to the allowed actions.
+
+        Raises:
+            ValueError: If name starts with '_'.
+            AttributeError: If no method with this name exists.
+        """
+        if name.startswith("_"):
+            raise ValueError(f"Cannot register private method {name!r}.")
+        if not hasattr(self, name):
+            raise AttributeError(
+                f"{type(self).__name__} has no method {name!r}."
+            )
+        self._public_actions = self._public_actions | frozenset({name})
 
     # -- Core methods (subclasses should override) -----------------------
 
@@ -95,7 +136,8 @@ class Pending:
         """Approve and execute the pending operation.
 
         Subclasses should override this to add operation-specific logic.
-        The base implementation sets status and calls _execute_fn.
+        The base implementation sets status, calls _execute_fn, and stores
+        the result in ``_result`` for uniform retrieval.
 
         Returns:
             The result of executing the operation.
@@ -110,8 +152,9 @@ class Pending:
                 f"Cannot approve: no execute function set. "
                 f"This {type(self).__name__} was not created by a Tract operation."
             )
-        self.status = "approved"
-        return self._execute_fn(self)
+        self.status = PendingStatus.APPROVED
+        self._result = self._execute_fn(self)
+        return self._result
 
     def reject(self, reason: str = "") -> None:
         """Reject the pending operation.
@@ -126,7 +169,7 @@ class Pending:
             RuntimeError: If status is not "pending".
         """
         self._require_pending()
-        self.status = "rejected"
+        self.status = PendingStatus.REJECTED
         self.rejection_reason = reason
 
     # -- Agent interface (auto-generated from subclass methods) ----------
@@ -247,9 +290,9 @@ class Pending:
 
         # Header
         status_color = {
-            "pending": "yellow",
-            "approved": "green",
-            "rejected": "red",
+            PendingStatus.PENDING: "yellow",
+            PendingStatus.APPROVED: "green",
+            PendingStatus.REJECTED: "red",
         }.get(self.status, "white")
 
         console.print(
@@ -288,22 +331,29 @@ class Pending:
         actions = sorted(self._public_actions)
         console.print(f"  [bold]Available actions:[/bold] {', '.join(actions)}")
 
-    def review(self) -> None:
+    def review(self, *, prompt_fn: Callable[[str], str] | None = None) -> None:
         """Interactive review flow: pprint then prompt for approve/reject.
 
         Convenience method for CLI usage. Displays the Pending state
         and waits for user input. Subclasses can override for
         operation-specific flows.
+
+        Args:
+            prompt_fn: Optional callback for reading user input.
+                Receives a prompt string, returns the user's response.
+                Defaults to :func:`input` for standard CLI usage.
+                Pass a custom function for testing or non-TTY contexts.
         """
+        _prompt = prompt_fn or input
         self.pprint()
         # Interactive prompt
-        while self.status == "pending":
-            choice = input("\n[approve/reject/skip] > ").strip().lower()
+        while self.status == PendingStatus.PENDING:
+            choice = _prompt("\n[approve/reject/skip] > ").strip().lower()
             if choice == "approve":
                 self.approve()
                 print(f"Approved {self.operation}.")
             elif choice == "reject":
-                reason = input("Reason: ").strip()
+                reason = _prompt("Reason: ").strip()
                 self.reject(reason)
                 print(f"Rejected {self.operation}.")
             elif choice == "skip":

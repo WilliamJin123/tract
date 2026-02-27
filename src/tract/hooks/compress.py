@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from tract.hooks.guidance import GuidanceMixin
-from tract.hooks.pending import Pending
+from tract.hooks.pending import Pending, PendingStatus
 from tract.hooks.validation import ValidationResult
 
 if TYPE_CHECKING:
@@ -77,13 +77,13 @@ class PendingCompress(GuidanceMixin, Pending):
 
     # -- Whitelist for agent dispatch -----------------------------------
 
-    _public_actions: set[str] = field(
-        default_factory=lambda: {
+    _public_actions: frozenset[str] = field(
+        default_factory=lambda: frozenset({
             "approve",
             "reject",
             "edit_summary",
             "edit_guidance",
-        },
+        }),
         repr=False,
     )
 
@@ -109,8 +109,9 @@ class PendingCompress(GuidanceMixin, Pending):
                 "Cannot approve: no execute function set. "
                 "This PendingCompress was not created by Tract.compress()."
             )
-        self.status = "approved"
-        return self._execute_fn(self)
+        self.status = PendingStatus.APPROVED
+        self._result = self._execute_fn(self)
+        return self._result
 
     def reject(self, reason: str = "") -> None:
         """Reject the compression, discarding all planned changes.
@@ -122,7 +123,7 @@ class PendingCompress(GuidanceMixin, Pending):
             RuntimeError: If status is not "pending".
         """
         self._require_pending()
-        self.status = "rejected"
+        self.status = PendingStatus.REJECTED
         self.rejection_reason = reason
 
     # -- Editing methods ------------------------------------------------

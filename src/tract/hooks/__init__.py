@@ -24,7 +24,7 @@ from tract.hooks.compress import PendingCompress
 from tract.hooks.gc import PendingGC
 from tract.hooks.guidance import GuidanceMixin
 from tract.hooks.merge import PendingMerge
-from tract.hooks.pending import Pending
+from tract.hooks.pending import Pending, PendingStatus
 from tract.hooks.policy import PendingPolicy
 from tract.hooks.rebase import PendingRebase
 from tract.hooks.retry import auto_retry
@@ -33,6 +33,7 @@ from tract.hooks.validation import HookRejection, ValidationResult
 
 __all__ = [
     "Pending",
+    "PendingStatus",
     "PendingCompress",
     "PendingGC",
     "PendingRebase",

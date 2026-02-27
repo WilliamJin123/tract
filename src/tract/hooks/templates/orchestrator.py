@@ -16,6 +16,7 @@ accepting a :class:`~tract.orchestrator.models.ToolCall` and returning a
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -47,21 +48,32 @@ def reject_all(pending: Pending, *, reason: str = "Rejected by policy") -> None:
     pending.reject(reason)
 
 
-def cli_prompt(pending: Pending) -> None:
+def cli_prompt(
+    pending: Pending,
+    *,
+    prompt_fn: Callable[[str], str] | None = None,
+) -> None:
     """Interactive CLI prompt for approve/reject/modify.
 
     Uses ``pending.pprint()`` and ``pending.review()`` for display.
+
+    Args:
+        pending: The pending operation to review.
+        prompt_fn: Optional callback for reading user input.
+            Receives a prompt string, returns the user's response.
+            Defaults to :func:`input` for standard CLI usage.
     """
+    _prompt = prompt_fn or input
     pending.pprint()
-    response = input(
+    response = _prompt(
         f"\n[{pending.operation}] Approve? (y/n/m for modify): "
     ).strip().lower()
     if response == "y":
         pending.approve()
     elif response == "m":
-        pending.review()  # Interactive editing flow
+        pending.review(prompt_fn=prompt_fn)  # Interactive editing flow
     else:
-        reason = input("Rejection reason: ").strip()
+        reason = _prompt("Rejection reason: ").strip()
         pending.reject(reason or "Rejected by user")
 
 

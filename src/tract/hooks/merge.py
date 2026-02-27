@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from tract.hooks.guidance import GuidanceMixin
-from tract.hooks.pending import Pending
+from tract.hooks.pending import Pending, PendingStatus
 
 if TYPE_CHECKING:
     from tract.models.merge import MergeResult
@@ -65,15 +65,15 @@ class PendingMerge(GuidanceMixin, Pending):
 
     # -- Whitelist for agent dispatch -----------------------------------
 
-    _public_actions: set[str] = field(
-        default_factory=lambda: {
+    _public_actions: frozenset[str] = field(
+        default_factory=lambda: frozenset({
             "approve",
             "reject",
             "edit_resolution",
             "set_resolution",
             "edit_interactive",
             "edit_guidance",
-        },
+        }),
         repr=False,
     )
 
@@ -98,8 +98,9 @@ class PendingMerge(GuidanceMixin, Pending):
                 "Cannot approve: no execute function set. "
                 "This PendingMerge was not created by Tract.merge()."
             )
-        self.status = "approved"
-        return self._execute_fn(self)
+        self.status = PendingStatus.APPROVED
+        self._result = self._execute_fn(self)
+        return self._result
 
     def reject(self, reason: str = "") -> None:
         """Reject the merge, leaving both branches unchanged.
@@ -111,7 +112,7 @@ class PendingMerge(GuidanceMixin, Pending):
             RuntimeError: If status is not "pending".
         """
         self._require_pending()
-        self.status = "rejected"
+        self.status = PendingStatus.REJECTED
         self.rejection_reason = reason
 
     # -- Editing methods ------------------------------------------------

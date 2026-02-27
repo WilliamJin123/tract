@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from tract.hooks.pending import Pending
+from tract.hooks.pending import Pending, PendingStatus
 
 if TYPE_CHECKING:
     from tract.tract import Tract
@@ -42,8 +42,8 @@ class PendingPolicy(Pending):
 
     # -- Whitelist for agent dispatch -----------------------------------
 
-    _public_actions: set[str] = field(
-        default_factory=lambda: {"approve", "reject", "modify_params"},
+    _public_actions: frozenset[str] = field(
+        default_factory=lambda: frozenset({"approve", "reject", "modify_params"}),
         repr=False,
     )
 
@@ -68,8 +68,9 @@ class PendingPolicy(Pending):
                 "Cannot approve: no execute function set. "
                 "This PendingPolicy was not created by the policy engine."
             )
-        self.status = "approved"
-        return self._execute_fn(self)
+        self.status = PendingStatus.APPROVED
+        self._result = self._execute_fn(self)
+        return self._result
 
     def reject(self, reason: str = "") -> None:
         """Reject the policy-proposed action.
@@ -81,7 +82,7 @@ class PendingPolicy(Pending):
             RuntimeError: If status is not "pending".
         """
         self._require_pending()
-        self.status = "rejected"
+        self.status = PendingStatus.REJECTED
         self.rejection_reason = reason
 
     # -- Editing methods ------------------------------------------------

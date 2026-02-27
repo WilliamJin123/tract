@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from tract.hooks.pending import Pending
+from tract.hooks.pending import Pending, PendingStatus
 
 if TYPE_CHECKING:
     from tract.models.commit import CommitInfo
@@ -38,10 +38,10 @@ class PendingToolResult(Pending):
     # Stores the CommitInfo result after approve()
     _result: Any = field(default=None, repr=False)
 
-    _public_actions: set[str] = field(
-        default_factory=lambda: {
+    _public_actions: frozenset[str] = field(
+        default_factory=lambda: frozenset({
             "approve", "reject", "edit_result", "summarize",
-        },
+        }),
         repr=False,
     )
 
@@ -64,7 +64,7 @@ class PendingToolResult(Pending):
                 "Cannot approve: no execute function set. "
                 "This PendingToolResult was not created by Tract.tool_result()."
             )
-        self.status = "approved"
+        self.status = PendingStatus.APPROVED
         self._result = self._execute_fn(self)
         return self._result
 

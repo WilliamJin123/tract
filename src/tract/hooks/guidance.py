@@ -10,10 +10,21 @@ Mixed into PendingCompress and PendingMerge.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-if TYPE_CHECKING:
-    pass
+
+@runtime_checkable
+class GuidanceHost(Protocol):
+    """Structural contract for classes that mix in GuidanceMixin.
+
+    Pending subclasses using GuidanceMixin must declare these fields
+    and methods. Enforced at type-check time (mypy/pyright).
+    """
+
+    guidance: str | None
+    guidance_source: str | None
+
+    def _require_pending(self) -> None: ...
 
 
 class GuidanceMixin:
@@ -21,10 +32,15 @@ class GuidanceMixin:
 
     Mixed into PendingCompress and PendingMerge.
 
-    Fields (set on the dataclass that mixes this in):
-    - guidance: str | None -- the guidance text
-    - guidance_source: str | None -- None (one-shot) | "user" | "llm" | "user+llm"
+    Host classes must satisfy :class:`GuidanceHost` (i.e. declare
+    ``guidance``, ``guidance_source``, and ``_require_pending()``).
     """
+
+    if TYPE_CHECKING:
+        # Let type checkers see the fields from GuidanceHost
+        guidance: str | None
+        guidance_source: str | None
+        def _require_pending(self) -> None: ...
 
     def edit_guidance(self, new_guidance: str) -> None:
         """Replace the current guidance text.
@@ -35,17 +51,17 @@ class GuidanceMixin:
         Raises:
             RuntimeError: If status is not "pending".
         """
-        self._require_pending()  # type: ignore[attr-defined]  # from Pending base
-        self.guidance = new_guidance  # type: ignore[attr-defined]
+        self._require_pending()
+        self.guidance = new_guidance
         # Track that guidance was user-edited
-        if self.guidance_source in (None, "llm"):  # type: ignore[attr-defined]
-            self.guidance_source = "user"  # type: ignore[attr-defined]
-        elif self.guidance_source == "user":  # type: ignore[attr-defined]
+        if self.guidance_source in (None, "llm"):
+            self.guidance_source = "user"
+        elif self.guidance_source == "user":
             # Already user, keep it
             pass
         else:
             # "user+llm" or anything else -- user is editing
-            self.guidance_source = "user+llm"  # type: ignore[attr-defined]
+            self.guidance_source = "user+llm"
 
     def regenerate_guidance(self, **llm_overrides: Any) -> str:
         """Re-generate guidance using LLM.
