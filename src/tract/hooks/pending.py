@@ -31,6 +31,9 @@ class PendingStatus(str, Enum):
     REJECTED = "rejected"
     PASSED_THROUGH = "passed_through"
 
+    def __repr__(self) -> str:
+        return self.value
+
     def __str__(self) -> str:
         return self.value
 

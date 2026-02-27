@@ -22,6 +22,12 @@ class ConflictType(str, enum.Enum):
     SKIP_VS_EDIT = "skip_vs_edit"
     EDIT_PLUS_APPEND = "edit_plus_append"
 
+    def __repr__(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
+
 
 class ConflictInfo(BaseModel):
     """Rich context for a single merge conflict, passed to the resolver.
@@ -77,6 +83,14 @@ class ConflictInfo(BaseModel):
             return None
         return text.strip()
 
+    def __repr__(self) -> str:
+        th = (self.target_hash or "")[:8]
+        return f"ConflictInfo({self.conflict_type.value} target={th})"
+
+    def __str__(self) -> str:
+        th = (self.target_hash or "")[:8]
+        return f"{self.conflict_type.value} conflict at {th}"
+
     def pprint(self) -> None:
         """Pretty-print this conflict as a git-style diff."""
         from tract.formatting import pprint_conflict_info
@@ -119,6 +133,24 @@ class MergeResult(BaseModel):
         """
         self.resolutions[target_hash] = new_content
 
+    def __repr__(self) -> str:
+        n = len(self.conflicts)
+        status = "committed" if self.committed else "pending"
+        return (
+            f"MergeResult({self.merge_type} "
+            f"{self.source_branch}->{self.target_branch} "
+            f"conflicts={n} {status})"
+        )
+
+    def __str__(self) -> str:
+        n = len(self.conflicts)
+        status = "committed" if self.committed else "pending"
+        return (
+            f"{self.merge_type} merge "
+            f"{self.source_branch}->{self.target_branch} "
+            f"({n} conflicts, {status})"
+        )
+
     def pprint(self) -> None:
         """Pretty-print this merge result summary."""
         from tract.formatting import pprint_merge_result
@@ -144,6 +176,14 @@ class RebaseWarning(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
+    def __repr__(self) -> str:
+        return f"RebaseWarning({self.warning_type} commit={self.commit!s})"
+
+    def __str__(self) -> str:
+        if self.description:
+            return f"{self.warning_type}: {self.description}"
+        return self.warning_type
+
 
 class ImportIssue(BaseModel):
     """Issue detected during import-commit."""
@@ -155,6 +195,14 @@ class ImportIssue(BaseModel):
     description: str = ""
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def __repr__(self) -> str:
+        return f"ImportIssue({self.issue_type} commit={self.commit!s})"
+
+    def __str__(self) -> str:
+        if self.description:
+            return f"{self.issue_type}: {self.description}"
+        return self.issue_type
 
 
 class RebaseResult(BaseModel):
@@ -168,6 +216,16 @@ class RebaseResult(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
+    def __repr__(self) -> str:
+        n = len(self.replayed_commits)
+        w = len(self.warnings)
+        return f"RebaseResult(replayed={n} warnings={w})"
+
+    def __str__(self) -> str:
+        n = len(self.replayed_commits)
+        head = (self.new_head or "")[:8]
+        return f"rebase: {n} commits replayed, head={head}"
+
 
 class ImportResult(BaseModel):
     """Result of an import-commit operation."""
@@ -178,3 +236,13 @@ class ImportResult(BaseModel):
     resolutions: dict[str, str] = {}
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def __repr__(self) -> str:
+        orig = str(self.original_commit) if self.original_commit else "None"
+        n = len(self.issues)
+        return f"ImportResult(original={orig} issues={n})"
+
+    def __str__(self) -> str:
+        orig = str(self.original_commit) if self.original_commit else "?"
+        new = str(self.new_commit) if self.new_commit else "?"
+        return f"import {orig} -> {new}"

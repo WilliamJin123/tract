@@ -37,6 +37,12 @@ class CommitOperation(str, enum.Enum):
     APPEND = "append"
     EDIT = "edit"
 
+    def __repr__(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
+
 
 class CommitInfo(BaseModel):
     """SDK-facing commit information model.

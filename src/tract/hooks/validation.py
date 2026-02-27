@@ -33,6 +33,18 @@ class ValidationResult:
     diagnosis: str | None = None
     index: int | None = None
 
+    def __repr__(self) -> str:
+        status = "passed" if self.passed else "failed"
+        idx = f" index={self.index}" if self.index is not None else ""
+        return f"ValidationResult({status}{idx})"
+
+    def __str__(self) -> str:
+        if self.passed:
+            return "passed"
+        msg = self.diagnosis or "failed"
+        idx = f" (index {self.index})" if self.index is not None else ""
+        return f"{msg}{idx}"
+
 
 @dataclass(frozen=True)
 class HookRejection:
@@ -54,6 +66,15 @@ class HookRejection:
     pending: Pending
     rejection_source: str  # "hook", "handler", "validation"
     metadata: dict | None = None
+
+    def __repr__(self) -> str:
+        reason = self.reason
+        if len(reason) > 60:
+            reason = reason[:57] + "..."
+        return f"HookRejection({self.rejection_source}: {reason!r})"
+
+    def __str__(self) -> str:
+        return f"{self.rejection_source}: {self.reason}"
 
     def __post_init__(self) -> None:
         valid_sources = {"hook", "handler", "validation"}
