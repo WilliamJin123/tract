@@ -3872,6 +3872,12 @@ class Tract:
             from tract.exceptions import CompressionError
             raise CompressionError("Compression repository not available")
 
+        # If inside a hook, nested operations (e.g. tool_result) may have
+        # advanced HEAD. Refresh the expected head so the TOCTOU guard passes.
+        expected_head = pending._head_hash
+        if self._in_hook:
+            expected_head = self._ref_repo.get_head(self._tract_id)
+
         # Use savepoint for atomic rollback on partial failure
         nested = self._session.begin_nested()
         try:
@@ -3896,7 +3902,7 @@ class Tract:
                 system_prompt=pending._system_prompt,
                 branch_name=pending._branch_name,
                 type_registry=self._custom_type_registry,
-                expected_head=pending._head_hash,
+                expected_head=expected_head,
                 generation_config=getattr(pending, '_generation_config', None),
             )
         except Exception:

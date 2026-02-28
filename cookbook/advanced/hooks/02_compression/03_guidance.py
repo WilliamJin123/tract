@@ -49,7 +49,7 @@ def guidance() -> None:
         print(f"\n  Conversation BEFORE compression:")
         ctx_before = t.compile()
         print(f"    {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
-        ctx_before.pprint(style="compact")
+        ctx_before.pprint(style="chat")
 
         # Get pending to inspect guidance
         pending: PendingCompress = t.compress(target_tokens=150, review=True)
@@ -79,7 +79,7 @@ def guidance() -> None:
         print(f"\n  Conversation AFTER compression:")
         ctx_after = t.compile()
         print(f"    {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
-        ctx_after.pprint(style="compact")
+        ctx_after.pprint(style="chat")
 
         # --- Hook handler that uses guidance ---
         print("\n  Hook handler that auto-sets guidance:")
@@ -100,7 +100,7 @@ def guidance() -> None:
         print(f"\n    BEFORE compression:")
         ctx_before = t.compile()
         print(f"      {len(ctx_before.messages)} messages, {ctx_before.token_count} tokens")
-        ctx_before.pprint(style="compact")
+        ctx_before.pprint(style="chat")
 
         result: CompressResult | PendingCompress = t.compress(target_tokens=150)
 
@@ -112,7 +112,7 @@ def guidance() -> None:
         print(f"\n    AFTER compression:")
         ctx_after = t.compile()
         print(f"      {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
-        ctx_after.pprint(style="compact")
+        ctx_after.pprint(style="chat")
 
         t.print_hooks()
 

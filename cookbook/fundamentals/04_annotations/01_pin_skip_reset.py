@@ -53,7 +53,7 @@ def part1_annotations():
         "Quantization reduces model weights from FP16/FP32 to lower precision "
         "(INT8, INT4, even binary). Post-training quantization (PTQ) is fastest — "
         "no retraining needed. GPTQ, AWQ, and SmoothQuant are the leading methods. "
-        "INT4 can cut memory 4× with under 1% accuracy loss on most benchmarks."
+        "INT4 can cut memory 4x with under 1% accuracy loss on most benchmarks."
     )
 
     # --- Unpin the system prompt ---
