@@ -254,6 +254,11 @@ def pending_to_dict(pending: Any) -> dict:
         # Truncate large values, then convert to JSON-serializable form
         fields[f.name] = _serialize_value(_truncate_for_llm(value))
 
+    # Include dynamic fields dict if present (for dynamic operations)
+    if hasattr(pending, 'fields') and isinstance(pending.fields, dict):
+        for k, v in pending.fields.items():
+            fields[k] = _serialize_value(_truncate_for_llm(v))
+
     return {
         "operation": pending.operation,
         "pending_id": pending.pending_id,

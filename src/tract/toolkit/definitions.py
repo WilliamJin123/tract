@@ -32,7 +32,7 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
     Returns:
         List of 15 ToolDefinition objects.
     """
-    return [
+    tools = [
         # 1. commit
         ToolDefinition(
             name="commit",
@@ -406,6 +406,48 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
             handler=lambda commit_hash: _handle_get_commit(tract, commit_hash),
         ),
     ]
+
+    # Append tools for dynamic operations
+    for op_name in sorted(tract._operation_registry.operation_names):
+        spec = tract._operation_registry.get_spec(op_name)
+        if spec is not None:
+            tools.append(ToolDefinition(
+                name=f"fire_{op_name}",
+                description=spec.description,
+                parameters=_spec_fields_to_json_schema(spec.fields),
+                handler=lambda fields=None, _name=op_name: tract.fire(_name, fields=fields),
+            ))
+
+    return tools
+
+
+def _spec_fields_to_json_schema(field_specs: dict) -> dict:
+    """Convert dynamic operation field specs to JSON Schema format."""
+    _type_to_schema: dict[str, str] = {
+        "str": "string",
+        "int": "integer",
+        "float": "number",
+        "bool": "boolean",
+        "list": "array",
+        "dict": "object",
+        "list[str]": "array",
+        "list[int]": "array",
+        "dict[str, str]": "object",
+    }
+
+    properties: dict = {}
+    for fname, fdef in field_specs.items():
+        ftype = fdef.get("type", "string")
+        schema_type = _type_to_schema.get(ftype, "string")
+        prop: dict = {"type": schema_type}
+        if "description" in fdef:
+            prop["description"] = fdef["description"]
+        properties[fname] = prop
+
+    return {
+        "type": "object",
+        "properties": properties,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -106,6 +106,38 @@ def _fallback_message(content_type: str, text: str) -> str:
     return preview
 
 
+_FIELD_TYPE_CHECK: dict[str, type | tuple] = {
+    "str": str,
+    "int": (int,),
+    "float": (int, float),
+    "bool": (bool,),
+    "list": list,
+    "dict": dict,
+    "list[str]": list,
+    "list[int]": list,
+}
+
+
+def _validate_dynamic_fields(fields: dict, field_specs: dict) -> dict:
+    """Validate and apply defaults for dynamic operation fields.
+
+    Raises ValueError if a provided field value doesn't match its declared type.
+    Applies defaults from spec for missing fields.
+    """
+    result = dict(fields)
+    for fname, fdef in field_specs.items():
+        if fname not in result:
+            if "default" in fdef:
+                result[fname] = fdef["default"]
+        elif fdef.get("type") in _FIELD_TYPE_CHECK:
+            expected = _FIELD_TYPE_CHECK[fdef["type"]]
+            if not isinstance(result[fname], expected):
+                raise ValueError(
+                    f"Field {fname!r}: expected {fdef['type']}, got {type(result[fname]).__name__}"
+                )
+    return result
+
+
 @dataclass
 class _HookEntry:
     """Internal named wrapper for a registered hook handler."""
@@ -196,6 +228,11 @@ class Tract:
         self._tool_summarization_config: ToolSummarizationConfig | None = None
         self._commit_reasoning: bool = True
         self._auto_summarize: bool = False
+
+        # Dynamic operations registry
+        from tract.hooks.registry import OperationRegistry
+        self._operation_registry = OperationRegistry()
+        self._custom_hookable_ops: set[str] = set()
 
     @classmethod
     def open(
@@ -4538,6 +4575,12 @@ class Tract:
         # Apply profile filtering
         filtered = resolved_profile.filter_tools(all_tools)
 
+        # Include dynamic operation tools (not in static profile configs)
+        filtered_names = {t.name for t in filtered}
+        for tool in all_tools:
+            if tool.name.startswith("fire_") and tool.name not in filtered_names:
+                filtered.append(tool)
+
         # Apply overrides
         if overrides:
             from dataclasses import replace as _replace
@@ -4769,6 +4812,111 @@ class Tract:
                 self._orchestrator.pause()  # type: ignore[union-attr]
 
     # ------------------------------------------------------------------
+    # Dynamic operations
+    # ------------------------------------------------------------------
+
+    def register_operation(
+        self,
+        spec: object,
+        *,
+        review: bool = False,
+    ) -> type | None:
+        """Register a dynamic hookable operation.
+
+        SECURITY: The caller is responsible for vetting code strings in the spec
+        before registration. When LLMs generate specs, the host application should
+        inspect the spec (especially ActionDef.code) before calling this method.
+
+        Args:
+            spec: The OperationSpec with fields and action code.
+            review: If True, compile and return the Pending subclass for inspection
+                without activating the operation. Call again with review=False to activate.
+
+        Returns:
+            If review=True, the compiled Pending subclass. Otherwise None.
+        """
+        cls = self._operation_registry.register(spec)
+        if review:
+            self._operation_registry.unregister(spec.name)
+            return cls
+        self._custom_hookable_ops.add(spec.name)
+        return None
+
+    def unregister_operation(self, name: str) -> None:
+        """Remove a dynamic operation and clean up all associated state."""
+        self._operation_registry.unregister(name)
+        self._custom_hookable_ops.discard(name)
+        self.off(name)
+
+    def fire(
+        self,
+        operation: str,
+        fields: dict | None = None,
+        *,
+        execute_fn: object | None = None,
+        review: bool = False,
+        triggered_by: str | None = None,
+    ) -> object:
+        """Fire a dynamic operation.
+
+        Creates a Pending instance from the registered OperationSpec,
+        attaches execute_fn (wrapped with provenance recording),
+        and routes through _fire_hook().
+
+        Args:
+            operation: Registered operation name.
+            fields: Dict of operation-specific fields.
+            execute_fn: Optional finalizer called on approve().
+            review: If True, return the Pending for manual review.
+            triggered_by: Provenance string.
+
+        Returns:
+            If review=True: the Pending instance.
+            If approved with execute_fn: the execute_fn's return value.
+            If approved without execute_fn: the Pending (status=APPROVED).
+            If rejected/unresolved: the Pending.
+        """
+        from tract.hooks.pending import PendingStatus
+
+        spec = self._operation_registry.get_spec(operation)
+        cls = self._operation_registry.get_class(operation)
+        if cls is None or spec is None:
+            raise ValueError(f"Unknown dynamic operation: {operation!r}")
+
+        resolved_fields = _validate_dynamic_fields(fields or {}, spec.fields)
+        pending = cls(tract=self, fields=resolved_fields, triggered_by=triggered_by)
+
+        original_fn = execute_fn
+        if original_fn is not None:
+            def _wrapped_execute(p):
+                result = original_fn(p)
+                if self._event_repo is not None:
+                    self._event_repo.save_event(
+                        event_id=uuid.uuid4().hex,
+                        tract_id=self._tract_id,
+                        event_type=f"custom:{operation}",
+                        branch_name=None,
+                        created_at=datetime.now(),
+                        original_tokens=0,
+                        compressed_tokens=0,
+                        params_json=p.fields if p.fields else None,
+                    )
+                return result
+            pending._execute_fn = _wrapped_execute
+        else:
+            # No-op execute_fn so approve() works without raising
+            pending._execute_fn = lambda p: None
+
+        if review:
+            return pending
+
+        self._fire_hook(pending)
+
+        if pending.status == PendingStatus.APPROVED and original_fn is not None:
+            return pending._result
+        return pending
+
+    # ------------------------------------------------------------------
     # Hook system
     # ------------------------------------------------------------------
 
@@ -4807,10 +4955,11 @@ class Tract:
                 multiple positioning args, or named target not found.
             IndexError: If ``at`` is out of range.
         """
-        if operation != "*" and operation not in self._HOOKABLE_OPS:
+        _all_hookable = self._HOOKABLE_OPS | self._custom_hookable_ops
+        if operation != "*" and operation not in _all_hookable:
             raise ValueError(
                 f"Cannot hook '{operation}': not a hookable operation. "
-                f"Hookable operations: {', '.join(sorted(self._HOOKABLE_OPS))}"
+                f"Hookable operations: {', '.join(sorted(_all_hookable))}"
             )
 
         # Normalize before=False to None
