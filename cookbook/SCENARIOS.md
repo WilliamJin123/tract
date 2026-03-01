@@ -1,76 +1,154 @@
 # Tract Cookbook — Scenarios
 
-The cookbook is organized as a three-tier progression. **Fundamentals** build the mental model: no LLM required, no assumptions about your use case. **Patterns** show real workflows with live LLM calls — each one is a self-contained scenario you can run and adapt. **Advanced** covers power features: hooks, triggers, the orchestrator, and multi-agent coordination. **Compositions** combine features from all three tiers into end-to-end real-world applications.
+The cookbook is organized by **what you're doing**, not by difficulty level. **Basics** covers the core mental model. **Operations** groups history-modifying actions (compress, merge, branch, rebase, gc, rollback). **Metadata** covers data you attach to commits (tags, priorities, tool results, reasoning). **Config** handles LLM routing and budgets. **Queries** and **Validation** cover inspection and retry patterns. **Hooks** provide the approval layer. **Orchestrator** and **Multi-Agent** handle autonomous and multi-agent workflows. **E2E** combines everything into real-world scenarios.
 
-Work through the tiers in order if you're new. Jump to any individual file if you know what you need — every file is standalone.
+Every file is standalone — jump to any individual file if you know what you need.
 
 ## File Tree
 
 ```
 cookbook/
 ├── SCENARIOS.md
-├── fundamentals/                     # Tier 1: Core mental model + basic operations
-│   ├── 01_commit_and_compile.py      # Tract.open, commit(), compile(), CompiledContext
-│   ├── 02_shorthand_and_format.py    # system/user/assistant, to_openai/anthropic/dicts
-│   ├── 03_status_and_budget.py       # status(), TractConfig, token budget tracking
-│   ├── 04_annotations.py            # pin, skip, important, edit-in-place, annotate()
-│   ├── 05_log_diff_time_travel.py   # log, show, diff, checkout, reset, compile(at_commit=)
-│   ├── 06_batch_and_rollback.py     # batch() context manager, atomic operations
-│   ├── 07_branching.py              # branch, switch, delete, list, FF merge, clean merge
-│   ├── 08_tool_calling.py           # agentic loop, tool_result, compress_tool_calls, query API, auto-summarization
-│   ├── 09_reasoning_traces.py       # t.reasoning(), compile(include_reasoning=), pprint, LLM auto-extract
-│   └── 10_tags.py                   # auto-classify, explicit tags, mutable annotations, tag registry, query_by_tags
+├── 00_basics/                           # Core mental model + basic operations
+│   ├── 01_commit_and_compile.py         # Tract.open, commit(), compile(), CompiledContext
+│   ├── 02_shorthand_and_format.py       # system/user/assistant, to_openai/anthropic/dicts
+│   ├── 03_status_and_budget.py          # status(), TractConfig, token budget tracking
+│   ├── 04_log_and_diff.py              # log, show, diff, compile(at_commit=), compile(at_time=)
+│   ├── 05_batch_and_rollback.py         # batch() context manager, atomic operations
+│   └── 06_chat_and_persist.py           # chat(), ChatResponse, persistence, session resume
 │
-├── patterns/                         # Tier 2: Real workflows with LLM
-│   ├── 01_chat_and_persist.py       # chat(), ChatResponse, persistence, session resume
-│   ├── 02_budget_guardrail.py       # status loop, budget check before chat, auto-stop
-│   ├── 03_llm_config.py            # per-call config, defaults, per-op configs/clients, resolution chain
-│   ├── 04_compression.py           # manual, LLM, target_tokens, guided, collaborative review
-│   ├── 05_important_and_retain.py   # IMPORTANT priority + retain_match through compression
-│   ├── 06_merge_conflicts.py        # conflict detection, manual resolution, commit_merge
-│   ├── 07_rebase_and_import.py      # import_commit (cherry-pick), rebase
-│   ├── 08_gc_and_reorder.py         # gc, archive retention, compile(order=), hook review
-│   ├── 09_provenance.py            # config provenance, tool provenance, edit history
-│   ├── 09_retry_and_validation/
-│   │   ├── 01_core_primitive.py     # retry_with_steering + LLM, RetryResult, RetryExhaustedError
-│   │   ├── 02_chat_validation.py    # chat(validator=), purify=, provenance_note=, retry_prompt=
-│   │   └── 03_compress_validation.py # compress(validator=), retain_match= combo, guided+validated
-│   └── 11_tool_query_and_audit.py   # find_tool_results/calls/turns, ToolTurn, tool_result(edit=), selective compress
+├── operations/                          # History-modifying operations
+│   ├── compress/
+│   │   ├── 01_manual.py                # compress(content=), PINNED preservation, preserve=
+│   │   ├── 02_llm_auto.py             # compress(target_tokens=), instructions=, system_prompt=
+│   │   ├── 03_guided.py               # IMPORTANT priority + guided compression
+│   │   ├── 04_collaborative_review.py  # auto_commit=False, PendingCompress, edit_summary
+│   │   ├── 05_important_and_retain.py  # retain=, retain_match=, retain_match_mode=
+│   │   └── sample_contract.md          # Sample data for compression demos
+│   ├── merge/
+│   │   ├── 01_merge_strategies.py      # FF merge, clean merge, no_ff, delete_branch
+│   │   └── 02_merge_conflicts.py       # ConflictInfo, edit_resolution, commit_merge
+│   ├── branch/
+│   │   └── 01_branch_lifecycle.py      # branch, switch, list, delete, create without switch
+│   ├── rebase/
+│   │   ├── 01_import_commit.py         # import_commit (cherry-pick), ImportResult
+│   │   └── 02_rebase.py               # rebase, RebaseResult, replayed_commits
+│   ├── gc/
+│   │   ├── 01_gc_after_compression.py  # gc(), GCResult, archive retention
+│   │   ├── 02_retention_policies.py    # archive_retention_days, conservative vs aggressive
+│   │   └── 03_message_reordering.py    # compile(order=), ReorderWarning
+│   └── rollback/
+│       └── 01_rollback.py              # checkout, reset, compile(at_commit=)
 │
-├── advanced/                         # Tier 3: Power features
-│   ├── hooks/
-│   │   ├── 01_concept.py            # t.on/off, Pending, three-tier routing, review=True
-│   │   ├── 02_compress_review.py    # PendingCompress, edit_summary, approve/reject
-│   │   ├── 03_gc_rebase_merge.py    # PendingGC, PendingRebase, PendingMerge, exclude()
-│   │   ├── 04_guidance.py           # GuidanceMixin, two-stage reasoning, edit_guidance
-│   │   ├── 05_agent_interface.py    # to_dict, to_tools, describe_api, apply_decision
-│   │   └── 06_tool_result_hooks.py  # PendingToolResult, edit/summarize/reject, configure_tool_summarization
-│   ├── triggers/
-│   │   └── 01_autonomous_triggers.py # 7 built-in triggers, hook interception, autonomy spectrum
-│   ├── orchestrator/
-│   │   ├── 01_toolkit.py            # as_tools, profiles, ToolExecutor
-│   │   └── 02_orchestrator_loop.py  # triggers, assessment, HITL via hooks
-│   └── multi_agent/
-│       ├── 01_parent_child.py       # child tracts, provenance
-│       ├── 02_delegation.py         # branch-delegate-merge, compress-and-ingest
-│       └── 03_curated_deploy.py     # session.deploy(), curation pipeline, merge-back
+├── metadata/                            # Data attached to commits
+│   ├── tags/
+│   │   ├── 01_classify_and_query.py    # auto-classify, explicit tags, mutable tags, registry, queries
+│   │   └── 02_llm_auto_tagger.py      # orchestrator-driven tagging via tools
+│   ├── priority/
+│   │   ├── 01_pin_skip_reset.py        # annotate(), Priority.PINNED/SKIP/NORMAL
+│   │   └── 02_edit_in_place.py         # system(edit=hash), edit-in-place workflow
+│   ├── tool_results/
+│   │   ├── 01_agentic_loop.py          # set_tools, tool_result, compress_tool_calls
+│   │   ├── 02_auto_summarization.py    # configure_tool_summarization, auto-summarize
+│   │   ├── 03_offline_tool_management.py # tool management without LLM calls
+│   │   └── dummy_file.py              # Search target for agentic loop demo
+│   └── reasoning/
+│       ├── 01_manual_reasoning.py      # t.reasoning(), ReasoningContent, SKIP default
+│       ├── 02_compile_control.py       # compile(include_reasoning=True), annotate overrides
+│       ├── 03_formatting.py            # pprint reasoning in dim cyan
+│       └── 04_llm_integration.py       # generate() auto-extract, reasoning=False, commit_reasoning=
 │
-└── compositions/                     # Real-world scenarios combining features
-    ├── self_correcting_agent.py      # retry + edit + validation + provenance
-    ├── long_running_session.py       # triggers + compression + gc + 50+ turns
-    ├── ab_testing.py                 # branch + config + diff + provenance query
-    ├── context_forensics.py          # log + time-travel + branch + rebase
-    ├── research_delegation.py        # multi-agent + compress + merge
-    └── autonomous_steering.py        # orchestrator + triggers + hooks + drift
+├── config/                              # LLM routing, budgets, generation config
+│   ├── 01_per_call_config.py           # LLMConfig on chat/generate, sugar params
+│   ├── 02_operation_config.py          # configure_operations, per-op LLMConfig
+│   ├── 03_operation_clients.py         # configure_clients, separate LLM clients per op
+│   ├── 04_resolution_chain.py          # 4-level chain: sugar > llm_config > operation > default
+│   ├── 05_summarize_config.py          # compression-specific LLM config
+│   └── 06_budget_guardrail.py          # status() loop, budget check before chat, auto-stop
+│
+├── queries/                             # Inspecting and auditing history
+│   ├── 01_query_api.py                 # find_tool_results, find_tool_calls, find_tool_turns
+│   ├── 02_surgical_edits.py            # tool_result(edit=hash), trimming verbose results
+│   ├── 03_selective_compression.py     # compress_tool_calls(name=), targeted compression
+│   ├── 04_config_provenance.py         # query_by_config, generation_config tracking
+│   ├── 05_tool_provenance.py           # set_tools, get_commit_tools, to_openai_params
+│   └── 06_edit_history.py              # log(include_edits=True), edit chain tracking
+│
+├── validation/                          # Retry and validation patterns
+│   ├── 01_core_primitive.py            # retry_with_steering, RetryResult, RetryExhaustedError
+│   ├── 02_chat_validation.py           # chat(validator=), purify=, provenance_note=, retry_prompt=
+│   └── 03_compress_validation.py       # compress(validator=), retain_match= combo
+│
+├── hooks/                               # Approval layer for operations
+│   ├── 01_registration/
+│   │   ├── 01_routing.py              # t.on/off, three-tier routing, review=True
+│   │   ├── 02_catch_all.py            # Catch-all handlers
+│   │   └── 03_recursion_guard.py      # Preventing hook recursion
+│   ├── 02_compression/
+│   │   ├── 01_lifecycle.py            # PendingCompress lifecycle
+│   │   ├── 02_handler_patterns.py     # Common handler patterns
+│   │   ├── 03_guidance.py             # GuidanceMixin, two-stage reasoning
+│   │   ├── 04_retry_validate.py       # Retry and validate in hooks
+│   │   └── 05_two_stage.py            # Two-stage judgment + execution
+│   ├── 03_operations/
+│   │   ├── 01_gc.py                   # PendingGC, exclude()
+│   │   ├── 02_rebase.py              # PendingRebase, replay inspection
+│   │   ├── 03_merge_conflicts.py      # PendingMerge, conflict review
+│   │   └── 04_merge_retry.py         # Merge retry patterns
+│   ├── 04_tool_results/
+│   │   ├── 01_basics.py              # PendingToolResult, approve/reject/edit
+│   │   ├── 02_edit_and_summarize.py   # edit_result, summarize(instructions=)
+│   │   ├── 03_declarative_config.py   # configure_tool_summarization()
+│   │   └── 04_custom_routing.py       # Per-tool routing strategies
+│   ├── 05_agent_interface/
+│   │   ├── 01_to_dict.py             # Pending.to_dict() for serialization
+│   │   ├── 02_to_tools.py            # Pending.to_tools() for function calling
+│   │   ├── 03_describe_api.py        # Pending.describe_api() human-readable
+│   │   └── 04_dispatch.py            # apply_decision() routing
+│   ├── 06_token_tolerance/
+│   │   ├── 01_basic_gate.py          # Token budget gate
+│   │   ├── 02_auto_truncate.py       # Auto-truncate on threshold
+│   │   ├── 03_middleware_enforcer.py  # Middleware-style enforcement
+│   │   └── 04_dynamic_budget.py      # Dynamic budget adjustment
+│   ├── 07_ordering_middleware/
+│   │   ├── 01_ordering_basics.py     # Message ordering hooks
+│   │   ├── 02_pass_through.py        # Pass-through patterns
+│   │   ├── 03_conditional.py         # Conditional ordering
+│   │   ├── 04_dynamic_insertion.py   # Dynamic message insertion
+│   │   └── 05_full_pipeline.py       # Full ordering pipeline
+│   └── 08_dynamic_operations/
+│       ├── 01_register_and_fire.py   # Dynamic hook registration
+│       ├── 02_introspection.py       # Hook introspection
+│       └── 03_review_and_execute.py  # Review-then-execute pattern
+│
+├── orchestrator/                        # Autonomous agent operations
+│   ├── 01_toolkit.py                   # as_tools, profiles, ToolExecutor
+│   ├── 02_orchestrator_loop.py         # OrchestratorConfig, assessment loop, HITL
+│   └── 03_triggers.py                 # Built-in triggers, autonomy spectrum, hook interception
+│
+├── multi_agent/                         # Multi-agent coordination
+│   ├── 01_parent_child.py             # Child tracts, provenance, parent()
+│   ├── 02_delegation.py               # Branch-delegate-merge, compress-and-ingest
+│   └── 03_curated_deploy.py           # session.deploy(), curation, merge-back
+│
+└── e2e/                                 # End-to-end scenarios combining features
+    ├── self_correcting_agent.py         # retry + edit + validation + provenance
+    ├── long_running_session.py          # triggers + compression + gc + 50+ turns
+    ├── ab_testing.py                    # branch + config + diff + provenance query
+    ├── context_forensics.py             # log + time-travel + branch + rebase
+    ├── research_delegation.py           # multi-agent + compress + merge
+    └── autonomous_steering.py           # orchestrator + triggers + hooks + drift
 ```
 
 ---
 
-# Tier 1: Fundamentals
+# Basics
 
 The primitives. No LLM key required for most files. Read these to understand what tract is and how it works internally before adding LLM calls on top.
 
 ## 01 — Commit and Compile
+
+**File:** `00_basics/01_commit_and_compile.py`
 
 **Use case:** You want to understand what tract is actually doing under the hood — no shortcuts, no magic.
 
@@ -80,6 +158,8 @@ Open an in-memory tract with `Tract.open()`. Commit a system prompt, a user mess
 
 ## 02 — Shorthand and Format Methods
 
+**File:** `00_basics/02_shorthand_and_format.py`
+
 **Use case:** You know how commit/compile works and want the convenience layer. You also need to format output for a specific LLM provider.
 
 Replace manual content model commits with `system()`, `user()`, and `assistant()` — same result, three fewer imports. Then format the compiled context with `to_dicts()` for a generic list of dicts, `to_openai()` for OpenAI-ready messages, or `to_anthropic()` for Anthropic's format where the system prompt is extracted separately. `str(ctx)` gives a compact one-liner for logging; `ctx.pprint()` gives the full table.
@@ -88,29 +168,27 @@ Replace manual content model commits with `system()`, `user()`, and `assistant()
 
 ## 03 — Status and Token Budget
 
+**File:** `00_basics/03_status_and_budget.py`
+
 **Use case:** You want to know how many tokens are in the context window and how close you are to a limit — without an LLM call.
 
 Part 1 opens a tract without a budget and calls `status()` to see the raw token count and source. Part 2 sets a token budget via `TractConfig(token_budget=TokenBudgetConfig(max_tokens=...))`, adds messages, and watches the percentage fill up. `str(status)` gives a compact one-liner for loop output; `status.pprint()` gives the full panel. The budget is a tracking and guardrail tool — it does not block commits.
 
 > `TractConfig(token_budget=TokenBudgetConfig(max_tokens=))`, `status()`, `token_count`, `token_budget_max`, `str(status)`, `status.pprint()`
 
-## 04 — Annotations and Edit in Place
+## 04 — Log and Diff
 
-**Use case:** Control what the LLM sees without deleting history. Fix mistakes after the fact without losing the audit trail.
-
-Part 1 covers priority annotations without an LLM. `system()` commits are `PINNED` by default — they survive compression verbatim. `annotate(hash, Priority.SKIP)` hides a commit from `compile()` while keeping it in history. `annotate(hash, Priority.NORMAL)` removes any annotation. Part 2 uses an LLM to show edit-in-place: commit a system prompt with a mistake, chat with the LLM (it parrots the error), then fix the system prompt with `system(edit=original_hash)`, skip the stale Q&A pair, and chat again — the LLM sees the corrected version. Both versions remain in `log()`.
-
-> `annotate(hash, Priority.PINNED/SKIP/NORMAL)`, `system(edit=hash)`, `Priority` enum, `log()`, compile reflects annotations
-
-## 05 — Log, Diff, and Rollback
+**File:** `00_basics/04_log_and_diff.py`
 
 **Use case:** Walk history, compare two states, and reconstruct exactly what the LLM was seeing at any past point.
 
-`log()` returns every commit with hash, role, content type, message, and timestamp. `diff(earlier, later)` shows what changed between two commits. `compile(at_commit=hash)` rebuilds the message list as of any past commit — useful for debugging bad responses. `compile(at_time=datetime)` does the same by timestamp. `checkout(hash)` moves HEAD to a past commit for interactive inspection. `reset(hash)` moves HEAD backward permanently; orphaned commits survive until GC.
+`log()` returns every commit with hash, role, content type, message, and timestamp. `diff(earlier, later)` shows what changed between two commits. `compile(at_commit=hash)` rebuilds the message list as of any past commit — useful for debugging bad responses. `compile(at_time=datetime)` does the same by timestamp.
 
-> `log()`, `diff(hash_a, hash_b)`, `compile(at_commit=)`, `compile(at_time=)`, `checkout()`, `reset()`
+> `log()`, `diff(hash_a, hash_b)`, `compile(at_commit=)`, `compile(at_time=)`
 
-## 06 — Batch and Rollback
+## 05 — Batch and Rollback
+
+**File:** `00_basics/05_batch_and_rollback.py`
 
 **Use case:** A RAG retrieval plus user question must land as one atomic unit — partial state is worse than nothing.
 
@@ -118,45 +196,9 @@ Wrap multiple commits in `with t.batch(): ...`. If any commit fails or an except
 
 > `with t.batch(): ...`, rollback on exception, clean retry after rollback
 
-## 07 — Branching
+## 06 — Chat and Persist
 
-**Use case:** Try an experimental approach without affecting main. Merge back when done.
-
-`branch("name")` creates a new timeline from current HEAD and switches to it. `switch("main")` moves back. `list_branches()` shows all branches with a `*` on the current one. `branch("name", switch=False)` creates without switching. `delete_branch("name", force=True)` removes unmerged branches. The file also covers the two non-conflicting merge modes: **fast-forward** (branch is ahead of main, just advance the pointer) and **clean** (diverged branches with no overlapping edits, auto-merge). Conflict resolution is in `patterns/06_merge_conflicts.py`.
-
-> `branch()`, `switch()`, `list_branches()`, `current_branch`, `branch(switch=False)`, `delete_branch(force=True)`, `merge()`, fast-forward, clean merge
-
-## 08 — Tool Calling
-
-**Use case:** Build an agentic tool-calling loop where the LLM decides which tools to call, every step is committed for provenance, and verbose tool output is compressed afterward.
-
-Part 1 (agentic loop): define tools in OpenAI function-calling format, register with `set_tools()`, run a compile-call-execute loop. The agent calls `list_directory`, `read_file`, and `search_files` to find a hidden comment. Each tool call is committed as an assistant message with `metadata.tool_calls`, each result via `tool_result()`. After the agent answers, `compress_tool_calls()` collapses the verbose intermediate messages into a concise summary while preserving the final answer. Part 2 (query API + surgical edits): `find_tool_results()`, `find_tool_calls()`, and `find_tool_turns()` inspect tool history. `tool_result(edit=hash)` surgically replaces a verbose result with a trimmed version — the original is preserved in history. Part 3 (automatic summarization): `configure_tool_summarization()` sets up a hook that auto-summarizes tool results based on per-tool instructions and token thresholds.
-
-> `set_tools()`, `tool_result()`, `ToolCall`, `compress_tool_calls()`, `find_tool_results()`, `find_tool_calls()`, `find_tool_turns()`, `tool_result(edit=)`, `configure_tool_summarization()`
-
-## 09 — Reasoning Traces
-
-**Use case:** Capture LLM chain-of-thought as first-class commits — inspectable, excludable, and recoverable — without bloating the context window.
-
-Part 1 (manual commits): `t.reasoning("Let me think...")` commits a `ReasoningContent` with SKIP priority by default. The reasoning is in `log()` and the commit chain but excluded from `compile()`. Use `format=` to track the extraction source (`"parsed"`, `"think_tags"`, `"anthropic"`, `"raw"`). Part 2 (compile control): `compile(include_reasoning=True)` promotes reasoning from SKIP to NORMAL. Explicit `annotate()` calls always take precedence — PINNED reasoning always appears, explicit SKIP always hides, regardless of the `include_reasoning` flag. Part 3 (formatting): `pprint()` renders reasoning in dim cyan across all three styles, visually distinct from dialogue. Part 4 (LLM integration): `generate()` auto-extracts reasoning from provider responses (Cerebras parsed, OpenAI o1/o3, Anthropic thinking, `<think>` tags) and auto-commits before the assistant response. `generate(reasoning=False)` skips the commit but still extracts. `Tract.open(commit_reasoning=False)` disables auto-commit globally.
-
-> `t.reasoning()`, `ReasoningContent`, `compile(include_reasoning=True)`, `generate(reasoning=False)`, `Tract.open(commit_reasoning=False)`, `ChatResponse.reasoning`, `ChatResponse.reasoning_commit`, `annotate()` overrides
-
-## 10 — Semantic Tags
-
-**Use case:** Classify commits by what the content *is* (instruction, reasoning, tool_call, hypothesis) — orthogonal to priority annotations that control what to *do with* the content. Query by tags for selective context building.
-
-Part 1 (auto-classification): `system()` auto-tags with `"instruction"`, `assistant()` with `"reasoning"`, tool-calling messages with `"tool_call"`. `get_tags(hash)` shows what was assigned. Part 2 (explicit tags): `t.user("...", tags=["hypothesis"])` adds tags at commit time; auto-tags merge with explicit tags. Part 3 (mutable annotations): `t.tag(hash, "dead_end")` tags retrospectively; `t.untag()` removes. Combined with immutable commit tags in `get_tags()`. Part 4 (tag registry): `register_tag(name, description)` and `list_tags()` with counts. Strict mode rejects unregistered tags. Part 5 (queries): `query_by_tags(["reasoning"], match="any")` for OR, `match="all"` for AND, `log(tags=["reasoning"])` for filtered history.
-
-> `tags=["..."]` on system/user/assistant, `t.tag()`, `t.untag()`, `get_tags()`, `register_tag()`, `list_tags()`, `query_by_tags(match="any"|"all")`, `log(tags=)`, strict mode
-
----
-
-# Tier 2: Patterns
-
-Real workflows with live LLM calls. Each file is a self-contained scenario. Files marked as implemented exist on disk; files not yet written are described by what they will teach.
-
-## 01 — Chat and Persist
+**File:** `00_basics/06_chat_and_persist.py`
 
 **Use case:** A coding assistant that chats, persists to disk, and resumes the next session.
 
@@ -164,240 +206,636 @@ Real workflows with live LLM calls. Each file is a self-contained scenario. File
 
 > `chat()`, `ChatResponse`, `response.pprint()`, persistence with file path + `tract_id`, `log()`
 
-## 02 — Budget Guardrail Loop
+---
 
-**Use case:** A chatbot that checks its token budget before every LLM call and stops when it's running hot.
+# Operations
 
-In a multi-turn loop, check `status()` before each `chat()` call. `chat()` automatically records the API's actual token count, so the budget tracks real usage — not just tiktoken estimates. When usage exceeds a threshold (e.g., 90%), stop and indicate that compression or branching is the next step. `str(status)` is used in the loop for compact per-turn output; `status.pprint()` gives the final summary panel.
+History-modifying operations. Each folder groups related operations with progression from manual to automated.
 
-> `status()` in a loop, `chat()` auto-records usage, `record_usage()` for manual calls, `str(status)`, `status.pprint()`
+## Compress
 
-## 03 — LLM Config
+### 01 — Manual Compression
 
-**Use case:** Control which model, which settings, and which client — at every granularity from per-call overrides down to cross-framework alias handling.
+**File:** `operations/compress/01_manual.py`
 
-Part 1: pass `LLMConfig(temperature=0.9)` or sugar params directly to `chat()` or `generate()` for a one-off override. Part 2: set tract-level defaults with `default_config=LLMConfig(...)` and per-operation overrides with `configure_operations(chat=LLMConfig(...), compress=LLMConfig(...))`. Part 3: assign a different LLM client to each operation with `configure_clients(chat=openai_client, compress=ollama_client)` — LLMConfig controls settings, the client controls where requests go. Part 4: trace the 4-level resolution chain (sugar > llm_config > operation > default) and use `LLMConfig.from_dict()` for cross-framework alias handling (`stop` -> `stop_sequences`, `max_completion_tokens` -> `max_tokens`).
+**Use case:** Replace verbose history with your own summary, no LLM needed.
 
-> `LLMConfig`, `chat(temperature=)`, `generate(llm_config=)`, `default_config=`, `configure_operations()`, `configure_clients()`, `OperationConfigs`, `LLMConfig.from_dict()`
+Manual compression with `compress(content="...")` — your text replaces archived commits. PINNED commits survive verbatim. Use `preserve=[hash1, hash2]` for one-shot protection without permanent annotation.
 
-## 04 — Compression
+> `compress(content=)`, `compress(preserve=)`, PINNED preservation
 
-**Use case:** Keep conversations alive past the context window limit using manual, LLM-driven, and collaborative compression modes.
+### 02 — LLM Compression
 
-Part 1: manual compression with `compress(content="...")` — your text replaces archived commits, no LLM needed. PINNED commits survive verbatim. Use `preserve=[hash1, hash2]` for one-shot protection without permanent annotation. Part 2: LLM compression with `compress(target_tokens=200)`. PINNED passes through untouched, SKIP commits are excluded. Guide the summary with `instructions=` or replace the entire prompt with `system_prompt=`. Part 3: collaborative review with `auto_commit=False` — returns a `PendingCompress` with the LLM's draft. Inspect with `.summaries`, edit with `.edit_summary(i, text)`, then `.approve()` to finalize.
+**File:** `operations/compress/02_llm_auto.py`
 
-> `compress(content=)`, `compress(target_tokens=)`, `compress(preserve=)`, `instructions=`, `auto_commit=False`, `PendingCompress`, `edit_summary()`, `approve()`, `CompressResult`
+**Use case:** Let the LLM summarize old context to free up token budget.
 
-## 05 — IMPORTANT Priority and Retention Criteria
+LLM compression with `compress(target_tokens=200)`. PINNED passes through untouched, SKIP commits are excluded. Guide the summary with `instructions=` or replace the entire prompt with `system_prompt=`.
 
-**Use case:** Some context is too important to lose in compression. Load a real contract, discuss it over several turns, then compress with guaranteed retention of specific dollar amounts, dates, and penalty clauses.
+> `compress(target_tokens=)`, `instructions=`, `system_prompt=`
 
-`annotate(hash, Priority.IMPORTANT)` tells the compressor to be conservative. Add fuzzy guidance with `retain="preserve all dollar amounts and deadlines"` — injected into the summarization prompt. Add deterministic pattern checks with `retain_match=[r"\$2,847,000", r"Net[\s\-]*45"]` in `"regex"` mode — validated against the summary output before committing. After compression, verify the LLM still knows the key terms by calling `chat()` again.
+### 03 — Guided Compression
 
-> `Priority.IMPORTANT`, `annotate(hash, IMPORTANT, retain=, retain_match=, retain_match_mode=)`, `Priority.SKIP`, `compress(max_retries=)`, post-compression verification
+**File:** `operations/compress/03_guided.py`
 
-## 06 — Merge Conflicts
+**Use case:** Direct the LLM's summarization with IMPORTANT priority and specific guidance.
+
+`annotate(hash, Priority.IMPORTANT)` tells the compressor to be conservative with specific commits. Combine with `instructions=` for domain-specific summarization guidance.
+
+> `Priority.IMPORTANT`, `instructions=`, guided summarization
+
+### 04 — Collaborative Review
+
+**File:** `operations/compress/04_collaborative_review.py`
+
+**Use case:** A human or secondary LLM reviews and edits compression summaries before they commit.
+
+Collaborative review with `auto_commit=False` — returns a `PendingCompress` with the LLM's draft. Inspect with `.summaries`, edit with `.edit_summary(i, text)`, then `.approve()` to finalize.
+
+> `auto_commit=False`, `PendingCompress`, `edit_summary()`, `approve()`
+
+### 05 — IMPORTANT Priority and Retention
+
+**File:** `operations/compress/05_important_and_retain.py`
+
+**Use case:** Some context is too important to lose in compression. Guarantee retention of specific values.
+
+`annotate(hash, Priority.IMPORTANT)` tells the compressor to be conservative. Add fuzzy guidance with `retain="preserve all dollar amounts"`. Add deterministic checks with `retain_match=[r"\$2,847,000"]` in `"regex"` mode — validated against the summary before committing.
+
+> `Priority.IMPORTANT`, `retain=`, `retain_match=`, `retain_match_mode=`, `compress(max_retries=)`
+
+## Merge
+
+### 01 — Merge Strategies
+
+**File:** `operations/merge/01_merge_strategies.py`
+
+**Use case:** Merge branches back together using fast-forward or clean merge.
+
+The two non-conflicting merge modes: **fast-forward** (branch is ahead of main, just advance the pointer) and **clean** (diverged branches with no overlapping edits, auto-merge). Use `no_ff=True` to force a merge commit even on fast-forward. Use `delete_branch=True` to clean up after merge.
+
+> `merge()`, `MergeResult`, `merge_type`, `no_ff`, `delete_branch=True`
+
+### 02 — Merge Conflicts
+
+**File:** `operations/merge/02_merge_conflicts.py`
 
 **Use case:** Two branches both edit the same message. Detect the conflict, resolve it manually, then finalize.
 
-`merge()` returns a `MergeResult` with `merge_type` indicating what happened. For conflicts, inspect `result.conflicts` — each `ConflictInfo` shows the target commit and the competing edits from each branch. Call `result.edit_resolution(target_hash, "merged content")` to write the resolved text, then `t.commit_merge(result)` to finalize. Use `no_ff=True` to force a merge commit even on fast-forward cases. Use `delete_branch=True` to clean up after merge.
+`merge()` returns a `MergeResult`. For conflicts, inspect `result.conflicts` — each `ConflictInfo` shows the target commit and the competing edits. Call `result.edit_resolution(target_hash, "merged content")` to write the resolved text, then `t.commit_merge(result)` to finalize.
 
-> `merge()`, `MergeResult`, `merge_type`, `ConflictInfo`, `edit_resolution()`, `commit_merge()`, `no_ff`, `delete_branch=True`
+> `ConflictInfo`, `edit_resolution()`, `commit_merge()`
 
-## 07 — Rebase and Import Commit
+## Branch
 
-**Use case:** Grab one useful commit from an experiment (cherry-pick), and update a stale branch to include the latest from main (rebase).
+### 01 — Branch Lifecycle
 
-Part 1: `import_commit(hash)` copies a single commit onto the current branch with a new hash but the same content — Tract's cherry-pick. Shows that `content_hash` matches but `commit_hash` differs. Part 2: `rebase("main")` replays the current branch's commits on top of main's tip. The result has new hashes (new parentage) but the same content. `RebaseResult` exposes `replayed_commits`, `original_commits`, and `new_head`. `ctx.pprint(style="chat")` renders the conversation view.
+**File:** `operations/branch/01_branch_lifecycle.py`
 
-> `import_commit(hash)`, `ImportResult`, `rebase("main")`, `RebaseResult`, `replayed_commits`, `original_commits`, `new_head`, `pprint(style=)`
+**Use case:** Try an experimental approach without affecting main.
 
-## 08 — GC and Reorder
+`branch("name")` creates a new timeline from current HEAD and switches to it. `switch("main")` moves back. `list_branches()` shows all branches. `branch("name", switch=False)` creates without switching. `delete_branch("name", force=True)` removes unmerged branches.
 
-**Use case:** Reclaim storage after compression, control archive retention, and reorder messages for better LLM context flow.
+> `branch()`, `switch()`, `list_branches()`, `current_branch`, `delete_branch(force=True)`
 
-Part 1: compress a conversation using collaborative review (`review=True` returns a `PendingCompress`), approve the result, then run `gc(archive_retention_days=0)` to reclaim storage. `GCResult` shows commits removed, blobs removed, and tokens freed. Compiled context is unchanged — GC only touches unreachable data. Part 2: compare conservative (`archive_retention_days=None`) vs aggressive (`=0`) retention. Part 3: `compile(order=[hash_list])` reorders the compiled context by commit hash and returns `(CompiledContext, list[ReorderWarning])` with safety checks for structural issues like edits appearing before their targets.
+## Rebase
 
-> `compress(review=True)`, `PendingCompress`, `approve()`, `gc(archive_retention_days=)`, `GCResult`, `compile(order=)`, `ReorderWarning`
+### 01 — Import Commit
 
-## 09 — Provenance
+**File:** `operations/rebase/01_import_commit.py`
 
-**Use case:** "Which model produced this output? What temperature was used? What tools were available? How did this message get to its current state?"
+**Use case:** Grab one useful commit from an experiment (cherry-pick).
 
-Part 1 (config provenance): every assistant commit stores the fully-resolved `generation_config`. Query with `query_by_config()` — single-field, multi-field AND, or whole-config matching. The IN operator handles multi-value queries. Part 2 (tool provenance): `set_tools([...])` registers tool schemas that auto-link to subsequent commits. Each unique schema is content-hashed and stored once. `get_commit_tools(hash)` reconstructs exactly what tools a commit had. `to_openai_params()` and `to_anthropic_params()` return full API-ready dicts including tools. Part 3 (edit history): `log(include_edits=True)` reveals the full chain of edits, showing original and replacement commits side by side.
+`import_commit(hash)` copies a single commit onto the current branch with a new hash but the same content. `content_hash` matches but `commit_hash` differs.
 
-> `query_by_config(model=, temperature=)`, `set_tools()`, `get_commit_tools()`, `to_openai_params()`, `to_anthropic_params()`, `log(include_edits=True)`
+> `import_commit(hash)`, `ImportResult`
 
-## 09 — Retry and Validation
+### 02 — Rebase
 
-**Use case:** Validate LLM output and retry with steering when it fails. Works for chat, compression summaries, merge resolutions, or any callable.
+**File:** `operations/rebase/02_rebase.py`
 
-Part 1 (core primitive + LLM): `retry_with_steering()` takes `attempt` (produces a result), `validate` (checks it), `steer` (injects a correction), and `head_fn`/`reset_fn` for history management. Demonstrated with a live LLM call: the LLM produces JSON, a validator checks the schema, a steering message injects the correction, and the LLM retries. `RetryExhaustedError` carries `last_result` for fallback recovery. Part 2 (chat validation): `chat(validator=my_validator, max_retries=3)` wraps the LLM call. On failure, a steering message is committed as a user message — the LLM sees its mistake in context. `purify=True` resets HEAD and re-commits only the clean result. `provenance_note=True` records retry count. `retry_prompt=` customizes the steering template. `generate(validator=)` for two-step flows. Part 3 (compress validation): `compress(validator=, max_retries=)` validates summaries after LLM generation. Combine with `retain_match=` for a two-layer safety net: deterministic regex patterns + semantic validator. `instructions=` steers the summary focus; `validator=` confirms it followed instructions.
+**Use case:** Update a stale branch to include the latest from main.
 
-> `retry_with_steering()`, `RetryResult`, `RetryExhaustedError`, `chat(validator=, max_retries=, purify=, provenance_note=, retry_prompt=)`, `compress(validator=, max_retries=)`, `retain_match=` combo
+`rebase("main")` replays the current branch's commits on top of main's tip. `RebaseResult` exposes `replayed_commits`, `original_commits`, and `new_head`.
 
-## 11 — Tool Query and Audit
+> `rebase("main")`, `RebaseResult`, `replayed_commits`, `new_head`
 
-**Use case:** After an agentic tool-calling session, inspect which tools were called, how many tokens each consumed, and selectively clean up or compress the verbose ones — without touching the rest.
+## GC
 
-Part 1 (query API): `find_tool_results(name="grep")` returns all grep result commits. `find_tool_calls()` returns assistant commits that requested tool calls. `find_tool_turns()` returns `ToolTurn` objects pairing each tool-call commit with its result(s) — inspect `tool_names`, `total_tokens`, and `all_hashes`. No LLM needed. Part 2 (surgical edits): walk verbose tool results with `find_tool_results()`, replace each with a trimmed version via `tool_result(edit=hash)`. The original is preserved in history. Compare token counts before and after. Part 3 (selective compression): `compress_tool_calls(name="grep")` compresses only grep tool turns while leaving read_file and bash results untouched.
+### 01 — GC After Compression
 
-> `find_tool_results(name=, after=)`, `find_tool_calls(name=)`, `find_tool_turns(name=)`, `ToolTurn`, `tool_result(edit=)`, `compress_tool_calls(name=)`
+**File:** `operations/gc/01_gc_after_compression.py`
+
+**Use case:** Reclaim storage after compression removes history.
+
+Compress, then run `gc(archive_retention_days=0)` to reclaim storage. `GCResult` shows commits removed, blobs removed, and tokens freed. Compiled context is unchanged — GC only touches unreachable data.
+
+> `gc(archive_retention_days=)`, `GCResult`
+
+### 02 — Retention Policies
+
+**File:** `operations/gc/02_retention_policies.py`
+
+**Use case:** Control how long archived data is preserved before GC.
+
+Compare conservative (`archive_retention_days=None`) vs aggressive (`=0`) retention.
+
+> `archive_retention_days` parameter
+
+### 03 — Message Reordering
+
+**File:** `operations/gc/03_message_reordering.py`
+
+**Use case:** Reorder messages for better LLM context flow.
+
+`compile(order=[hash_list])` reorders the compiled context and returns `(CompiledContext, list[ReorderWarning])` with safety checks for structural issues.
+
+> `compile(order=)`, `ReorderWarning`
+
+## Rollback
+
+### 01 — Rollback
+
+**File:** `operations/rollback/01_rollback.py`
+
+**Use case:** Undo recent changes and go back to a known good state.
+
+`checkout(hash)` moves HEAD to a past commit for interactive inspection. `reset(hash)` moves HEAD backward permanently; orphaned commits survive until GC.
+
+> `checkout()`, `reset()`
 
 ---
 
-# Tier 3: Advanced
+# Metadata
 
-Power features for production systems. These files are stubs describing what each file will teach.
+Data attached to commits — tags, priority annotations, tool results, and reasoning traces.
 
-## Hooks
+## Tags
 
-### hooks/01 — Hook Concepts
+### 01 — Classify and Query
 
-**Use case:** Understand how tract's hook system works before using it in a real scenario.
+**File:** `metadata/tags/01_classify_and_query.py`
 
-`t.on("compress", handler)` registers a handler that fires when a compress operation completes. `t.off("compress")` removes it. The hook system has three routing tiers: auto-execute for low-risk actions, call the handler for review, fall through to the default for unhandled cases. `review=True` on any operation forces it into the review tier. The `Pending` base class carries the operation's proposal; each subclass adds operation-specific fields and methods.
+**Use case:** Classify commits by what the content *is* and query by tag.
 
-> `t.on()`, `t.off()`, `Pending` base class, three-tier routing, `review=True`
+Part 1 (auto-classification): `system()` auto-tags with `"instruction"`, `assistant()` with `"reasoning"`, tool-calling messages with `"tool_call"`. Part 2 (explicit tags): `t.user("...", tags=["hypothesis"])` adds tags at commit time. Part 3 (mutable annotations): `t.tag(hash, "dead_end")` and `t.untag()` for retrospective tagging. Part 4 (tag registry): `register_tag(name, description)` and `list_tags()`. Part 5 (queries): `query_by_tags(match="any"|"all")`, `log(tags=)`.
 
-### hooks/02 — Compress Review
+> `tags=["..."]`, `t.tag()`, `t.untag()`, `get_tags()`, `register_tag()`, `list_tags()`, `query_by_tags()`, `log(tags=)`
 
-**Use case:** A human or secondary LLM reviews and edits every compression summary before it commits.
+### 02 — LLM Auto-Tagger
 
-Register a hook on `"compress"`. The hook receives a `PendingCompress` with draft summaries, the source commit list, and token estimates. Inspect the summaries, call `edit_summary(index, new_text)` to refine them, then call `approve()` to finalize. Call `reject(reason=)` to abort. The hook can also modify `target_tokens` before deciding.
+**File:** `metadata/tags/02_llm_auto_tagger.py`
 
-> `PendingCompress`, `summaries`, `source_commits`, `edit_summary()`, `approve()`, `reject()`
+**Use case:** Let an LLM agent autonomously tag a conversation using the orchestrator.
 
-### hooks/03 — GC, Rebase, and Merge Hooks
+An orchestrator agent reviews a completed conversation and retrospectively tags each message using tract's built-in tools (register_tag, get_tags, tag). The LLM decides what tags to apply by calling tools autonomously, rather than the developer hardcoding tags at commit time.
 
-**Use case:** Require explicit approval before GC removes data, before a rebase rewrites history, or before a merge commits.
+> `Orchestrator`, `OrchestratorConfig`, `TAGGER_SYSTEM_PROMPT`, `build_tagger_task_prompt()`
 
-`PendingGC` carries the list of commits scheduled for removal — call `exclude(hash)` to protect specific commits before approving. `PendingRebase` carries the replay plan and allows inspecting `original_commits` vs `replayed_commits` before approving. `PendingMerge` carries the merge result with conflict resolutions baked in. All three follow the same `approve()`/`reject()` protocol.
+## Priority
+
+### 01 — Pin, Skip, Reset
+
+**File:** `metadata/priority/01_pin_skip_reset.py`
+
+**Use case:** Control what the LLM sees without deleting history.
+
+`system()` commits are `PINNED` by default — they survive compression verbatim. `annotate(hash, Priority.SKIP)` hides a commit from `compile()`. `annotate(hash, Priority.NORMAL)` removes any annotation.
+
+> `annotate(hash, Priority.PINNED/SKIP/NORMAL)`, `Priority` enum
+
+### 02 — Edit in Place
+
+**File:** `metadata/priority/02_edit_in_place.py`
+
+**Use case:** Fix mistakes after the fact without losing the audit trail.
+
+Commit a system prompt with a mistake, then fix with `system(edit=original_hash)`, skip the stale Q&A pair. The LLM sees the corrected version; both versions remain in `log()`.
+
+> `system(edit=hash)`, edit-in-place workflow
+
+## Tool Results
+
+### 01 — Agentic Loop
+
+**File:** `metadata/tool_results/01_agentic_loop.py`
+
+**Use case:** Build an agentic tool-calling loop where the LLM decides which tools to call, every step is committed for provenance, and verbose tool output is compressed afterward.
+
+Define tools in OpenAI function-calling format, register with `set_tools()`, run a compile-call-execute loop. Each tool call is committed as an assistant message with `metadata.tool_calls`, each result via `tool_result()`. After the agent answers, `compress_tool_calls()` collapses verbose intermediate messages into a concise summary.
+
+> `set_tools()`, `tool_result()`, `ToolCall`, `compress_tool_calls()`
+
+### 02 — Auto-Summarization
+
+**File:** `metadata/tool_results/02_auto_summarization.py`
+
+**Use case:** Automatically summarize verbose tool results based on per-tool instructions.
+
+`configure_tool_summarization()` sets up a hook that auto-summarizes tool results based on per-tool instructions and token thresholds.
+
+> `configure_tool_summarization()`, auto-summarize hooks
+
+### 03 — Offline Tool Management
+
+**File:** `metadata/tool_results/03_offline_tool_management.py`
+
+**Use case:** Query and manage tool history, surgical edits to verbose results.
+
+`find_tool_results()`, `find_tool_calls()`, and `find_tool_turns()` inspect tool history. `tool_result(edit=hash)` surgically replaces a verbose result with a trimmed version.
+
+> `find_tool_results()`, `find_tool_calls()`, `find_tool_turns()`, `tool_result(edit=)`
+
+## Reasoning
+
+### 01 — Manual Reasoning
+
+**File:** `metadata/reasoning/01_manual_reasoning.py`
+
+**Use case:** Capture LLM chain-of-thought as first-class commits.
+
+`t.reasoning("Let me think...")` commits a `ReasoningContent` with SKIP priority by default. The reasoning is in `log()` but excluded from `compile()`. Use `format=` to track the extraction source.
+
+> `t.reasoning()`, `ReasoningContent`, `format=`
+
+### 02 — Compile Control
+
+**File:** `metadata/reasoning/02_compile_control.py`
+
+**Use case:** Include or exclude reasoning from compiled context.
+
+`compile(include_reasoning=True)` promotes reasoning from SKIP to NORMAL. Explicit `annotate()` calls always take precedence — PINNED reasoning always appears, explicit SKIP always hides.
+
+> `compile(include_reasoning=True)`, `annotate()` overrides
+
+### 03 — Formatting
+
+**File:** `metadata/reasoning/03_formatting.py`
+
+**Use case:** Display reasoning traces in the terminal.
+
+`pprint()` renders reasoning in dim cyan across all three styles, visually distinct from dialogue.
+
+> `pprint()` rendering for reasoning
+
+### 04 — LLM Integration
+
+**File:** `metadata/reasoning/04_llm_integration.py`
+
+**Use case:** Auto-extract reasoning from provider responses.
+
+`generate()` auto-extracts reasoning from provider responses (Cerebras parsed, OpenAI o1/o3, Anthropic thinking, `<think>` tags) and auto-commits before the assistant response. `generate(reasoning=False)` skips the commit. `Tract.open(commit_reasoning=False)` disables globally.
+
+> `generate()` auto-extract, `reasoning=False`, `commit_reasoning=False`, `ChatResponse.reasoning`
+
+---
+
+# Config
+
+LLM routing, budgets, and generation configuration.
+
+## 01 — Per-Call Config
+
+**File:** `config/01_per_call_config.py`
+
+**Use case:** Override model settings for a single call.
+
+Pass `LLMConfig(temperature=0.9)` or sugar params directly to `chat()` or `generate()` for a one-off override.
+
+> `LLMConfig`, `chat(temperature=)`, `generate(llm_config=)`
+
+## 02 — Operation Config
+
+**File:** `config/02_operation_config.py`
+
+**Use case:** Set different defaults for chat vs compression vs other operations.
+
+Set tract-level defaults with `default_config=LLMConfig(...)` and per-operation overrides with `configure_operations(chat=LLMConfig(...), compress=LLMConfig(...))`.
+
+> `default_config=`, `configure_operations()`, `OperationConfigs`
+
+## 03 — Operation Clients
+
+**File:** `config/03_operation_clients.py`
+
+**Use case:** Route different operations to different LLM providers.
+
+Assign a different LLM client to each operation with `configure_clients(chat=openai_client, compress=ollama_client)`. LLMConfig controls settings, the client controls where requests go.
+
+> `configure_clients()`, per-operation routing
+
+## 04 — Resolution Chain
+
+**File:** `config/04_resolution_chain.py`
+
+**Use case:** Understand which config wins when multiple are set.
+
+Trace the 4-level resolution chain: sugar > llm_config > operation > default. Use `LLMConfig.from_dict()` for cross-framework alias handling (`stop` -> `stop_sequences`, `max_completion_tokens` -> `max_tokens`).
+
+> 4-level resolution chain, `LLMConfig.from_dict()`, alias handling
+
+## 05 — Summarize Config
+
+**File:** `config/05_summarize_config.py`
+
+**Use case:** Configure the LLM used specifically for compression summaries.
+
+Compression-specific LLM configuration and prompt customization.
+
+> Compression LLM config
+
+## 06 — Budget Guardrail
+
+**File:** `config/06_budget_guardrail.py`
+
+**Use case:** A chatbot that checks its token budget before every LLM call and stops when it's running hot.
+
+Check `status()` before each `chat()` call. `chat()` auto-records the API's actual token count. When usage exceeds a threshold, stop and indicate that compression or branching is the next step.
+
+> `status()` in a loop, budget threshold check, `record_usage()`
+
+---
+
+# Queries
+
+Inspecting and auditing history — provenance, tool history, and edit chains.
+
+## 01 — Query API
+
+**File:** `queries/01_query_api.py`
+
+**Use case:** Inspect which tools were called and how many tokens each consumed.
+
+`find_tool_results(name="grep")` returns all grep result commits. `find_tool_calls()` returns assistant commits that requested tool calls. `find_tool_turns()` returns `ToolTurn` objects pairing each tool-call commit with its results.
+
+> `find_tool_results(name=, after=)`, `find_tool_calls(name=)`, `find_tool_turns(name=)`, `ToolTurn`
+
+## 02 — Surgical Edits
+
+**File:** `queries/02_surgical_edits.py`
+
+**Use case:** Replace verbose tool results with trimmed versions.
+
+Walk verbose tool results with `find_tool_results()`, replace each with a trimmed version via `tool_result(edit=hash)`. The original is preserved in history.
+
+> `tool_result(edit=)`, surgical replacement
+
+## 03 — Selective Compression
+
+**File:** `queries/03_selective_compression.py`
+
+**Use case:** Compress only specific tool turns, leave others untouched.
+
+`compress_tool_calls(name="grep")` compresses only grep tool turns while leaving read_file and bash results untouched.
+
+> `compress_tool_calls(name=)`, targeted compression
+
+## 04 — Config Provenance
+
+**File:** `queries/04_config_provenance.py`
+
+**Use case:** "Which model produced this output? What temperature was used?"
+
+Every assistant commit stores the fully-resolved `generation_config`. Query with `query_by_config()` — single-field, multi-field AND, or whole-config matching. The IN operator handles multi-value queries.
+
+> `query_by_config(model=, temperature=)`, `generation_config`
+
+## 05 — Tool Provenance
+
+**File:** `queries/05_tool_provenance.py`
+
+**Use case:** "What tools were available when this response was generated?"
+
+`set_tools([...])` registers tool schemas that auto-link to subsequent commits. `get_commit_tools(hash)` reconstructs exactly what tools a commit had. `to_openai_params()` and `to_anthropic_params()` return full API-ready dicts including tools.
+
+> `set_tools()`, `get_commit_tools()`, `to_openai_params()`, `to_anthropic_params()`
+
+## 06 — Edit History
+
+**File:** `queries/06_edit_history.py`
+
+**Use case:** "How did this message get to its current state?"
+
+`log(include_edits=True)` reveals the full chain of edits, showing original and replacement commits side by side.
+
+> `log(include_edits=True)`, edit chain
+
+---
+
+# Validation
+
+Retry and validation patterns for LLM output.
+
+## 01 — Core Primitive
+
+**File:** `validation/01_core_primitive.py`
+
+**Use case:** Validate LLM output and retry with steering when it fails.
+
+`retry_with_steering()` takes `attempt` (produces a result), `validate` (checks it), `steer` (injects a correction), and `head_fn`/`reset_fn` for history management. `RetryExhaustedError` carries `last_result` for fallback recovery.
+
+> `retry_with_steering()`, `RetryResult`, `RetryExhaustedError`
+
+## 02 — Chat Validation
+
+**File:** `validation/02_chat_validation.py`
+
+**Use case:** Validate chat responses inline with retry.
+
+`chat(validator=my_validator, max_retries=3)` wraps the LLM call. On failure, a steering message is committed. `purify=True` resets HEAD and re-commits only the clean result. `provenance_note=True` records retry count.
+
+> `chat(validator=, max_retries=, purify=, provenance_note=, retry_prompt=)`
+
+## 03 — Compress Validation
+
+**File:** `validation/03_compress_validation.py`
+
+**Use case:** Validate compression summaries before committing.
+
+`compress(validator=, max_retries=)` validates summaries after LLM generation. Combine with `retain_match=` for a two-layer safety net: deterministic regex patterns + semantic validator.
+
+> `compress(validator=, max_retries=)`, `retain_match=` combo
+
+---
+
+# Hooks
+
+The approval layer for operations. Every `Pending` subclass follows the same `approve()`/`reject()` protocol. The hook system has three routing tiers: auto-execute for low-risk actions, call the handler for review, fall through to the default for unhandled cases.
+
+## 01 — Registration
+
+**Files:** `hooks/01_registration/`
+
+Hook registration, routing tiers, catch-all handlers, and recursion guards.
+
+> `t.on()`, `t.off()`, `Pending` base class, three-tier routing, `review=True`, recursion guard
+
+## 02 — Compression Hooks
+
+**Files:** `hooks/02_compression/`
+
+`PendingCompress` lifecycle, handler patterns, `GuidanceMixin` for two-stage reasoning, retry/validate in hooks, and two-stage judgment + execution.
+
+> `PendingCompress`, `edit_summary()`, `approve()`, `reject()`, `GuidanceMixin`, `judge()`, `Judgment`
+
+## 03 — Operation Hooks
+
+**Files:** `hooks/03_operations/`
+
+`PendingGC` (with `exclude()` to protect commits), `PendingRebase` (replay inspection), `PendingMerge` (conflict review), and merge retry patterns.
 
 > `PendingGC`, `PendingRebase`, `PendingMerge`, `exclude()`, `approve()`, `reject()`
 
-### hooks/04 — Guidance Mixin
+## 04 — Tool Result Hooks
 
-**Use case:** A hook that reasons about a proposal before deciding — two-stage: judgment first, then execution.
+**Files:** `hooks/04_tool_results/`
 
-`GuidanceMixin` adds a structured judgment phase to any `Pending` subclass. Call `pending.judge(llm_call)` to produce a `Judgment` with a recommendation and rationale. Call `edit_guidance(new_rationale)` to refine the reasoning. Then execute based on the judgment. The mixin is designed for hooks where the decision itself needs to be audited or logged.
+`PendingToolResult` basics (approve/reject/edit), `edit_result()` and `summarize(instructions=)`, declarative config via `configure_tool_summarization()`, and per-tool custom routing.
 
-> `GuidanceMixin`, `judge()`, `Judgment`, `edit_guidance()`, two-stage reasoning pattern
+> `PendingToolResult`, `edit_result()`, `summarize()`, `configure_tool_summarization()`
 
-### hooks/05 — Agent Interface
+## 05 — Agent Interface
 
-**Use case:** Expose a hook's proposal to an LLM agent so the agent can decide whether to approve, reject, or modify it.
+**Files:** `hooks/05_agent_interface/`
 
-Every `Pending` subclass auto-generates an agent-facing interface: `to_dict()` returns a JSON-serializable description of the proposal, `to_tools()` returns tool schemas for function calling, and `describe_api()` returns a human-readable API description. `apply_decision(tool_result)` routes the agent's tool call back to the right method. Use this to build LLM-driven review loops without writing custom parsing logic.
+Every `Pending` subclass auto-generates an agent-facing interface: `to_dict()` for serialization, `to_tools()` for function calling, `describe_api()` for human-readable docs, and `apply_decision()` for routing agent decisions.
 
 > `to_dict()`, `to_tools()`, `describe_api()`, `apply_decision()`
 
-### hooks/06 — Tool Result Hooks
+## 06 — Token Tolerance
 
-**Use case:** Intercept tool results before they enter the commit chain — filter sensitive output, enforce token budgets on verbose tools, or route different tools through different summarization strategies.
+**Files:** `hooks/06_token_tolerance/`
 
-Part 1 (hook basics): `t.on("tool_result", handler)` registers a handler that receives a `PendingToolResult` before each tool result commits. Inspect `pending.tool_name`, `pending.content`, `pending.token_count`. Call `approve()` to commit as-is, `reject()` to discard, or `edit_result()` to replace content. Part 2 (summarize): `pending.summarize(instructions="keep filenames only")` calls the LLM with `TOOL_SUMMARIZE_SYSTEM` and replaces content with the summary. `original_content` preserves the raw output. Part 3 (declarative config): `configure_tool_summarization(instructions={"grep": "filenames only"}, auto_threshold=500)` sets up a hook automatically — per-tool instructions for named tools, threshold-based summarization for everything else. Part 4 (custom routing): combine manual and automatic strategies in one handler.
+Token budget enforcement via hooks: basic gate, auto-truncate on threshold, middleware-style enforcement, and dynamic budget adjustment.
 
-> `t.on("tool_result", handler)`, `PendingToolResult`, `edit_result()`, `summarize(instructions=, target_tokens=)`, `approve()`, `reject()`, `original_content`, `configure_tool_summarization()`, `ToolSummarizationConfig`, `review=True`
+> Token budget hooks, auto-truncate, dynamic budget
+
+## 07 — Ordering Middleware
+
+**Files:** `hooks/07_ordering_middleware/`
+
+Message ordering hooks: basics, pass-through patterns, conditional ordering, dynamic message insertion, and full pipeline composition.
+
+> `compile(order=)` hooks, middleware pipeline
+
+## 08 — Dynamic Operations
+
+**Files:** `hooks/08_dynamic_operations/`
+
+Dynamic hook registration and firing, introspection of registered hooks, and review-then-execute patterns.
+
+> Dynamic `t.on()`, hook introspection, review-and-execute
 
 ---
 
-## Triggers
+# Orchestrator
 
-### triggers/01 — Autonomous Triggers
+Autonomous agent operations — the LLM manages its own context window using tract's toolkit.
 
-**Use case:** Make an agent self-managing: auto-compress when budget fills, auto-pin instructions, auto-rebase stale branches, auto-GC dead commits, auto-merge completed branches — with hooks for human override.
+## 01 — Toolkit and Profiles
 
-Part 1 (basics): `CompressTrigger(threshold=0.5)` fires on `"compile"` when token usage exceeds the threshold. `PinTrigger(pin_types={"instruction"})` fires on `"commit"` and auto-pins system messages. `configure_triggers([...])` activates them. Part 2 (new triggers): `RebaseTrigger(divergence_commits=5)` fires when a branch drifts too far behind. `GCTrigger(max_dead_commits=3)` fires when orphaned commits pile up. `MergeTrigger(completion_commits=3, idle_seconds=0)` fires when a branch appears done. Part 3 (hook interception): `t.on("trigger", handler)` intercepts any trigger's `PendingTrigger` — inspect `trigger_name`, `action_type`, `action_params`, call `modify_params()`, `approve()`, or `reject()`. Part 4 (autonomy spectrum): autonomous triggers (PinTrigger) execute immediately; collaborative triggers (CompressTrigger) route through hooks for review.
-
-> `CompressTrigger`, `PinTrigger`, `BranchTrigger`, `ArchiveTrigger`, `RebaseTrigger`, `GCTrigger`, `MergeTrigger`, `configure_triggers()`, `register_trigger()`, `PendingTrigger`, `t.on("trigger", handler)`, `.fires_on`, autonomy spectrum
-
----
-
-## Orchestrator
-
-### orchestrator/01 — Toolkit and Profiles
+**File:** `orchestrator/01_toolkit.py`
 
 **Use case:** Let the LLM decide when to compress, branch, annotate, or query status via function calling.
 
-`t.as_tools(format="openai", profile="self")` returns tract operations as LLM tool schemas. Three profiles control scope: **self** gives the agent full CRUD over its own context (compress, GC, annotate, branch, rebase); **supervisor** gives read access plus high-level operations (compress, branch, archive); **observer** is read-only (status, log, diff, compile). `ToolExecutor` dispatches tool call results to the right operation. Use `as_tools(format="anthropic")` for Anthropic's tool format.
+`t.as_tools(format="openai", profile="self")` returns tract operations as LLM tool schemas. Three profiles control scope: **self** (full CRUD), **supervisor** (read + high-level ops), **observer** (read-only). `ToolExecutor` dispatches tool call results.
 
 > `as_tools(format=, profile=)`, `ToolExecutor`, profiles: `"self"`, `"supervisor"`, `"observer"`
 
-### orchestrator/02 — Orchestrator Loop
+## 02 — Orchestrator Loop
 
-**Use case:** Auto-assess context health on a schedule and execute maintenance operations autonomously, with optional human sign-off via hooks.
+**File:** `orchestrator/02_orchestrator_loop.py`
 
-Configure triggers on `OrchestratorConfig`: `on_commit_count=20` fires every 20 commits, `on_token_threshold=0.7` fires at 70% token usage. When a trigger fires, the orchestrator runs an assessment (fragmentation, budget pressure, stale branches), selects tools from the active profile, and executes in a loop. Attach hooks for human-in-the-loop: the orchestrator proposes actions, the hook approves or rejects, and the orchestrator executes the approved set.
+**Use case:** Auto-assess context health and execute maintenance operations autonomously.
 
-> `OrchestratorConfig`, `TriggerConfig(on_commit_count=, on_token_threshold=)`, assessment loop, HITL via hooks
+Configure triggers on `OrchestratorConfig`: `on_commit_count=20`, `on_token_threshold=0.7`. The orchestrator runs assessment, selects tools, and executes in a loop. Attach hooks for human-in-the-loop.
+
+> `OrchestratorConfig`, `TriggerConfig`, assessment loop, HITL via hooks
+
+## 03 — Triggers
+
+**File:** `orchestrator/03_triggers.py`
+
+**Use case:** Make an agent self-managing with automatic operations and hooks for override.
+
+7 built-in triggers: `CompressTrigger`, `PinTrigger`, `RebaseTrigger`, `GCTrigger`, `MergeTrigger`, `BranchTrigger`, `ArchiveTrigger`. Hook interception via `t.on("trigger", handler)`. Autonomy spectrum from fully autonomous to collaborative.
+
+> `CompressTrigger`, `PinTrigger`, `configure_triggers()`, `PendingTrigger`, autonomy spectrum
 
 ---
 
-## Multi-Agent
+# Multi-Agent
 
-### multi_agent/01 — Parent-Child Relationship
+Multi-agent coordination — parent-child tracts, delegation, and curated deployment.
 
-**Use case:** A main agent needs to spawn a sub-agent with its own isolated context, while preserving the lineage for provenance.
+## 01 — Parent-Child Relationship
 
-Create a child tract linked to the parent tract. The child has independent commit history, its own branch structure, and a separate SQLite file. The parent-child relationship is tracked — `t.children()` lists all child tracts; child tracts can access `t.parent()`. Commits in the child carry the parent `tract_id` in their provenance metadata.
+**File:** `multi_agent/01_parent_child.py`
 
-> `parent()`, `children()`, parent-child provenance, isolated child history
+**Use case:** Spawn a sub-agent with its own isolated context, preserving lineage for provenance.
 
-### multi_agent/02 — Sub-Agent Delegation
+Create a child tract linked to the parent. The child has independent history and branch structure. `t.children()` lists all children; `t.parent()` accesses the parent. Commits carry parent `tract_id` in provenance metadata.
+
+> `parent()`, `children()`, parent-child provenance
+
+## 02 — Sub-Agent Delegation
+
+**File:** `multi_agent/02_delegation.py`
 
 **Use case:** Spawn a research sub-agent, let it work for 40 turns, then ingest only the summary into the parent.
 
-The sub-agent works in its own child tract. When finished, compress its history into a summary commit. The parent calls `import_commit()` on the summary commit, pulling it from the child tract into the parent's timeline as a single message. Forty turns collapse into one commit on the parent. The full research history remains available in the child tract for audit.
+The sub-agent works in a child tract. When finished, compress into a summary. The parent calls `import_commit()` to pull the summary in. Forty turns collapse into one commit on the parent.
 
-> child tract workflow, `compress()` summary, `import_commit()` across tracts, compress-and-ingest pattern
+> `compress()` summary, `import_commit()` across tracts, compress-and-ingest pattern
 
-### multi_agent/03 — Curated Deploy
+## 03 — Curated Deploy
 
-**Use case:** Deploy a sub-agent on a purpose-built branch with only the context it needs — filtered by tags, irrelevant commits dropped, old history compressed — then merge its work back.
+**File:** `multi_agent/03_curated_deploy.py`
 
-Part 1 (basic deploy): `session.deploy(parent, purpose="research X", branch_name="research-x")` creates a branch from parent HEAD. Child shares the same commit DAG but operates independently. Parent branch is untouched. Part 2 (curated deploy): `curate={"keep_tags": ["instruction", "hypothesis"]}` filters the child's context — non-matching commits are SKIPPED. Part 3 (drop and compact): `curate={"drop": [hash]}` removes specific irrelevant commits. `curate={"compact_before": hash}` compresses old history. Part 4 (merge-back): `parent.merge("child-branch")` for fast-forward merge, or `session.collapse(child, into=parent, content="...")` for summary-based ingest.
+**Use case:** Deploy a sub-agent on a purpose-built branch with filtered context, then merge back.
 
-> `session.deploy()`, `curate={"keep_tags": [...], "drop": [...], "compact_before": hash, "reorder": [...]}`, merge-back, collapse, `CurationError`
+`session.deploy()` creates a branch from parent HEAD. `curate={"keep_tags": [...]}` filters context. `curate={"drop": [hash], "compact_before": hash}` for targeted cleanup. Merge-back via `parent.merge()` or `session.collapse()`.
+
+> `session.deploy()`, `curate=`, merge-back, collapse
 
 ---
 
-# Compositions
+# E2E
 
-Real-world scenarios that combine features across multiple tiers. Each composition references the features it builds on.
+End-to-end scenarios combining features from across the cookbook. Each scenario is a realistic application.
 
 ## self_correcting_agent.py
 
-**Combines:** patterns/10 (retry + validation) + fundamentals/04 (edit + annotations) + patterns/04 (compression) + patterns/09 (provenance)
+**Combines:** validation (retry) + metadata/priority (edit + annotations) + operations/compress + queries/provenance
 
-An agent that validates its own JSON output via `chat(validator=json_validator, purify=True)`, retries on failure with a steering message in context, and uses `provenance_note=True` to record retry counts. Critical decisions are annotated `IMPORTANT` with `retain_match=` patterns so they survive compression verbatim. `get_commit_tools()` and `query_by_config()` reconstruct exactly what the agent had available at each step.
+An agent that validates its own JSON output via `chat(validator=json_validator, purify=True)`, retries on failure with a steering message in context, and uses `provenance_note=True` to record retry counts. Critical decisions are annotated `IMPORTANT` with `retain_match=` patterns so they survive compression verbatim.
 
 ## long_running_session.py
 
-**Combines:** patterns/04 (compression) + advanced/triggers (auto-compress) + patterns/08 (gc) + patterns/01 (chat loop)
+**Combines:** operations/compress + orchestrator/triggers + operations/gc + 00_basics/chat
 
-A session that runs for 50+ turns unattended. `CompressTrigger(threshold=0.8)` fires automatically when the budget fills up. PINNED alerts and critical context survive every compression cycle. `gc(archive_retention_days=30)` reclaims storage while preserving a month of audit history. The session ends with `status.pprint()` showing the full budget history.
+A session that runs for 50+ turns unattended. `CompressTrigger(threshold=0.8)` fires automatically when the budget fills up. PINNED alerts survive every compression cycle. `gc(archive_retention_days=30)` reclaims storage while preserving a month of audit history.
 
 ## ab_testing.py
 
-**Combines:** fundamentals/07 (branching) + patterns/03 (LLM config) + fundamentals/05 (diff) + patterns/09 (provenance query)
+**Combines:** operations/branch + config + 00_basics/log_and_diff + queries/provenance
 
-Branch from the same conversation state, run identical prompts on each branch with different model configs (e.g., `gpt-4o` vs `claude-3-5-sonnet`), then `diff()` the results and `query_by_config(model=)` to retrieve each branch's outputs by config. Compare response quality, token usage, and latency across branches.
+Branch from the same conversation state, run identical prompts on each branch with different model configs, then `diff()` the results and `query_by_config(model=)` to compare.
 
 ## context_forensics.py
 
-**Combines:** fundamentals/05 (log + Rollback) + fundamentals/07 (branching) + patterns/07 (rebase + import)
+**Combines:** 00_basics/log_and_diff + operations/branch + operations/rebase
 
-Walk `log()` to find the commit where bad data entered the conversation. `compile(at_commit=hash)` reconstructs exactly what the LLM was seeing at that point. Branch from just before the contamination, cherry-pick the good work with `import_commit()`, and rebase the clean branch onto main.
+Walk `log()` to find the commit where bad data entered. `compile(at_commit=hash)` reconstructs what the LLM saw. Branch from before contamination, cherry-pick good work, rebase onto main.
 
 ## research_delegation.py
 
-**Combines:** advanced/multi_agent (parent-child + delegation + curated deploy) + patterns/04 (compression) + fundamentals/07 (branching + merge)
+**Combines:** multi_agent + operations/compress + operations/merge
 
-Three sub-agents research in parallel, each deployed via `session.deploy()` with tag-filtered context. When each sub-agent finishes, compress its history into a summary. The supervisor merges the summary commits onto main, resolving any conflicts. The full research history remains available on child branches for audit.
+Three sub-agents research in parallel via `session.deploy()` with tag-filtered context. Compress each sub-agent's history into a summary. Merge summaries onto main, resolving conflicts.
 
 ## autonomous_steering.py
 
-**Combines:** advanced/orchestrator (loop + triggers) + advanced/triggers (builtin + autonomy) + advanced/hooks (compress review) + patterns/04 (compression)
+**Combines:** orchestrator + orchestrator/triggers + hooks/compression + operations/compress
 
-All built-in triggers are active at `autonomy="autonomous"`. The orchestrator fires on commit count and token threshold triggers, running context assessment and maintenance in a loop. A single hook is attached to `"compress"` for human sign-off on large compressions. The agent manages its own context window end-to-end, with one override point for high-stakes decisions.
+All built-in triggers active at `autonomy="autonomous"`. The orchestrator fires on commit count and token threshold, running assessment and maintenance in a loop. One hook on `"compress"` for human sign-off on large compressions.
