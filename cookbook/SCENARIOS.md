@@ -1,6 +1,6 @@
 # Tract Cookbook — Scenarios
 
-The cookbook is organized as a three-tier progression. **Fundamentals** build the mental model: no LLM required, no assumptions about your use case. **Patterns** show real workflows with live LLM calls — each one is a self-contained scenario you can run and adapt. **Advanced** covers power features: hooks, policies, the orchestrator, and multi-agent coordination. **Compositions** combine features from all three tiers into end-to-end real-world applications.
+The cookbook is organized as a three-tier progression. **Fundamentals** build the mental model: no LLM required, no assumptions about your use case. **Patterns** show real workflows with live LLM calls — each one is a self-contained scenario you can run and adapt. **Advanced** covers power features: hooks, triggers, the orchestrator, and multi-agent coordination. **Compositions** combine features from all three tiers into end-to-end real-world applications.
 
 Work through the tiers in order if you're new. Jump to any individual file if you know what you need — every file is standalone.
 
@@ -18,7 +18,8 @@ cookbook/
 │   ├── 06_batch_and_rollback.py     # batch() context manager, atomic operations
 │   ├── 07_branching.py              # branch, switch, delete, list, FF merge, clean merge
 │   ├── 08_tool_calling.py           # agentic loop, tool_result, compress_tool_calls, query API, auto-summarization
-│   └── 09_reasoning_traces.py       # t.reasoning(), compile(include_reasoning=), pprint, LLM auto-extract
+│   ├── 09_reasoning_traces.py       # t.reasoning(), compile(include_reasoning=), pprint, LLM auto-extract
+│   └── 10_tags.py                   # auto-classify, explicit tags, mutable annotations, tag registry, query_by_tags
 │
 ├── patterns/                         # Tier 2: Real workflows with LLM
 │   ├── 01_chat_and_persist.py       # chat(), ChatResponse, persistence, session resume
@@ -44,24 +45,23 @@ cookbook/
 │   │   ├── 04_guidance.py           # GuidanceMixin, two-stage reasoning, edit_guidance
 │   │   ├── 05_agent_interface.py    # to_dict, to_tools, describe_api, apply_decision
 │   │   └── 06_tool_result_hooks.py  # PendingToolResult, edit/summarize/reject, configure_tool_summarization
-│   ├── policies/
-│   │   ├── 01_builtin.py            # CompressPolicy, PinPolicy, BranchPolicy, ArchivePolicy
-│   │   ├── 02_custom.py             # Policy protocol, evaluate(), custom triggers
-│   │   └── 03_autonomy.py           # manual/collaborative/autonomous, PendingPolicy
+│   ├── triggers/
+│   │   └── 01_autonomous_triggers.py # 7 built-in triggers, hook interception, autonomy spectrum
 │   ├── orchestrator/
 │   │   ├── 01_toolkit.py            # as_tools, profiles, ToolExecutor
 │   │   └── 02_orchestrator_loop.py  # triggers, assessment, HITL via hooks
 │   └── multi_agent/
 │       ├── 01_parent_child.py       # child tracts, provenance
-│       └── 02_delegation.py         # branch-delegate-merge, compress-and-ingest
+│       ├── 02_delegation.py         # branch-delegate-merge, compress-and-ingest
+│       └── 03_curated_deploy.py     # session.deploy(), curation pipeline, merge-back
 │
 └── compositions/                     # Real-world scenarios combining features
     ├── self_correcting_agent.py      # retry + edit + validation + provenance
-    ├── long_running_session.py       # policies + compression + gc + 50+ turns
+    ├── long_running_session.py       # triggers + compression + gc + 50+ turns
     ├── ab_testing.py                 # branch + config + diff + provenance query
     ├── context_forensics.py          # log + time-travel + branch + rebase
     ├── research_delegation.py        # multi-agent + compress + merge
-    └── autonomous_steering.py        # orchestrator + policies + hooks + drift
+    └── autonomous_steering.py        # orchestrator + triggers + hooks + drift
 ```
 
 ---
@@ -142,6 +142,14 @@ Part 1 (manual commits): `t.reasoning("Let me think...")` commits a `ReasoningCo
 
 > `t.reasoning()`, `ReasoningContent`, `compile(include_reasoning=True)`, `generate(reasoning=False)`, `Tract.open(commit_reasoning=False)`, `ChatResponse.reasoning`, `ChatResponse.reasoning_commit`, `annotate()` overrides
 
+## 10 — Semantic Tags
+
+**Use case:** Classify commits by what the content *is* (instruction, reasoning, tool_call, hypothesis) — orthogonal to priority annotations that control what to *do with* the content. Query by tags for selective context building.
+
+Part 1 (auto-classification): `system()` auto-tags with `"instruction"`, `assistant()` with `"reasoning"`, tool-calling messages with `"tool_call"`. `get_tags(hash)` shows what was assigned. Part 2 (explicit tags): `t.user("...", tags=["hypothesis"])` adds tags at commit time; auto-tags merge with explicit tags. Part 3 (mutable annotations): `t.tag(hash, "dead_end")` tags retrospectively; `t.untag()` removes. Combined with immutable commit tags in `get_tags()`. Part 4 (tag registry): `register_tag(name, description)` and `list_tags()` with counts. Strict mode rejects unregistered tags. Part 5 (queries): `query_by_tags(["reasoning"], match="any")` for OR, `match="all"` for AND, `log(tags=["reasoning"])` for filtered history.
+
+> `tags=["..."]` on system/user/assistant, `t.tag()`, `t.untag()`, `get_tags()`, `register_tag()`, `list_tags()`, `query_by_tags(match="any"|"all")`, `log(tags=)`, strict mode
+
 ---
 
 # Tier 2: Patterns
@@ -206,7 +214,7 @@ Part 1: `import_commit(hash)` copies a single commit onto the current branch wit
 
 ## 08 — GC and Reorder
 
-**Use case:** Reclaim storage after compression, control archive retention policy, and reorder messages for better LLM context flow.
+**Use case:** Reclaim storage after compression, control archive retention, and reorder messages for better LLM context flow.
 
 Part 1: compress a conversation using collaborative review (`review=True` returns a `PendingCompress`), approve the result, then run `gc(archive_retention_days=0)` to reclaim storage. `GCResult` shows commits removed, blobs removed, and tokens freed. Compiled context is unchanged — GC only touches unreachable data. Part 2: compare conservative (`archive_retention_days=None`) vs aggressive (`=0`) retention. Part 3: `compile(order=[hash_list])` reorders the compiled context by commit hash and returns `(CompiledContext, list[ReorderWarning])` with safety checks for structural issues like edits appearing before their targets.
 
@@ -294,31 +302,15 @@ Part 1 (hook basics): `t.on("tool_result", handler)` registers a handler that re
 
 ---
 
-## Policies
+## Triggers
 
-### policies/01 — Built-In Policies
+### triggers/01 — Autonomous Triggers
 
-**Use case:** Auto-compress at 80% budget, auto-pin system prompts, detect topic drift, and archive stale branches — with no custom code.
+**Use case:** Make an agent self-managing: auto-compress when budget fills, auto-pin instructions, auto-rebase stale branches, auto-GC dead commits, auto-merge completed branches — with hooks for human override.
 
-Four built-in policies cover common needs. `CompressPolicy(threshold=0.8)` triggers compression when token usage crosses the threshold. `PinPolicy()` automatically pins system prompts and other instruction-role commits. `BranchPolicy()` detects topic drift and suggests branching. `ArchivePolicy(inactive_days=7)` archives branches that have not been active for the configured period. Register one or all with `configure_policies([...])`.
+Part 1 (basics): `CompressTrigger(threshold=0.5)` fires on `"compile"` when token usage exceeds the threshold. `PinTrigger(pin_types={"instruction"})` fires on `"commit"` and auto-pins system messages. `configure_triggers([...])` activates them. Part 2 (new triggers): `RebaseTrigger(divergence_commits=5)` fires when a branch drifts too far behind. `GCTrigger(max_dead_commits=3)` fires when orphaned commits pile up. `MergeTrigger(completion_commits=3, idle_seconds=0)` fires when a branch appears done. Part 3 (hook interception): `t.on("trigger", handler)` intercepts any trigger's `PendingTrigger` — inspect `trigger_name`, `action_type`, `action_params`, call `modify_params()`, `approve()`, or `reject()`. Part 4 (autonomy spectrum): autonomous triggers (PinTrigger) execute immediately; collaborative triggers (CompressTrigger) route through hooks for review.
 
-> `CompressPolicy`, `PinPolicy`, `BranchPolicy`, `ArchivePolicy`, `configure_policies()`
-
-### policies/02 — Custom Policy
-
-**Use case:** Auto-skip any commit containing PII, or auto-skip tool outputs older than N turns.
-
-Implement the `Policy` protocol: define a `name`, `trigger` (event type that fires evaluation), and `evaluate(tract) -> PolicyAction | None`. Your policy inspects the current commit log and proposes annotations or operations. The evaluator executes the proposal immediately or routes it through the hook system depending on autonomy mode. Policies are composable — multiple policies can fire on the same event.
-
-> `Policy` protocol, `name`, `trigger`, `evaluate()`, `PolicyAction`
-
-### policies/03 — Autonomy Spectrum
-
-**Use case:** In development, approve everything manually. In staging, auto-approve safe operations. In production, full autonomy.
-
-Same policies, three modes configured at `configure_policies(..., autonomy=)`. **Manual**: every policy action produces a `PendingPolicy` that waits for explicit approval. **Collaborative**: low-risk actions (pin, skip, annotate) execute immediately; high-risk actions (compress, branch, GC) route through hooks for approval. **Autonomous**: all actions execute immediately without review. The autonomy level does not change the policy logic — only the execution path.
-
-> `autonomy="manual"`, `autonomy="collaborative"`, `autonomy="autonomous"`, `PendingPolicy`
+> `CompressTrigger`, `PinTrigger`, `BranchTrigger`, `ArchiveTrigger`, `RebaseTrigger`, `GCTrigger`, `MergeTrigger`, `configure_triggers()`, `register_trigger()`, `PendingTrigger`, `t.on("trigger", handler)`, `.fires_on`, autonomy spectrum
 
 ---
 
@@ -360,6 +352,14 @@ The sub-agent works in its own child tract. When finished, compress its history 
 
 > child tract workflow, `compress()` summary, `import_commit()` across tracts, compress-and-ingest pattern
 
+### multi_agent/03 — Curated Deploy
+
+**Use case:** Deploy a sub-agent on a purpose-built branch with only the context it needs — filtered by tags, irrelevant commits dropped, old history compressed — then merge its work back.
+
+Part 1 (basic deploy): `session.deploy(parent, purpose="research X", branch_name="research-x")` creates a branch from parent HEAD. Child shares the same commit DAG but operates independently. Parent branch is untouched. Part 2 (curated deploy): `curate={"keep_tags": ["instruction", "hypothesis"]}` filters the child's context — non-matching commits are SKIPPED. Part 3 (drop and compact): `curate={"drop": [hash]}` removes specific irrelevant commits. `curate={"compact_before": hash}` compresses old history. Part 4 (merge-back): `parent.merge("child-branch")` for fast-forward merge, or `session.collapse(child, into=parent, content="...")` for summary-based ingest.
+
+> `session.deploy()`, `curate={"keep_tags": [...], "drop": [...], "compact_before": hash, "reorder": [...]}`, merge-back, collapse, `CurationError`
+
 ---
 
 # Compositions
@@ -374,9 +374,9 @@ An agent that validates its own JSON output via `chat(validator=json_validator, 
 
 ## long_running_session.py
 
-**Combines:** patterns/04 (compression) + advanced/policies (auto-compress) + patterns/08 (gc) + patterns/01 (chat loop)
+**Combines:** patterns/04 (compression) + advanced/triggers (auto-compress) + patterns/08 (gc) + patterns/01 (chat loop)
 
-A session that runs for 50+ turns unattended. `CompressPolicy(threshold=0.8)` fires automatically when the budget fills up. PINNED alerts and critical context survive every compression cycle. `gc(archive_retention_days=30)` reclaims storage while preserving a month of audit history. The session ends with `status.pprint()` showing the full budget history.
+A session that runs for 50+ turns unattended. `CompressTrigger(threshold=0.8)` fires automatically when the budget fills up. PINNED alerts and critical context survive every compression cycle. `gc(archive_retention_days=30)` reclaims storage while preserving a month of audit history. The session ends with `status.pprint()` showing the full budget history.
 
 ## ab_testing.py
 
@@ -392,12 +392,12 @@ Walk `log()` to find the commit where bad data entered the conversation. `compil
 
 ## research_delegation.py
 
-**Combines:** advanced/multi_agent (parent-child + delegation) + patterns/04 (compression) + fundamentals/07 (branching + merge)
+**Combines:** advanced/multi_agent (parent-child + delegation + curated deploy) + patterns/04 (compression) + fundamentals/07 (branching + merge)
 
-Three sub-agents research in parallel, each in its own child tract on a dedicated branch. When each sub-agent finishes, compress its history into a summary. The supervisor merges the summary commits onto main, resolving any conflicts. The full research history is preserved in child tracts; main carries only the synthesized findings.
+Three sub-agents research in parallel, each deployed via `session.deploy()` with tag-filtered context. When each sub-agent finishes, compress its history into a summary. The supervisor merges the summary commits onto main, resolving any conflicts. The full research history remains available on child branches for audit.
 
 ## autonomous_steering.py
 
-**Combines:** advanced/orchestrator (loop + triggers) + advanced/policies (builtin + autonomy) + advanced/hooks (compress review) + patterns/04 (compression)
+**Combines:** advanced/orchestrator (loop + triggers) + advanced/triggers (builtin + autonomy) + advanced/hooks (compress review) + patterns/04 (compression)
 
-All built-in policies are active at `autonomy="autonomous"`. The orchestrator fires on commit count and token threshold triggers, running context assessment and maintenance in a loop. A single hook is attached to `"compress"` for human sign-off on large compressions. The agent manages its own context window end-to-end, with one override point for high-stakes decisions.
+All built-in triggers are active at `autonomy="autonomous"`. The orchestrator fires on commit count and token threshold triggers, running context assessment and maintenance in a loop. A single hook is attached to `"compress"` for human sign-off on large compressions. The agent manages its own context window end-to-end, with one override point for high-stakes decisions.

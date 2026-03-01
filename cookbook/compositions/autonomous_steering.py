@@ -1,6 +1,6 @@
 """
-Autonomous Steering — Combines orchestrator + policies + hooks + drift detection.
-Full autopilot: all policies active, orchestrator on triggers, agent self-manages via
+Autonomous Steering — Combines orchestrator + triggers + hooks + drift detection.
+Full autopilot: all triggers active, orchestrator on triggers, agent self-manages via
 toolkit, hooks gate destructive operations.
 """
 
