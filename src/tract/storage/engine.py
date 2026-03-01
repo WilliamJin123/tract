@@ -167,17 +167,18 @@ def init_db(engine: Engine) -> None:
     """Initialize the database: create all tables and set schema version.
 
     Creates all tables defined in Base.metadata, then sets schema_version.
-    For new databases, schema_version is set to "11".
-    For existing v1 databases, migrates v1->v2->...->v11.
-    For existing v2 databases, migrates v2->v3->...->v11.
-    For existing v3 databases, migrates v3->v4->...->v11.
-    For existing v4 databases, migrates v4->v5->...->v11 (trigger tables).
-    For existing v5 databases, migrates v5->v6->...->v11 (unified operation events).
-    For existing v6 databases, migrates v6->v7->v8->v9->v10->v11 (retention_json on annotations).
-    For existing v7 databases, migrates v7->v8->v9->v10->v11 (tool tracking tables).
-    For existing v8 databases, migrates v8->v9->v10->v11 (instruction columns on operation_events).
-    For existing v9 databases, migrates v9->v10->v11 (tags system).
-    For existing v10 databases, migrates v10->v11 (persistence tables).
+    For new databases, schema_version is set to "12".
+    For existing v1 databases, migrates v1->v2->...->v12.
+    For existing v2 databases, migrates v2->v3->...->v12.
+    For existing v3 databases, migrates v3->v4->...->v12.
+    For existing v4 databases, migrates v4->v5->...->v12 (trigger tables).
+    For existing v5 databases, migrates v5->v6->...->v12 (unified operation events).
+    For existing v6 databases, migrates v6->v7->v8->v9->v10->v11->v12 (retention_json on annotations).
+    For existing v7 databases, migrates v7->v8->v9->v10->v11->v12 (tool tracking tables).
+    For existing v8 databases, migrates v8->v9->v10->v11->v12 (instruction columns on operation_events).
+    For existing v9 databases, migrates v9->v10->v11->v12 (tags system).
+    For existing v10 databases, migrates v10->v11->v12 (persistence tables).
+    For existing v11 databases, migrates v11->v12 (config provenance).
     """
     from sqlalchemy import text
 
@@ -190,8 +191,8 @@ def init_db(engine: Engine) -> None:
         ).scalar_one_or_none()
 
         if existing is None:
-            # New database: set schema version to 11
-            session.add(TraceMetaRow(key="schema_version", value="11"))
+            # New database: set schema version to 12
+            session.add(TraceMetaRow(key="schema_version", value="12"))
             session.commit()
         elif existing.value == "1":
             # Migrate v1 -> v2: create commit_parents table
@@ -340,4 +341,34 @@ def init_db(engine: Engine) -> None:
             for table_name in ["hook_wirings", "dynamic_op_specs", "operation_configs"]:
                 Base.metadata.tables[table_name].create(engine, checkfirst=True)
             existing.value = "11"
+            session.commit()
+        if existing is not None and existing.value == "11":
+            # Migrate v11 -> v12: config provenance + trigger snapshots + hook soft-delete
+            with engine.connect() as conn:
+                # 1. Create config_change_log table
+                Base.metadata.tables["config_change_log"].create(engine, checkfirst=True)
+                # 2. Add config_snapshot_json to trigger_log
+                columns = [
+                    r[1]
+                    for r in conn.execute(
+                        text("PRAGMA table_info(trigger_log)")
+                    ).fetchall()
+                ]
+                if "config_snapshot_json" not in columns:
+                    conn.execute(
+                        text("ALTER TABLE trigger_log ADD COLUMN config_snapshot_json TEXT")
+                    )
+                # 3. Add deregistered_at to hook_wirings
+                columns = [
+                    r[1]
+                    for r in conn.execute(
+                        text("PRAGMA table_info(hook_wirings)")
+                    ).fetchall()
+                ]
+                if "deregistered_at" not in columns:
+                    conn.execute(
+                        text("ALTER TABLE hook_wirings ADD COLUMN deregistered_at DATETIME")
+                    )
+                conn.commit()
+            existing.value = "12"
             session.commit()

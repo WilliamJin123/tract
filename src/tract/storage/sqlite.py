@@ -35,6 +35,7 @@ from tract.storage.schema import (
     CommitToolRow,
     CompileEffectiveRow,
     CompileRecordRow,
+    ConfigChangeRow,
     DynamicOpSpecRow,
     HookWiringRow,
     OperationCommitRow,
@@ -1231,21 +1232,25 @@ class SqlitePersistenceRepository(PersistenceRepository):
         self._session.flush()
         return wiring
 
-    def get_hook_wirings(self, tract_id: str) -> list[HookWiringRow]:
+    def get_hook_wirings(self, tract_id: str, *, include_deregistered: bool = False) -> list[HookWiringRow]:
         stmt = (
             select(HookWiringRow)
             .where(HookWiringRow.tract_id == tract_id)
-            .order_by(HookWiringRow.priority, HookWiringRow.id)
         )
+        if not include_deregistered:
+            stmt = stmt.where(HookWiringRow.deregistered_at.is_(None))
+        stmt = stmt.order_by(HookWiringRow.priority, HookWiringRow.id)
         return list(self._session.execute(stmt).scalars().all())
 
     def delete_hook_wiring(
         self, tract_id: str, operation: str, handler_path: str | None = None
     ) -> bool:
+        from datetime import timezone
         stmt = select(HookWiringRow).where(
             and_(
                 HookWiringRow.tract_id == tract_id,
                 HookWiringRow.operation == operation,
+                HookWiringRow.deregistered_at.is_(None),
             )
         )
         if handler_path is not None:
@@ -1253,25 +1258,28 @@ class SqlitePersistenceRepository(PersistenceRepository):
         rows = list(self._session.execute(stmt).scalars().all())
         if not rows:
             return False
+        now = datetime.now(timezone.utc)
         for row in rows:
-            self._session.delete(row)
+            row.deregistered_at = now
         self._session.flush()
         return True
 
     def delete_hook_wiring_by_name(self, tract_id: str, name: str) -> bool:
-        # Match on handler_path containing the name (e.g., "hooks/name.py")
+        from datetime import timezone
         path_pattern = f"hooks/{name}.py"
         stmt = select(HookWiringRow).where(
             and_(
                 HookWiringRow.tract_id == tract_id,
                 HookWiringRow.handler_path == path_pattern,
+                HookWiringRow.deregistered_at.is_(None),
             )
         )
         rows = list(self._session.execute(stmt).scalars().all())
         if not rows:
             return False
+        now = datetime.now(timezone.utc)
         for row in rows:
-            self._session.delete(row)
+            row.deregistered_at = now
         self._session.flush()
         return True
 
@@ -1344,3 +1352,26 @@ class SqlitePersistenceRepository(PersistenceRepository):
         self._session.delete(row)
         self._session.flush()
         return True
+
+    # -- Config change log --
+
+    def save_config_change(self, change: ConfigChangeRow) -> ConfigChangeRow:
+        self._session.add(change)
+        self._session.flush()
+        return change
+
+    def get_config_changes(
+        self,
+        tract_id: str,
+        *,
+        change_type: str | None = None,
+        limit: int = 100,
+    ) -> list[ConfigChangeRow]:
+        stmt = (
+            select(ConfigChangeRow)
+            .where(ConfigChangeRow.tract_id == tract_id)
+        )
+        if change_type is not None:
+            stmt = stmt.where(ConfigChangeRow.change_type == change_type)
+        stmt = stmt.order_by(ConfigChangeRow.created_at.desc()).limit(limit)
+        return list(self._session.execute(stmt).scalars().all())

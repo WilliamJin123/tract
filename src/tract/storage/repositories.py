@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         CommitRow,
         CompileEffectiveRow,
         CompileRecordRow,
+        ConfigChangeRow,
         DynamicOpSpecRow,
         HookWiringRow,
         OperationCommitRow,
@@ -691,8 +692,13 @@ class PersistenceRepository(ABC):
         ...
 
     @abstractmethod
-    def get_hook_wirings(self, tract_id: str) -> list[HookWiringRow]:
-        """Get all hook wirings for a tract, ordered by priority then id."""
+    def get_hook_wirings(self, tract_id: str, *, include_deregistered: bool = False) -> list[HookWiringRow]:
+        """Get all hook wirings for a tract, ordered by priority then id.
+
+        Args:
+            tract_id: Tract identifier.
+            include_deregistered: If True, include soft-deleted wirings.
+        """
         ...
 
     @abstractmethod
@@ -750,4 +756,25 @@ class PersistenceRepository(ABC):
     @abstractmethod
     def delete_operation_config(self, tract_id: str, config_key: str) -> bool:
         """Delete an operation config by key. Returns True if deleted."""
+        ...
+
+    # -- Config change log --
+
+    @abstractmethod
+    def save_config_change(self, change: ConfigChangeRow) -> ConfigChangeRow:
+        """Save a config change log entry. Returns the created row."""
+        ...
+
+    @abstractmethod
+    def get_config_changes(
+        self,
+        tract_id: str,
+        *,
+        change_type: str | None = None,
+        limit: int = 100,
+    ) -> list[ConfigChangeRow]:
+        """Get config change log entries for a tract.
+
+        Returns entries ordered by created_at DESC, with optional filter by change_type.
+        """
         ...

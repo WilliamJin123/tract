@@ -15,7 +15,7 @@ from tract.toolkit.models import ToolConfig, ToolProfile
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# All 15 tool names (must match definitions.py)
+# All 22 tool names (must match definitions.py)
 # ---------------------------------------------------------------------------
 _ALL_TOOL_NAMES = [
     "commit",
@@ -33,6 +33,13 @@ _ALL_TOOL_NAMES = [
     "gc",
     "list_branches",
     "get_commit",
+    "configure_model",
+    "tag",
+    "untag",
+    "query_by_tags",
+    "register_trigger",
+    "unregister_trigger",
+    "toggle_triggers",
 ]
 
 # ---------------------------------------------------------------------------
@@ -103,6 +110,26 @@ SELF_PROFILE = ToolProfile(
                 "Reset your HEAD to a previous commit. Undo recent changes by "
                 "moving your branch pointer backward."
             ),
+        ),
+        "tag": ToolConfig(
+            enabled=True,
+            description="Add a tag to one of your commits for easy reference.",
+        ),
+        "untag": ToolConfig(
+            enabled=True,
+            description="Remove a tag from one of your commits.",
+        ),
+        "query_by_tags": ToolConfig(
+            enabled=True,
+            description="Find your commits by tag names.",
+        ),
+        "configure_model": ToolConfig(
+            enabled=True,
+            description="Change the LLM model or temperature for your operations.",
+        ),
+        "toggle_triggers": ToolConfig(
+            enabled=True,
+            description="Pause or resume your automatic triggers.",
         ),
     },
 )
@@ -217,6 +244,34 @@ SUPERVISOR_PROFILE = ToolProfile(
                 "Get detailed information about a specific commit in the "
                 "managed agent's context."
             ),
+        ),
+        "configure_model": ToolConfig(
+            enabled=True,
+            description="Change the LLM model or temperature for the managed agent's operations.",
+        ),
+        "tag": ToolConfig(
+            enabled=True,
+            description="Add a tag to a commit in the managed agent's context.",
+        ),
+        "untag": ToolConfig(
+            enabled=True,
+            description="Remove a tag from a commit in the managed agent's context.",
+        ),
+        "query_by_tags": ToolConfig(
+            enabled=True,
+            description="Find commits by tag names in the managed agent's context.",
+        ),
+        "register_trigger": ToolConfig(
+            enabled=True,
+            description="Register a trigger for the managed agent.",
+        ),
+        "unregister_trigger": ToolConfig(
+            enabled=True,
+            description="Remove a trigger from the managed agent.",
+        ),
+        "toggle_triggers": ToolConfig(
+            enabled=True,
+            description="Pause or resume the managed agent's triggers.",
         ),
     },
 )

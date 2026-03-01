@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, overload
 
 from pydantic import BaseModel
@@ -24,7 +24,7 @@ from tract.engine.compiler import DefaultContextCompiler
 from tract.engine.tokens import TiktokenCounter
 from tract.models.annotations import Priority, PriorityAnnotation, RetentionCriteria
 from tract.models.commit import CommitInfo, CommitMetadata, CommitOperation
-from tract.models.config import LLMConfig, Operator, OperationClients, OperationConfigs, TractConfig
+from tract.models.config import LLMConfig, Operator, OperationClients, OperationConfigs, OperationPrompts, TractConfig
 from tract.models.content import validate_content
 from tract.exceptions import (
     BranchNotFoundError,
@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from tract.operations.history import StatusInfo
     from tract.orchestrator.config import AutonomyLevel, OrchestratorConfig
     from tract.orchestrator.loop import Orchestrator
+    from tract.toolkit.executor import ToolExecutor
     from tract.protocols import ToolTurn
     from tract.orchestrator.models import OrchestratorResult
     from tract.triggers.evaluator import TriggerEvaluator
@@ -227,8 +228,10 @@ class Tract:
         self._owns_llm_client: bool = False
         self._default_config: LLMConfig | None = None
         self._operation_configs: OperationConfigs = OperationConfigs()
+        self._operation_prompts: OperationPrompts = OperationPrompts()
         self._operation_clients: OperationClients = OperationClients()
         self._active_tools: list[dict] | None = None
+        self._tool_executor: ToolExecutor | None = None  # type: ignore[assignment]
         self._hooks: dict[str, list[_HookEntry]] = {}
         self._in_hook: bool = False
         self._hook_log: list[HookEvent] = []
@@ -1616,6 +1619,7 @@ class Tract:
         temperature: float | None = None,
         max_tokens: int | None = None,
         llm_config: LLMConfig | None = None,
+        include_sources: bool = False,
         **kwargs: object,
     ) -> dict:
         """Resolve effective LLM config: sugar > llm_config > operation > tract default.
@@ -1657,29 +1661,39 @@ class Tract:
             "frequency_penalty", "presence_penalty", "top_k",
             "seed", "stop_sequences",
         )
+        sources: dict = {} if include_sources else {}
+
         for field_name in _TYPED_FIELDS:
             # Level 1: Sugar param
             val = sugar.get(field_name)
             if val is not None:
                 resolved[field_name] = val
+                if include_sources:
+                    sources[field_name] = "sugar"
                 continue
             # Level 2: llm_config
             if llm_config is not None:
                 val = getattr(llm_config, field_name, None)
                 if val is not None:
                     resolved[field_name] = val
+                    if include_sources:
+                        sources[field_name] = "llm_config"
                     continue
             # Level 3: Operation config
             if op_config is not None:
                 val = getattr(op_config, field_name, None)
                 if val is not None:
                     resolved[field_name] = val
+                    if include_sources:
+                        sources[field_name] = f"operation:{operation}"
                     continue
             # Level 4: Tract default
             if default is not None:
                 val = getattr(default, field_name, None)
                 if val is not None:
                     resolved[field_name] = val
+                    if include_sources:
+                        sources[field_name] = "tract_default"
 
         # Translate canonical names to OpenAI-compatible API names
         if "stop_sequences" in resolved:
@@ -1695,6 +1709,9 @@ class Tract:
         if llm_config is not None and llm_config.extra:
             resolved.update(dict(llm_config.extra))
         resolved.update(kwargs)
+
+        if include_sources:
+            resolved["_resolution_sources"] = sources
 
         return resolved
 
@@ -3459,6 +3476,7 @@ class Tract:
             from tract.llm.resolver import OpenAIResolver
 
             self._default_resolver = OpenAIResolver(client)
+        self._log_config_change("llm_client", source="api")
 
     def configure_operations(
         self,
@@ -3505,6 +3523,11 @@ class Tract:
                     f"Expected OperationConfigs, got {type(_configs).__name__}"
                 )
             self._operation_configs = _configs
+            self._log_config_change(
+                "operation_config",
+                config_json=self._serialize_operation_configs(),
+                source="api",
+            )
             return
         # Keyword path: validate and construct OperationConfigs
         _valid_ops = {"chat", "merge", "compress", "orchestrate", "summarize"}
@@ -3525,6 +3548,12 @@ class Tract:
         for name, cfg in operation_configs.items():
             updates[name] = cfg
         self._operation_configs = _replace(self._operation_configs, **updates)
+        # Log config change
+        self._log_config_change(
+            "operation_config",
+            config_json=self._serialize_operation_configs(),
+            source="api",
+        )
 
     @property
     def operation_configs(self) -> OperationConfigs:
@@ -3573,6 +3602,7 @@ class Tract:
                     f"Expected OperationClients, got {type(_clients).__name__}"
                 )
             self._operation_clients = _clients
+            self._log_config_change("operation_client", source="api")
             return
         _valid_ops = {"chat", "merge", "compress", "orchestrate", "summarize"}
         for name in operation_clients:
@@ -3583,11 +3613,161 @@ class Tract:
                 )
         from dataclasses import replace as _replace
         self._operation_clients = _replace(self._operation_clients, **operation_clients)
+        # Log config change
+        self._log_config_change("operation_client", source="api")
 
     @property
     def operation_clients(self) -> OperationClients:
         """Current per-operation LLM client overrides (read-only, frozen)."""
         return self._operation_clients
+
+    def _log_config_change(
+        self,
+        change_type: str,
+        *,
+        change_key: str | None = None,
+        config_json: str | None = None,
+        previous_json: str | None = None,
+        source: str | None = None,
+    ) -> None:
+        """Log a configuration change to the audit trail.
+
+        No-op when persistence repo is not available.
+        """
+        repo = self._persistence_repo
+        if repo is None:
+            return
+        import json as _json
+        from tract.storage.schema import ConfigChangeRow
+
+        entry = ConfigChangeRow(
+            tract_id=self._tract_id,
+            change_type=change_type,
+            change_key=change_key,
+            config_json=config_json,
+            previous_json=previous_json,
+            source=source,
+            created_at=datetime.now(timezone.utc),
+        )
+        repo.save_config_change(entry)
+        self._session.commit()
+
+    def _serialize_operation_configs(self) -> str | None:
+        """Serialize current operation configs to JSON string."""
+        import json as _json
+        from dataclasses import fields as dc_fields
+        result = {}
+        for f in dc_fields(self._operation_configs):
+            val = getattr(self._operation_configs, f.name)
+            if val is not None:
+                result[f.name] = val.to_dict()
+        return _json.dumps(result) if result else None
+
+    def config_history(
+        self,
+        *,
+        change_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Get the configuration change audit trail.
+
+        Returns a list of dicts, each with keys: change_type, change_key,
+        config_json, previous_json, source, created_at.
+        Ordered by most recent first.
+
+        Args:
+            change_type: Filter by change type (e.g. "operation_config",
+                "llm_client", "operation_client", "prompts").
+            limit: Maximum number of entries to return.
+        """
+        repo = self._persistence_repo
+        if repo is None:
+            return []
+        rows = repo.get_config_changes(
+            self._tract_id, change_type=change_type, limit=limit,
+        )
+        return [
+            {
+                "change_type": row.change_type,
+                "change_key": row.change_key,
+                "config_json": row.config_json,
+                "previous_json": row.previous_json,
+                "source": row.source,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ]
+
+    def configure_prompts(
+        self,
+        _prompts: OperationPrompts | None = None,
+        /,
+        **prompt_overrides: str,
+    ) -> None:
+        """Set per-operation prompt overrides.
+
+        Accepts either an OperationPrompts instance or keyword arguments.
+
+        Args:
+            _prompts: OperationPrompts instance with typed fields.
+            **prompt_overrides: Operation name -> prompt string mappings.
+                Valid names: ``"compress"``, ``"merge"``, ``"orchestrate"``,
+                ``"summarize"``, ``"commit_message"``.
+
+        Raises:
+            TypeError: If both positional and keyword arguments provided.
+            ValueError: If an unknown operation name is given.
+        """
+        if _prompts is not None and prompt_overrides:
+            raise TypeError(
+                "Cannot mix positional OperationPrompts with keyword arguments"
+            )
+        if _prompts is not None:
+            if not isinstance(_prompts, OperationPrompts):
+                raise TypeError(
+                    f"Expected OperationPrompts, got {type(_prompts).__name__}"
+                )
+            self._operation_prompts = _prompts
+            self._log_config_change(
+                "prompts",
+                config_json=self._serialize_prompts(),
+                source="api",
+            )
+            return
+        _valid_ops = {"compress", "merge", "orchestrate", "summarize", "commit_message"}
+        for name, val in prompt_overrides.items():
+            if not isinstance(val, str):
+                raise TypeError(
+                    f"Expected str for '{name}', got {type(val).__name__}"
+                )
+            if name not in _valid_ops:
+                raise ValueError(
+                    f"Unknown operation '{name}'. "
+                    f"Valid operations: {', '.join(sorted(_valid_ops))}"
+                )
+        from dataclasses import replace as _replace
+        self._operation_prompts = _replace(self._operation_prompts, **prompt_overrides)
+        self._log_config_change(
+            "prompts",
+            config_json=self._serialize_prompts(),
+            source="api",
+        )
+
+    @property
+    def operation_prompts(self) -> OperationPrompts:
+        """Current per-operation prompt overrides (read-only, frozen)."""
+        return self._operation_prompts
+
+    def _serialize_prompts(self) -> str | None:
+        """Serialize current operation prompts to JSON string."""
+        import json as _json
+        from dataclasses import fields as dc_fields
+        result = {}
+        for f in dc_fields(self._operation_prompts):
+            val = getattr(self._operation_prompts, f.name)
+            if val is not None:
+                result[f.name] = val
+        return _json.dumps(result) if result else None
 
     def _resolve_llm_client(self, operation: str) -> object:
         """Resolve the LLM client for a given operation.
@@ -4248,6 +4428,11 @@ class Tract:
             max_tokens=max_tokens, llm_config=llm_config,
         ) if llm_client is not None else {}
 
+        # Use operation prompt as fallback for system_prompt
+        effective_system_prompt = system_prompt
+        if effective_system_prompt is None and self._operation_prompts.compress is not None:
+            effective_system_prompt = self._operation_prompts.compress
+
         # compress_range() always returns PendingCompress now
         pending = compress_range(
             tract_id=self._tract_id,
@@ -4269,7 +4454,7 @@ class Tract:
             generation_config=llm_kwargs if llm_kwargs else None,
             content=content,
             instructions=instructions,
-            system_prompt=system_prompt,
+            system_prompt=effective_system_prompt,
             type_registry=self._custom_type_registry,
             validator=validator,
             max_retries=max_retries,
@@ -5006,6 +5191,43 @@ class Tract:
                 f"Unknown format '{format}'. Supported: 'openai', 'anthropic'."
             )
 
+    def switch_profile(self, profile: str | object) -> None:
+        """Switch the active tool profile.
+
+        Changes which tools are available for the current session.
+        Clears any per-tool overrides.
+
+        Args:
+            profile: Profile name ("self", "supervisor", "full") or
+                a ToolProfile instance.
+        """
+        if self._tool_executor is None:
+            from tract.toolkit.executor import ToolExecutor
+            self._tool_executor = ToolExecutor(self)
+        self._tool_executor.set_profile(profile)
+
+    def unlock_tool(self, tool_name: str) -> None:
+        """Force-enable a tool regardless of current profile.
+
+        Args:
+            tool_name: Name of the tool to unlock.
+        """
+        if self._tool_executor is None:
+            from tract.toolkit.executor import ToolExecutor
+            self._tool_executor = ToolExecutor(self)
+        self._tool_executor.unlock_tool(tool_name)
+
+    def lock_tool(self, tool_name: str) -> None:
+        """Force-disable a tool regardless of current profile.
+
+        Args:
+            tool_name: Name of the tool to lock.
+        """
+        if self._tool_executor is None:
+            from tract.toolkit.executor import ToolExecutor
+            self._tool_executor = ToolExecutor(self)
+        self._tool_executor.lock_tool(tool_name)
+
     # ------------------------------------------------------------------
     # Orchestrator facade
     # ------------------------------------------------------------------
@@ -5300,7 +5522,7 @@ class Tract:
                         tract_id=self._tract_id,
                         event_type=f"custom:{operation}",
                         branch_name=None,
-                        created_at=datetime.now(),
+                        created_at=datetime.now(timezone.utc),
                         original_tokens=0,
                         compressed_tokens=0,
                         params_json=p.fields if p.fields else None,
@@ -5436,7 +5658,13 @@ class Tract:
             f"Registered names: {[e.name for e in entries]}"
         )
 
-    def off(self, operation: str, handler: Callable | str | None = None) -> None:
+    def off(
+        self,
+        operation: str,
+        handler: Callable | str | None = None,
+        *,
+        _persist: bool = True,
+    ) -> None:
         """Remove hook handler(s) for an operation.
 
         Args:
@@ -5457,6 +5685,17 @@ class Tract:
             self._hooks[operation] = [e for e in entries if e.handler is not handler]
             if not self._hooks.get(operation):
                 self._hooks.pop(operation, None)
+
+        # Persist soft-delete if available
+        if _persist:
+            repo = self._persistence_repo
+            if repo is not None:
+                if handler is None:
+                    repo.delete_hook_wiring(self._tract_id, operation)
+                    self._session.commit()
+                elif isinstance(handler, str):
+                    repo.delete_hook_wiring_by_name(self._tract_id, handler)
+                    self._session.commit()
 
     @property
     def hooks(self) -> dict[str, list[Callable]]:
@@ -5824,7 +6063,7 @@ class Tract:
                 handler_code=None,
                 priority=priority,
                 enabled=True,
-                created_at=datetime.now(),
+                created_at=datetime.now(timezone.utc),
             )
             repo.save_hook_wiring(wiring)
             self._session.commit()
@@ -5842,8 +6081,9 @@ class Tract:
             handler_fn = getattr(module, "handler", None)
             if handler_fn is not None:
                 # Remove existing hook with same name if any
+                # _persist=False: save_hook handles DB directly
                 try:
-                    self.off(operation, name)
+                    self.off(operation, name, _persist=False)
                 except (ValueError, KeyError):
                     pass
                 self.on(operation, handler_fn, name=name)
@@ -5899,7 +6139,7 @@ class Tract:
                 tract_id=self._tract_id,
                 name=f"trigger:{name}",
                 spec_json=_json.dumps(spec_data),
-                created_at=datetime.now(),
+                created_at=datetime.now(timezone.utc),
             )
             repo.save_dynamic_op(spec_row)
             self._session.commit()

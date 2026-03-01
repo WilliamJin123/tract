@@ -10,7 +10,7 @@ that are no longer being actively developed.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from tract.models.trigger import TriggerAction
@@ -70,8 +70,10 @@ class ArchiveTrigger(Trigger):
 
         # Check staleness: age of most recent commit
         most_recent = commits[0].created_at
-        now = datetime.now()
-        # Handle timezone-aware datetimes
+        now = datetime.now(timezone.utc)
+        # Normalize both to naive UTC for safe comparison
+        if now.tzinfo is not None:
+            now = now.replace(tzinfo=None)
         if most_recent.tzinfo is not None:
             most_recent = most_recent.replace(tzinfo=None)
         age_days = (now - most_recent).days

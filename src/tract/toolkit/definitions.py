@@ -30,7 +30,7 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
         tract: The Tract instance to bind tool handlers to.
 
     Returns:
-        List of 15 ToolDefinition objects.
+        List of 22+ ToolDefinition objects.
     """
     tools = [
         # 1. commit
@@ -75,11 +75,16 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
                         "type": "object",
                         "description": "Optional LLM generation config (temperature, model, etc.).",
                     },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of tags to attach to the commit.",
+                    },
                 },
                 "required": ["content"],
             },
-            handler=lambda content, operation="append", message=None, edit_target=None, metadata=None, generation_config=None: _handle_commit(
-                tract, content, operation, message, edit_target, metadata, generation_config
+            handler=lambda content, operation="append", message=None, edit_target=None, metadata=None, generation_config=None, tags=None: _handle_commit(
+                tract, content, operation, message, edit_target, metadata, generation_config, tags
             ),
         ),
         # 2. compile
@@ -405,6 +410,168 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
             },
             handler=lambda commit_hash: _handle_get_commit(tract, commit_hash),
         ),
+        # 16. configure_model
+        ToolDefinition(
+            name="configure_model",
+            description=(
+                "Change LLM model or temperature for a specific operation or "
+                "tract-wide. Use this to switch models mid-conversation."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "model": {
+                        "type": "string",
+                        "description": "Model name (e.g. 'gpt-4o', 'gpt-3.5-turbo').",
+                    },
+                    "operation": {
+                        "type": "string",
+                        "enum": ["chat", "merge", "compress", "orchestrate", "summarize"],
+                        "description": "Operation to configure. Omit to set tract-wide default.",
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "description": "Temperature override.",
+                    },
+                },
+            },
+            handler=lambda model=None, operation=None, temperature=None: _handle_configure_model(
+                tract, model, operation, temperature
+            ),
+        ),
+        # 17. tag
+        ToolDefinition(
+            name="tag",
+            description=(
+                "Add a mutable tag annotation to a commit. Tags can be added "
+                "or removed after commit creation, unlike immutable commit tags."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "commit_hash": {
+                        "type": "string",
+                        "description": "Hash of the commit to tag.",
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": "Tag name to add.",
+                    },
+                },
+                "required": ["commit_hash", "tag"],
+            },
+            handler=lambda commit_hash, tag: _handle_tag(tract, commit_hash, tag),
+        ),
+        # 18. untag
+        ToolDefinition(
+            name="untag",
+            description=(
+                "Remove a mutable tag annotation from a commit."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "commit_hash": {
+                        "type": "string",
+                        "description": "Hash of the commit to untag.",
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": "Tag name to remove.",
+                    },
+                },
+                "required": ["commit_hash", "tag"],
+            },
+            handler=lambda commit_hash, tag: _handle_untag(tract, commit_hash, tag),
+        ),
+        # 19. query_by_tags
+        ToolDefinition(
+            name="query_by_tags",
+            description=(
+                "Find commits that have specific tags. Returns commit hashes "
+                "matching the given tag criteria."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tags to search for.",
+                    },
+                    "match": {
+                        "type": "string",
+                        "enum": ["any", "all"],
+                        "description": "Match mode: 'any' (OR) or 'all' (AND). Default 'any'.",
+                    },
+                },
+                "required": ["tags"],
+            },
+            handler=lambda tags, match="any": _handle_query_by_tags(tract, tags, match),
+        ),
+        # 20. register_trigger
+        ToolDefinition(
+            name="register_trigger",
+            description=(
+                "Register a built-in trigger by type name and configuration. "
+                "Available types: compress, pin, branch, merge, rebase, gc, archive."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "trigger_type": {
+                        "type": "string",
+                        "enum": ["compress", "pin", "branch", "merge", "rebase", "gc", "archive"],
+                        "description": "Type of built-in trigger to register.",
+                    },
+                    "config": {
+                        "type": "object",
+                        "description": "Configuration dict passed to the trigger constructor.",
+                    },
+                },
+                "required": ["trigger_type"],
+            },
+            handler=lambda trigger_type, config=None: _handle_register_trigger(
+                tract, trigger_type, config
+            ),
+        ),
+        # 21. unregister_trigger
+        ToolDefinition(
+            name="unregister_trigger",
+            description=(
+                "Remove a registered trigger by name."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "trigger_name": {
+                        "type": "string",
+                        "description": "Name of the trigger to remove.",
+                    },
+                },
+                "required": ["trigger_name"],
+            },
+            handler=lambda trigger_name: _handle_unregister_trigger(tract, trigger_name),
+        ),
+        # 22. toggle_triggers
+        ToolDefinition(
+            name="toggle_triggers",
+            description=(
+                "Pause or resume all trigger evaluation. Use to temporarily "
+                "disable triggers during bulk operations."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True to resume triggers, False to pause.",
+                    },
+                },
+                "required": ["enabled"],
+            },
+            handler=lambda enabled: _handle_toggle_triggers(tract, enabled),
+        ),
     ]
 
     # Append tools for dynamic operations
@@ -465,6 +632,7 @@ def _handle_commit(
     edit_target: str | None,
     metadata: dict | None,
     generation_config: dict | None,
+    tags: list[str] | None = None,
 ) -> str:
     from tract.models.commit import CommitOperation
 
@@ -476,6 +644,7 @@ def _handle_commit(
         edit_target=edit_target,
         metadata=metadata,
         generation_config=generation_config,
+        tags=tags,
     )
     return (
         f"Committed {info.commit_hash[:8]} "
@@ -632,3 +801,97 @@ def _handle_get_commit(tract: Tract, commit_hash: str) -> str:
         f"tokens={info.token_count}, message={info.message or 'none'}, "
         f"metadata={meta}, generation_config={gen_cfg}"
     )
+
+
+def _handle_configure_model(
+    tract: Tract,
+    model: str | None,
+    operation: str | None,
+    temperature: float | None,
+) -> str:
+    from tract.models.config import LLMConfig
+
+    if operation is not None:
+        config = LLMConfig(model=model, temperature=temperature)
+        tract.configure_operations(**{operation: config})
+        parts = []
+        if model:
+            parts.append(f"model={model}")
+        if temperature is not None:
+            parts.append(f"temperature={temperature}")
+        return f"Configured {operation}: {', '.join(parts)}"
+    else:
+        # Set tract-wide default
+        config = LLMConfig(model=model, temperature=temperature)
+        tract._default_config = config
+        parts = []
+        if model:
+            parts.append(f"model={model}")
+        if temperature is not None:
+            parts.append(f"temperature={temperature}")
+        return f"Set tract-wide default: {', '.join(parts)}"
+
+
+def _handle_tag(tract: Tract, commit_hash: str, tag: str) -> str:
+    tract.tag(commit_hash, tag)
+    return f"Tagged {commit_hash[:8]} with '{tag}'"
+
+
+def _handle_untag(tract: Tract, commit_hash: str, tag: str) -> str:
+    removed = tract.untag(commit_hash, tag)
+    if removed:
+        return f"Removed tag '{tag}' from {commit_hash[:8]}"
+    return f"Tag '{tag}' not found on {commit_hash[:8]}"
+
+
+def _handle_query_by_tags(tract: Tract, tags: list[str], match: str) -> str:
+    results = tract.query_by_tags(tags, match=match)
+    if not results:
+        return f"No commits found with tags {tags} (match={match})"
+    short = [r.commit_hash[:8] for r in results]
+    return f"Found {len(results)} commits: {', '.join(short)}"
+
+
+def _handle_register_trigger(
+    tract: Tract, trigger_type: str, config: dict | None,
+) -> str:
+    from tract.triggers.builtin import (
+        CompressTrigger, PinTrigger, BranchTrigger,
+        MergeTrigger, RebaseTrigger, GCTrigger, ArchiveTrigger,
+    )
+
+    _TRIGGER_MAP = {
+        "compress": CompressTrigger,
+        "pin": PinTrigger,
+        "branch": BranchTrigger,
+        "merge": MergeTrigger,
+        "rebase": RebaseTrigger,
+        "gc": GCTrigger,
+        "archive": ArchiveTrigger,
+    }
+
+    cls = _TRIGGER_MAP.get(trigger_type)
+    if cls is None:
+        return f"Unknown trigger type: {trigger_type}"
+
+    try:
+        trigger = cls(**(config or {}))
+    except Exception as exc:
+        return f"Failed to create {trigger_type} trigger: {exc}"
+
+    tract.register_trigger(trigger)
+    return f"Registered {trigger_type} trigger as '{trigger.name}'"
+
+
+def _handle_unregister_trigger(tract: Tract, trigger_name: str) -> str:
+    tract.unregister_trigger(trigger_name)
+    return f"Unregistered trigger '{trigger_name}'"
+
+
+def _handle_toggle_triggers(tract: Tract, enabled: bool) -> str:
+    if enabled:
+        tract.resume_all_triggers()
+        return "Triggers resumed"
+    else:
+        tract.pause_all_triggers()
+        return "Triggers paused"

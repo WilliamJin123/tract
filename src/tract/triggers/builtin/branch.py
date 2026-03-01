@@ -10,7 +10,7 @@ collaborative mode so the user can approve or reject.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from tract.models.trigger import TriggerAction
@@ -82,7 +82,7 @@ class BranchTrigger(Trigger):
                     transitions += 1
 
         if transitions >= self._switch_threshold:
-            branch_name = f"tangent/{current_branch}/{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            branch_name = f"tangent/{current_branch}/{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
             return TriggerAction(
                 action_type="branch",
                 params={"name": branch_name, "switch": False},

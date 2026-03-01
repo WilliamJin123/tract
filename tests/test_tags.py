@@ -467,7 +467,7 @@ class TestSchemaMigration:
             meta = session.execute(
                 select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
             ).scalar_one()
-            assert meta.value == "11"
+            assert meta.value == "12"
         engine.dispose()
 
     def test_v9_to_v10_migration_creates_tables(self):
@@ -526,7 +526,7 @@ class TestSchemaMigration:
             result = conn.execute(
                 text("SELECT value FROM _trace_meta WHERE key='schema_version'")
             ).scalar_one()
-            assert result == "11"
+            assert result == "12"
 
             # Check tag_annotations table exists
             tables = [

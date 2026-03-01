@@ -16,7 +16,7 @@ Three-tier handler precedence:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from tract.models.annotations import Priority
@@ -127,7 +127,7 @@ class TriggerEvaluator:
             # Check cooldown
             if self._cooldown_seconds > 0 and trigger_obj.name in self._last_fired:
                 elapsed = (
-                    datetime.now() - self._last_fired[trigger_obj.name]
+                    datetime.now(timezone.utc) - self._last_fired[trigger_obj.name]
                 ).total_seconds()
                 if elapsed < self._cooldown_seconds:
                     result = EvaluationResult(
@@ -169,7 +169,7 @@ class TriggerEvaluator:
                 continue
 
             # Trigger wants to fire -- dispatch based on autonomy
-            self._last_fired[trigger_obj.name] = datetime.now()
+            self._last_fired[trigger_obj.name] = datetime.now(timezone.utc)
 
             if action.autonomy == "autonomous":
                 result = self._execute_action(trigger_obj, action)
@@ -272,7 +272,7 @@ class TriggerEvaluator:
         if action.action_type == "archive":
             # Archive: create branch with archive name
             archive_name = action.params.get(
-                "archive_name", f"archive/{datetime.now().strftime('%Y%m%d')}"
+                "archive_name", f"archive/{datetime.now(timezone.utc).strftime('%Y%m%d')}"
             )
             source = action.params.get("source")
             return self._tract.branch(archive_name, source=source, switch=False)
@@ -425,6 +425,15 @@ class TriggerEvaluator:
         if self._trigger_repo is not None:
             from tract.storage.schema import TriggerLogRow
 
+            # Capture trigger config snapshot if available
+            config_snapshot = None
+            try:
+                if hasattr(trigger_obj, 'to_config') and callable(trigger_obj.to_config):
+                    import json
+                    config_snapshot = json.dumps(trigger_obj.to_config())
+            except Exception:
+                pass  # Don't break logging if serialization fails
+
             entry = TriggerLogRow(
                 tract_id=self._tract.tract_id,
                 trigger_name=trigger_obj.name,
@@ -434,7 +443,8 @@ class TriggerEvaluator:
                 outcome=result.outcome,
                 commit_hash=result.commit_hash,
                 error_message=result.error,
-                created_at=datetime.now(),
+                config_snapshot_json=config_snapshot,
+                created_at=datetime.now(timezone.utc),
             )
             self._trigger_repo.save_log_entry(entry)
             self._tract._session.commit()

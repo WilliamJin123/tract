@@ -58,8 +58,8 @@ def _reopen_tract(t: Tract) -> Tract:
 class TestSchemaMigration:
     """Test that v10->v11 migration creates persistence tables."""
 
-    def test_new_db_is_v11(self, tmp_path: Path) -> None:
-        """A fresh database should be at schema version 11."""
+    def test_new_db_is_v12(self, tmp_path: Path) -> None:
+        """A fresh database should be at schema version 12."""
         from sqlalchemy import select
 
         from tract.storage.schema import TraceMetaRow
@@ -67,7 +67,7 @@ class TestSchemaMigration:
         t = _make_file_tract(tmp_path)
         stmt = select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
         row = t._session.execute(stmt).scalar_one()
-        assert row.value == "11"
+        assert row.value == "12"
         t.close()
 
     def test_persistence_tables_exist(self, tmp_path: Path) -> None:
@@ -107,7 +107,7 @@ class TestSchemaMigration:
             conn.execute(text("DROP TABLE IF EXISTS operation_configs"))
             conn.commit()
 
-        # Re-init should migrate v10->v11
+        # Re-init should migrate v10->v11->v12
         init_db(engine)
 
         with engine.connect() as conn:
@@ -121,10 +121,11 @@ class TestSchemaMigration:
                 ).fetchall()
             ]
 
-        assert version == "11"
+        assert version == "12"
         assert "hook_wirings" in tables
         assert "dynamic_op_specs" in tables
         assert "operation_configs" in tables
+        assert "config_change_log" in tables
 
         engine.dispose()
 

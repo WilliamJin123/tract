@@ -91,9 +91,9 @@ class TestToolDefinitionFormats:
 class TestGetAllTools:
     """Test that get_all_tools returns correct definitions."""
 
-    def test_returns_15_definitions(self, tract):
+    def test_returns_22_definitions(self, tract):
         tools = get_all_tools(tract)
-        assert len(tools) == 15
+        assert len(tools) == 22
 
     def test_all_have_required_fields(self, tract):
         tools = get_all_tools(tract)
@@ -118,6 +118,8 @@ class TestGetAllTools:
             "commit", "compile", "annotate", "status", "log", "diff",
             "compress", "branch", "switch", "merge", "reset", "checkout",
             "gc", "list_branches", "get_commit",
+            "configure_model", "tag", "untag", "query_by_tags",
+            "register_trigger", "unregister_trigger", "toggle_triggers",
         }
         assert names == expected
 
@@ -137,19 +139,21 @@ class TestProfiles:
         expected = {
             "commit", "compile", "annotate", "status", "log",
             "compress", "branch", "switch", "reset",
+            "tag", "untag", "query_by_tags", "configure_model",
+            "toggle_triggers",
         }
         assert self_names == expected
-        assert len(self_tools) == 9
+        assert len(self_tools) == 14
 
     def test_supervisor_profile_all_tools(self, tract):
         tools = get_all_tools(tract)
         sup_tools = SUPERVISOR_PROFILE.filter_tools(tools)
-        assert len(sup_tools) == 15
+        assert len(sup_tools) == 22
 
     def test_full_profile_all_tools(self, tract):
         tools = get_all_tools(tract)
         full_tools = FULL_PROFILE.filter_tools(tools)
-        assert len(full_tools) == 15
+        assert len(full_tools) == 22
 
     def test_full_profile_default_descriptions(self, tract):
         """FULL_PROFILE should NOT override any descriptions."""
@@ -230,7 +234,7 @@ class TestToolExecutor:
     def test_available_tools(self, tract):
         executor = ToolExecutor(tract)
         names = executor.available_tools()
-        assert len(names) == 15
+        assert len(names) == 22
         assert "commit" in names
         assert "status" in names
 
@@ -249,6 +253,35 @@ class TestToolExecutor:
         assert "dialogue" in result.output
         # Verify commit actually exists
         assert tract.head is not None
+
+    def test_execute_commit_with_tags(self, tract):
+        """Commit tool accepts and passes through tags."""
+        tract.register_tag("important")
+        tract.register_tag("v1")
+        executor = ToolExecutor(tract)
+        result = executor.execute("commit", {
+            "content": {
+                "content_type": "dialogue",
+                "role": "user",
+                "text": "tagged message",
+            },
+            "tags": ["important", "v1"],
+        })
+        assert result.success is True
+        assert "Committed" in result.output
+
+    def test_execute_commit_without_tags(self, tract):
+        """Commit tool works without tags (backward compatible)."""
+        executor = ToolExecutor(tract)
+        result = executor.execute("commit", {
+            "content": {
+                "content_type": "dialogue",
+                "role": "user",
+                "text": "no tags",
+            },
+        })
+        assert result.success is True
+        assert "Committed" in result.output
 
     def test_execute_compile(self, tract_with_commits):
         executor = ToolExecutor(tract_with_commits)
@@ -298,8 +331,8 @@ class TestAsTools:
     def test_default_profile_openai(self, tract):
         tools = tract.as_tools()
         assert isinstance(tools, list)
-        # Default profile is "self" with 9 tools
-        assert len(tools) == 9
+        # Default profile is "self" with 14 tools
+        assert len(tools) == 14
         # OpenAI format
         for tool in tools:
             assert tool["type"] == "function"
@@ -307,11 +340,11 @@ class TestAsTools:
 
     def test_supervisor_profile(self, tract):
         tools = tract.as_tools(profile="supervisor")
-        assert len(tools) == 15
+        assert len(tools) == 22
 
     def test_full_profile(self, tract):
         tools = tract.as_tools(profile="full")
-        assert len(tools) == 15
+        assert len(tools) == 22
 
     def test_anthropic_format(self, tract):
         tools = tract.as_tools(format="anthropic")
@@ -425,3 +458,94 @@ class TestToolkitIntegration:
         result = executor.execute("reset", {"target": first.commit_hash})
         assert result.success
         assert "Reset HEAD" in result.output
+
+
+# ===========================================================================
+# New tools (Fix 2): config, tags, triggers
+# ===========================================================================
+
+
+class TestNewTools:
+    """Tests for the 7 new toolkit tools (Fix 2)."""
+
+    def test_configure_model_per_operation(self, tract):
+        """configure_model sets per-operation config."""
+        executor = ToolExecutor(tract)
+        result = executor.execute("configure_model", {"model": "gpt-4o", "operation": "chat"})
+        assert result.success
+        assert "chat" in result.output
+
+    def test_configure_model_tract_wide(self, tract):
+        """configure_model sets tract-wide default when no operation specified."""
+        executor = ToolExecutor(tract)
+        result = executor.execute("configure_model", {"model": "gpt-4o"})
+        assert result.success
+        assert "tract-wide" in result.output
+
+    def test_tag_untag_roundtrip(self, tract):
+        """tag and untag tools work together."""
+        tract.register_tag("important", "important items")
+        info = tract.commit({"content_type": "dialogue", "role": "user", "text": "test"})
+        executor = ToolExecutor(tract)
+        result = executor.execute("tag", {"commit_hash": info.commit_hash, "tag": "important"})
+        assert result.success
+        assert "Tagged" in result.output
+        result = executor.execute("untag", {"commit_hash": info.commit_hash, "tag": "important"})
+        assert result.success
+
+    def test_query_by_tags(self, tract):
+        """query_by_tags finds tagged commits."""
+        tract.register_tag("milestone", "milestone marker")
+        info = tract.commit({"content_type": "dialogue", "role": "user", "text": "test"})
+        tract.tag(info.commit_hash, "milestone")
+        executor = ToolExecutor(tract)
+        result = executor.execute("query_by_tags", {"tags": ["milestone"]})
+        assert result.success
+        assert info.commit_hash[:8] in result.output
+
+    def test_register_trigger(self, tract):
+        """register_trigger creates a trigger."""
+        executor = ToolExecutor(tract)
+        result = executor.execute("register_trigger", {
+            "trigger_type": "compress",
+            "config": {"threshold": 0.8},
+        })
+        assert result.success
+        assert "Registered" in result.output
+
+    def test_unregister_trigger(self, tract):
+        """unregister_trigger removes a trigger."""
+        from tract.triggers.builtin.compress import CompressTrigger
+        tract.register_trigger(CompressTrigger(threshold=0.8))
+        executor = ToolExecutor(tract)
+        result = executor.execute("unregister_trigger", {"trigger_name": "auto-compress"})
+        assert result.success
+
+    def test_toggle_triggers(self, tract):
+        """toggle_triggers pauses and resumes."""
+        tract.configure_triggers()
+        executor = ToolExecutor(tract)
+        result = executor.execute("toggle_triggers", {"enabled": False})
+        assert result.success
+        assert "paused" in result.output.lower()
+        result = executor.execute("toggle_triggers", {"enabled": True})
+        assert result.success
+        assert "resumed" in result.output.lower()
+
+    def test_new_tools_in_full_profile(self):
+        """FULL_PROFILE includes all 22 tools."""
+        assert "configure_model" in FULL_PROFILE.tool_configs
+        assert "tag" in FULL_PROFILE.tool_configs
+        assert "register_trigger" in FULL_PROFILE.tool_configs
+
+    def test_new_tools_in_self_profile(self):
+        """SELF_PROFILE includes tag, configure_model, toggle_triggers."""
+        assert "tag" in SELF_PROFILE.tool_configs
+        assert "configure_model" in SELF_PROFILE.tool_configs
+        assert "toggle_triggers" in SELF_PROFILE.tool_configs
+
+    def test_new_tools_in_supervisor_profile(self):
+        """SUPERVISOR_PROFILE includes all 7 new tools."""
+        assert "configure_model" in SUPERVISOR_PROFILE.tool_configs
+        assert "register_trigger" in SUPERVISOR_PROFILE.tool_configs
+        assert "toggle_triggers" in SUPERVISOR_PROFILE.tool_configs

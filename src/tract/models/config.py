@@ -233,6 +233,30 @@ class OperationClients:
 
 
 @dataclass(frozen=True)
+class OperationPrompts:
+    """Per-operation prompt overrides.
+
+    Each field overrides the default system prompt for that operation.
+    None means 'use the built-in default.'
+    Frozen for safety -- use dataclasses.replace() to create modified copies.
+
+    Example::
+
+        from tract import OperationPrompts
+        t.configure_prompts(OperationPrompts(
+            compress="You are a concise summarizer.",
+            orchestrate="You are a context management agent.",
+        ))
+    """
+
+    compress: str | None = None
+    merge: str | None = None
+    orchestrate: str | None = None
+    summarize: str | None = None
+    commit_message: str | None = None
+
+
+@dataclass(frozen=True)
 class ToolSummarizationConfig:
     """Configuration for automatic tool result summarization.
 

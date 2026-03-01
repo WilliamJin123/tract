@@ -344,6 +344,7 @@ class TriggerLogRow(Base):
         String(64), nullable=True
     )  # the commit produced by this action, if any
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    config_snapshot_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     __table_args__ = (
@@ -458,6 +459,7 @@ class HookWiringRow(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    deregistered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("ix_hook_wirings_tract_op", "tract_id", "operation"),
@@ -500,6 +502,30 @@ class OperationConfigRow(Base):
 
     __table_args__ = (
         Index("ix_operation_configs_tract_key", "tract_id", "config_key", unique=True),
+    )
+
+
+class ConfigChangeRow(Base):
+    """Append-only audit log for configuration changes.
+
+    Records every call to configure_llm(), configure_operations(),
+    configure_clients(), configure_prompts(), etc.
+    """
+
+    __tablename__ = "config_change_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tract_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    change_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    change_key: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    previous_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("ix_config_change_log_tract_time", "tract_id", "created_at"),
+        Index("ix_config_change_log_tract_type", "tract_id", "change_type"),
     )
 
 
