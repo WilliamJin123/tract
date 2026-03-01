@@ -1,6 +1,6 @@
-"""PendingPolicy -- hook object for policy-triggered actions.
+"""PendingTrigger -- hook object for trigger-fired actions.
 
-Stub for Phase 1. Full wiring to PolicyEvaluator happens in Phase 2.
+Stub for Phase 1. Full wiring to TriggerEvaluator happens in Phase 2.
 """
 
 from __future__ import annotations
@@ -15,21 +15,21 @@ if TYPE_CHECKING:
 
 
 @dataclass(repr=False)
-class PendingPolicy(Pending):
-    """A policy-triggered action that requires approval.
+class PendingTrigger(Pending):
+    """A trigger-fired action that requires approval.
 
     Mutable: handlers can modify action parameters before approving
     or rejecting.
 
     Fields:
-        policy_name: Name of the policy that triggered this action.
+        trigger_name: Name of the trigger that triggered this action.
         action_type: Type of action being proposed (e.g. "compress", "branch").
         action_params: Parameters for the action (mutable by handler).
-        reason: Human-readable explanation of why the policy triggered.
+        reason: Human-readable explanation of why the trigger triggered.
     """
 
-    policy_name: str = ""
-    """Name of the policy that triggered this action."""
+    trigger_name: str = ""
+    """Name of the trigger that triggered this action."""
 
     action_type: str = ""
     """Type of action being proposed (e.g. "compress", "branch", "pin")."""
@@ -38,7 +38,7 @@ class PendingPolicy(Pending):
     """Parameters for the proposed action. Mutable by handler."""
 
     reason: str = ""
-    """Why the policy triggered this action."""
+    """Why the trigger triggered this action."""
 
     # -- Whitelist for agent dispatch -----------------------------------
 
@@ -49,12 +49,12 @@ class PendingPolicy(Pending):
 
     def __post_init__(self) -> None:
         if not self.operation:
-            self.operation = "policy"
+            self.operation = "trigger"
 
     # -- Core methods ---------------------------------------------------
 
     def approve(self) -> Any:
-        """Approve and execute the policy-proposed action with current params.
+        """Approve and execute the trigger-proposed action with current params.
 
         Returns:
             Result of executing the proposed action.
@@ -66,14 +66,14 @@ class PendingPolicy(Pending):
         if self._execute_fn is None:
             raise RuntimeError(
                 "Cannot approve: no execute function set. "
-                "This PendingPolicy was not created by the policy engine."
+                "This PendingTrigger was not created by the trigger engine."
             )
         self.status = PendingStatus.APPROVED
         self._result = self._execute_fn(self)
         return self._result
 
     def reject(self, reason: str = "") -> None:
-        """Reject the policy-proposed action.
+        """Reject the trigger-proposed action.
 
         Args:
             reason: Human-readable explanation for the rejection.
@@ -103,15 +103,15 @@ class PendingPolicy(Pending):
 
     def __repr__(self):
         status = self.status.value if hasattr(self.status, 'value') else str(self.status)
-        return f"<PendingPolicy: {self.policy_name}, {self.action_type}, {status}>"
+        return f"<PendingTrigger: {self.trigger_name}, {self.action_type}, {status}>"
 
     def _compact_detail(self) -> str:
-        return f"{self.policy_name} -> {self.action_type}"
+        return f"{self.trigger_name} -> {self.action_type}"
 
     def _pprint_details(self, console, *, verbose: bool = False) -> None:
-        """Show policy-specific details: policy name, action, reason, params."""
+        """Show trigger-specific details: trigger name, action, reason, params."""
         console.print(
-            f"  Policy: [bold]{self.policy_name}[/bold] -> "
+            f"  Trigger: [bold]{self.trigger_name}[/bold] -> "
             f"[bold]{self.action_type}[/bold]"
         )
         if self.reason:

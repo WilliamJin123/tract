@@ -19,7 +19,7 @@ from tract.hooks.merge import PendingMerge
 from tract.hooks.gc import PendingGC
 from tract.hooks.rebase import PendingRebase
 from tract.hooks.tool_result import PendingToolResult
-from tract.hooks.policy import PendingPolicy
+from tract.hooks.trigger import PendingTrigger
 
 
 # ---------------------------------------------------------------------------
@@ -209,17 +209,17 @@ class TestPendingToolResultRepr:
         t.close()
 
 
-class TestPendingPolicyRepr:
-    """Tests for __repr__() on PendingPolicy."""
+class TestPendingTriggerRepr:
+    """Tests for __repr__() on PendingTrigger."""
 
     def test_repr_format(self):
         t = _make_tract()
-        p = PendingPolicy(
-            operation="policy", tract=t,
-            policy_name="auto_compress", action_type="compress",
+        p = PendingTrigger(
+            operation="trigger", tract=t,
+            trigger_name="auto_compress", action_type="compress",
         )
         r = repr(p)
-        assert "<PendingPolicy:" in r
+        assert "<PendingTrigger:" in r
         assert "auto_compress" in r
         assert "compress" in r
         assert "pending>" in r
@@ -293,14 +293,14 @@ class TestPprintNoCrash:
         assert "tool_result" in output
         t.close()
 
-    def test_policy_pprint(self):
+    def test_trigger_pprint(self):
         t = _make_tract()
-        p = PendingPolicy(
-            operation="policy", tract=t,
-            policy_name="auto_compress", action_type="compress",
+        p = PendingTrigger(
+            operation="trigger", tract=t,
+            trigger_name="auto_compress", action_type="compress",
         )
         output = _capture_pprint(p)
-        assert "policy" in output
+        assert "trigger" in output
         t.close()
 
 
@@ -487,11 +487,11 @@ class TestPprintCompact:
         assert "3 commits onto deadbeef" in output
         t.close()
 
-    def test_policy_compact_shows_action(self):
+    def test_trigger_compact_shows_action(self):
         t = _make_tract()
-        p = PendingPolicy(
-            operation="policy", tract=t,
-            policy_name="auto_pin", action_type="pin",
+        p = PendingTrigger(
+            operation="trigger", tract=t,
+            trigger_name="auto_pin", action_type="pin",
         )
         output = _capture_pprint(p, compact=True)
         assert "auto_pin -> pin" in output
@@ -537,10 +537,10 @@ class TestPprintHeader:
 
     def test_triggered_by_shown(self):
         t = _make_tract()
-        p = Pending(operation="test_op", tract=t, triggered_by="policy:auto_compress")
+        p = Pending(operation="test_op", tract=t, triggered_by="trigger:auto_compress")
         output = _capture_pprint(p)
         assert "triggered_by:" in output
-        assert "policy:auto_compress" in output
+        assert "trigger:auto_compress" in output
         t.close()
 
     def test_rejection_reason_shown(self):
@@ -654,33 +654,33 @@ class TestRebasePprintDetails:
 
 
 # ===========================================================================
-# 9. Policy pprint details
+# 9. Trigger pprint details
 # ===========================================================================
 
 
-class TestPolicyPprintDetails:
-    """Verify PendingPolicy._pprint_details() shows policy info."""
+class TestTriggerPprintDetails:
+    """Verify PendingTrigger._pprint_details() shows trigger info."""
 
-    def test_policy_info_shown(self):
+    def test_trigger_info_shown(self):
         t = _make_tract()
-        p = PendingPolicy(
-            operation="policy", tract=t,
-            policy_name="auto_compress",
+        p = PendingTrigger(
+            operation="trigger", tract=t,
+            trigger_name="auto_compress",
             action_type="compress",
             reason="Token count exceeds threshold",
         )
         output = _capture_pprint(p)
-        assert "Policy" in output
+        assert "Trigger" in output
         assert "auto_compress" in output
         assert "compress" in output
         assert "Token count exceeds threshold" in output
         t.close()
 
-    def test_policy_verbose_shows_params(self):
+    def test_trigger_verbose_shows_params(self):
         t = _make_tract()
-        p = PendingPolicy(
-            operation="policy", tract=t,
-            policy_name="auto_branch",
+        p = PendingTrigger(
+            operation="trigger", tract=t,
+            trigger_name="auto_branch",
             action_type="branch",
             action_params={"branch_name": "overflow-1", "max_tokens": 4000},
         )

@@ -167,15 +167,17 @@ def init_db(engine: Engine) -> None:
     """Initialize the database: create all tables and set schema version.
 
     Creates all tables defined in Base.metadata, then sets schema_version.
-    For new databases, schema_version is set to "9".
-    For existing v1 databases, migrates v1->v2->...->v9.
-    For existing v2 databases, migrates v2->v3->...->v9.
-    For existing v3 databases, migrates v3->v4->...->v9.
-    For existing v4 databases, migrates v4->v5->...->v9 (policy tables).
-    For existing v5 databases, migrates v5->v6->...->v9 (unified operation events).
-    For existing v6 databases, migrates v6->v7->v8->v9 (retention_json on annotations).
-    For existing v7 databases, migrates v7->v8->v9 (tool tracking tables).
-    For existing v8 databases, migrates v8->v9 (instruction columns on operation_events).
+    For new databases, schema_version is set to "11".
+    For existing v1 databases, migrates v1->v2->...->v11.
+    For existing v2 databases, migrates v2->v3->...->v11.
+    For existing v3 databases, migrates v3->v4->...->v11.
+    For existing v4 databases, migrates v4->v5->...->v11 (trigger tables).
+    For existing v5 databases, migrates v5->v6->...->v11 (unified operation events).
+    For existing v6 databases, migrates v6->v7->v8->v9->v10->v11 (retention_json on annotations).
+    For existing v7 databases, migrates v7->v8->v9->v10->v11 (tool tracking tables).
+    For existing v8 databases, migrates v8->v9->v10->v11 (instruction columns on operation_events).
+    For existing v9 databases, migrates v9->v10->v11 (tags system).
+    For existing v10 databases, migrates v10->v11 (persistence tables).
     """
     from sqlalchemy import text
 
@@ -188,8 +190,8 @@ def init_db(engine: Engine) -> None:
         ).scalar_one_or_none()
 
         if existing is None:
-            # New database: set schema version to 9
-            session.add(TraceMetaRow(key="schema_version", value="9"))
+            # New database: set schema version to 11
+            session.add(TraceMetaRow(key="schema_version", value="11"))
             session.commit()
         elif existing.value == "1":
             # Migrate v1 -> v2: create commit_parents table
@@ -245,8 +247,8 @@ def init_db(engine: Engine) -> None:
             existing.value = "4"
             session.commit()
         if existing is not None and existing.value == "4":
-            # Migrate v4 -> v5: create policy tables
-            for table_name in ["policy_proposals", "policy_log"]:
+            # Migrate v4 -> v5: create trigger tables
+            for table_name in ["trigger_proposals", "trigger_log"]:
                 Base.metadata.tables[table_name].create(engine, checkfirst=True)
             existing.value = "5"
             session.commit()
@@ -312,4 +314,30 @@ def init_db(engine: Engine) -> None:
                     )
                 conn.commit()
             existing.value = "9"
+            session.commit()
+        if existing is not None and existing.value == "9":
+            # Migrate v9 -> v10: add tags system
+            # 1. Add tags_json column to commits table
+            with engine.connect() as conn:
+                columns = [
+                    r[1]
+                    for r in conn.execute(
+                        text("PRAGMA table_info(commits)")
+                    ).fetchall()
+                ]
+                if "tags_json" not in columns:
+                    conn.execute(
+                        text("ALTER TABLE commits ADD COLUMN tags_json TEXT")
+                    )
+                conn.commit()
+            # 2. Create tag_annotations and tag_registry tables
+            for table_name in ["tag_annotations", "tag_registry"]:
+                Base.metadata.tables[table_name].create(engine, checkfirst=True)
+            existing.value = "10"
+            session.commit()
+        if existing is not None and existing.value == "10":
+            # Migrate v10 -> v11: add persistence tables
+            for table_name in ["hook_wirings", "dynamic_op_specs", "operation_configs"]:
+                Base.metadata.tables[table_name].create(engine, checkfirst=True)
+            existing.value = "11"
             session.commit()

@@ -62,6 +62,7 @@ class CommitInfo(BaseModel):
     token_count: int
     metadata: Optional[dict] = None
     generation_config: Optional[LLMConfig] = None
+    tags: list[str] = []
     created_at: datetime
 
     model_config = {"arbitrary_types_allowed": True}

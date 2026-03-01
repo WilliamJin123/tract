@@ -1,8 +1,8 @@
-"""CompressPolicy -- auto-compress when token usage exceeds threshold.
+"""CompressTrigger -- auto-compress when token usage exceeds threshold.
 
 Fires on ``compile`` trigger when the current token count exceeds a
 configurable percentage of the token budget.  Returns a collaborative
-PolicyAction so the user can approve or reject compression.
+TriggerAction so the user can approve or reject compression.
 
 Preserves pinned commits automatically (handled by the underlying
 ``compress()`` implementation).
@@ -13,18 +13,18 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from tract.models.policy import PolicyAction
-from tract.policy.protocols import Policy
+from tract.models.trigger import TriggerAction
+from tract.triggers.protocols import Trigger
 
 if TYPE_CHECKING:
-    from tract.hooks.policy import PendingPolicy
+    from tract.hooks.trigger import PendingTrigger
     from tract.hooks.validation import HookRejection
     from tract.tract import Tract
 
 logger = logging.getLogger(__name__)
 
 
-class CompressPolicy(Policy):
+class CompressTrigger(Trigger):
     """Auto-compress when token usage exceeds threshold percentage of budget.
 
     Constructor Args:
@@ -50,10 +50,10 @@ class CompressPolicy(Policy):
         return 200
 
     @property
-    def trigger(self) -> str:
+    def fires_on(self) -> str:
         return "compile"
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         """Check if token usage exceeds threshold and propose compression."""
         # No budget configured -- nothing to check
         budget = tract.config.token_budget
@@ -68,7 +68,7 @@ class CompressPolicy(Policy):
             params: dict = {}
             if self._summary_content is not None:
                 params["content"] = self._summary_content
-            return PolicyAction(
+            return TriggerAction(
                 action_type="compress",
                 params=params,
                 reason=(
@@ -84,26 +84,26 @@ class CompressPolicy(Policy):
     # Hook integration
     # ------------------------------------------------------------------
 
-    def default_handler(self, pending: PendingPolicy) -> None:
+    def default_handler(self, pending: PendingTrigger) -> None:
         """Auto-approve compression proposals by default."""
         pending.approve()
 
     def on_rejection(self, rejection: HookRejection) -> None:
         """Log rejection and increase threshold slightly to avoid rapid re-firing."""
         logger.info(
-            "CompressPolicy action rejected: %s", rejection.reason
+            "CompressTrigger action rejected: %s", rejection.reason
         )
 
     def on_success(self, result: object) -> None:
         """Log successful compression."""
-        logger.debug("CompressPolicy action succeeded: %s", result)
+        logger.debug("CompressTrigger action succeeded: %s", result)
 
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
 
     def to_config(self) -> dict:
-        """Serialize policy configuration to a dict."""
+        """Serialize trigger configuration to a dict."""
         cfg: dict = {
             "name": self.name,
             "threshold": self._threshold,
@@ -114,8 +114,8 @@ class CompressPolicy(Policy):
         return cfg
 
     @classmethod
-    def from_config(cls, config: dict) -> CompressPolicy:
-        """Deserialize a CompressPolicy from a config dict."""
+    def from_config(cls, config: dict) -> CompressTrigger:
+        """Deserialize a CompressTrigger from a config dict."""
         return cls(
             threshold=config.get("threshold", 0.9),
             summary_content=config.get("summary_content"),

@@ -31,6 +31,7 @@ from tract.exceptions import (
     CommitNotFoundError,
     ContentValidationError,
     DetachedHeadError,
+    TagNotRegisteredError,
     TraceError,
 )
 from tract.protocols import ChatResponse, CompiledContext, ContextCompiler, TokenCounter, TokenUsage
@@ -42,8 +43,11 @@ from tract.storage.sqlite import (
     SqliteCommitRepository,
     SqliteCompileRecordRepository,
     SqliteOperationEventRepository,
+    SqlitePersistenceRepository,
     SqliteRefRepository,
     SqliteSpawnPointerRepository,
+    SqliteTagAnnotationRepository,
+    SqliteTagRegistryRepository,
     SqliteToolSchemaRepository,
 )
 
@@ -69,10 +73,10 @@ if TYPE_CHECKING:
     from tract.orchestrator.loop import Orchestrator
     from tract.protocols import ToolTurn
     from tract.orchestrator.models import OrchestratorResult
-    from tract.policy.evaluator import PolicyEvaluator
+    from tract.triggers.evaluator import TriggerEvaluator
     from tract.models.config import ToolSummarizationConfig
     from tract.storage.schema import CommitRow
-    from tract.storage.sqlite import SqlitePolicyRepository
+    from tract.storage.sqlite import SqliteTriggerRepository
 
 
 # ------------------------------------------------------------------
@@ -201,6 +205,9 @@ class Tract:
         self._compile_record_repo = compile_record_repo
         self._tool_schema_repo = tool_schema_repo
         self._spawn_repo: SqliteSpawnPointerRepository | None = None
+        self._tag_annotation_repo: SqliteTagAnnotationRepository | None = None
+        self._tag_registry_repo: SqliteTagRegistryRepository | None = None
+        self._strict_tags: bool = True
         self._custom_type_registry: dict[str, type[BaseModel]] = {}
         self._cache = CacheManager(
             maxsize=config.compile_cache_maxsize,
@@ -211,8 +218,8 @@ class Tract:
         self._verify_cache: bool = verify_cache
         self._in_batch: bool = False
         self._closed = False
-        self._policy_evaluator: PolicyEvaluator | None = None
-        self._policy_repo: SqlitePolicyRepository | None = None
+        self._trigger_evaluator: TriggerEvaluator | None = None
+        self._trigger_repo: SqliteTriggerRepository | None = None
         self._orchestrating: bool = False
         self._orchestrator: Orchestrator | None = None  # type: ignore[assignment]
         self._trigger_commit_count: int = 0
@@ -233,6 +240,11 @@ class Tract:
         from tract.hooks.registry import OperationRegistry
         self._operation_registry = OperationRegistry()
         self._custom_hookable_ops: set[str] = set()
+
+        # Persistence state
+        self._db_path: str = ":memory:"
+        self._persistence_repo: SqlitePersistenceRepository | None = None
+        self._quarantined: list[str] = []
 
     @classmethod
     def open(
@@ -385,9 +397,13 @@ class Tract:
         # Spawn pointer repository
         spawn_repo = SqliteSpawnPointerRepository(session)
 
-        # Policy repository
-        from tract.storage.sqlite import SqlitePolicyRepository as _SqlitePolicyRepository
-        policy_repo = _SqlitePolicyRepository(session)
+        # Trigger repository
+        from tract.storage.sqlite import SqliteTriggerRepository as _SqliteTriggerRepository
+        trigger_repo = _SqliteTriggerRepository(session)
+
+        # Tag repositories
+        tag_annotation_repo = SqliteTagAnnotationRepository(session)
+        tag_registry_repo = SqliteTagRegistryRepository(session)
 
         # Ensure "main" branch ref exists (idempotent)
         head = ref_repo.get_head(tract_id)
@@ -414,33 +430,44 @@ class Tract:
             verify_cache=verify_cache,
         )
         tract._spawn_repo = spawn_repo
-        tract._policy_repo = policy_repo
+        tract._trigger_repo = trigger_repo
+        tract._tag_annotation_repo = tag_annotation_repo
+        tract._tag_registry_repo = tag_registry_repo
 
-        # Auto-load persisted policy config (if any)
-        saved_config = tract.load_policy_config()
+        # Seed base tags (idempotent)
+        tract._seed_base_tags()
+
+        # Persistence repository + file-based state
+        persistence_repo = SqlitePersistenceRepository(session)
+        tract._persistence_repo = persistence_repo
+        tract._db_path = path
+        tract._load_persisted_state()
+
+        # Auto-load persisted trigger config (if any)
+        saved_config = tract.load_trigger_config()
         if saved_config is not None:
-            from tract.policy.builtin import (
-                ArchivePolicy as _ArchivePolicy,
-                BranchPolicy as _BranchPolicy,
-                CompressPolicy as _CompressPolicy,
-                PinPolicy as _PinPolicy,
+            from tract.triggers.builtin import (
+                ArchiveTrigger as _ArchiveTrigger,
+                BranchTrigger as _BranchTrigger,
+                CompressTrigger as _CompressTrigger,
+                PinTrigger as _PinTrigger,
             )
 
-            _policy_type_map: dict[str, type] = {
-                "auto-compress": _CompressPolicy,
-                "auto-pin": _PinPolicy,
-                "auto-branch": _BranchPolicy,
-                "auto-archive": _ArchivePolicy,
+            _trigger_type_map: dict[str, type] = {
+                "auto-compress": _CompressTrigger,
+                "auto-pin": _PinTrigger,
+                "auto-branch": _BranchTrigger,
+                "auto-archive": _ArchiveTrigger,
                 # Backward compat for saved configs with old name
-                "auto-rebase": _ArchivePolicy,
+                "auto-rebase": _ArchiveTrigger,
             }
-            policies = []
-            for entry in saved_config.get("policies", []):
-                policy_cls = _policy_type_map.get(entry.get("name"))
-                if policy_cls is not None and entry.get("enabled", True):
-                    policies.append(policy_cls.from_config(entry))
-            if policies:
-                tract.configure_policies(policies=policies)
+            triggers = []
+            for entry in saved_config.get("triggers", []):
+                trigger_cls = _trigger_type_map.get(entry.get("name"))
+                if trigger_cls is not None and entry.get("enabled", True):
+                    triggers.append(trigger_cls.from_config(entry))
+            if triggers:
+                tract.configure_triggers(triggers=triggers)
 
         # Validate: model= and default_config= are mutually exclusive
         if model is not None and default_config is not None:
@@ -607,9 +634,9 @@ class Tract:
         return self._spawn_repo
 
     @property
-    def policy_evaluator(self) -> PolicyEvaluator | None:
-        """The policy evaluator, or None if not configured."""
-        return self._policy_evaluator
+    def trigger_evaluator(self) -> TriggerEvaluator | None:
+        """The trigger evaluator, or None if not configured."""
+        return self._trigger_evaluator
 
     # ------------------------------------------------------------------
     # Spawn relationship helpers
@@ -793,6 +820,7 @@ class Tract:
         metadata: dict | None = None,
         generation_config: dict | None = None,
         tools: list[dict] | None = None,
+        tags: list[str] | None = None,
     ) -> CommitInfo:
         """Create a new commit.
 
@@ -808,6 +836,9 @@ class Tract:
                 associate with this commit.  When ``set_tools()`` has been
                 called, those tools are auto-linked to every subsequent commit
                 unless overridden by passing ``tools=`` explicitly.
+            tags: Optional list of immutable tag names to attach to the commit.
+                These are set at commit time and cannot be changed later.
+                Merged with auto-classified tags (deduplicated).
 
         Returns:
             :class:`CommitInfo` for the new commit.
@@ -820,13 +851,37 @@ class Tract:
         if isinstance(content, dict):
             content = validate_content(content, custom_registry=self._custom_type_registry)
 
-        # Auto-generate commit message if not provided
+        # Determine role for auto-classification
+        _role = None
+        if isinstance(content, BaseModel):
+            content_dict = content.model_dump(mode="json")
+            _ctype = content_dict.get("content_type", "unknown")
+            _role = content_dict.get("role")
+        else:
+            _ctype = "unknown"
+
+        # Auto-generate commit message and auto-classify tags
         if message is None and isinstance(content, BaseModel):
             from tract.engine.commit import extract_text_from_content as _extract_text
 
             _text = _extract_text(content)
-            _ctype = content.model_dump(mode="json").get("content_type", "unknown")
-            message = self._auto_message(_ctype, _text)
+            auto_msg, auto_tags = self._auto_classify(
+                _ctype, _text, role=_role, operation=operation, metadata=metadata,
+            )
+            message = auto_msg
+        else:
+            # Message provided: only classify tags (no LLM call for message)
+            auto_tags = self._classify_tags(
+                _ctype, role=_role, operation=operation, metadata=metadata,
+            )
+
+        # Merge explicit tags with auto-classified tags (deduplicated)
+        explicit_tags = list(tags) if tags else []
+        all_tags = list(dict.fromkeys(explicit_tags + auto_tags))  # preserves order, deduplicates
+
+        # Validate tags against registry in strict mode
+        if all_tags:
+            self._validate_tags(all_tags)
 
         prev_head = self.head
 
@@ -837,6 +892,7 @@ class Tract:
             edit_target=edit_target,
             metadata=metadata,
             generation_config=generation_config,
+            tags=all_tags if all_tags else None,
         )
 
         # Link tool schemas to this commit
@@ -869,15 +925,15 @@ class Tract:
                             self._cache.put(info.commit_hash, patched)
                 # Do NOT clear cache -- other entries at different HEADs remain valid
 
-        # Evaluate commit-triggered policies (after commit)
+        # Evaluate commit-triggered triggers (after commit)
         if (
-            self._policy_evaluator is not None
+            self._trigger_evaluator is not None
             and not self._in_batch
             and not self._orchestrating
         ):
-            self._policy_evaluator.evaluate(trigger="commit")
+            self._trigger_evaluator.evaluate(trigger="commit")
 
-        # Check orchestrator triggers (after policy evaluation)
+        # Check orchestrator triggers (after trigger evaluation)
         if not self._orchestrating and not self._in_batch:
             self._check_orchestrator_triggers("commit")
 
@@ -894,6 +950,7 @@ class Tract:
         retain: str | None = None,
         retain_match: list[str] | None = None,
         improve: bool = False,
+        tags: list[str] | None = None,
     ) -> CommitInfo:
         """Commit a system instruction.
 
@@ -916,6 +973,7 @@ class Tract:
             improve: If True, use LLM to improve the text and apply as
                 an EDIT commit on top of the original.  Requires an LLM
                 client to be configured.
+            tags: Optional list of immutable tags to attach.
 
         Returns:
             :class:`CommitInfo` for the new commit.
@@ -928,6 +986,7 @@ class Tract:
             edit_target=edit,
             message=message,
             metadata=metadata,
+            tags=tags,
         )
         if priority is not None:
             self.annotate(
@@ -957,6 +1016,7 @@ class Tract:
         retain: str | None = None,
         retain_match: list[str] | None = None,
         improve: bool = False,
+        tags: list[str] | None = None,
     ) -> CommitInfo:
         """Commit a user message.
 
@@ -975,6 +1035,7 @@ class Tract:
             improve: If True, use LLM to improve the text and apply as
                 an EDIT commit on top of the original.  Requires an LLM
                 client to be configured.
+            tags: Optional list of immutable tags to attach.
 
         Returns:
             :class:`CommitInfo` for the new commit.
@@ -987,6 +1048,7 @@ class Tract:
             edit_target=edit,
             message=message,
             metadata=metadata,
+            tags=tags,
         )
         if priority is not None:
             self.annotate(
@@ -1017,6 +1079,7 @@ class Tract:
         retain: str | None = None,
         retain_match: list[str] | None = None,
         improve: bool = False,
+        tags: list[str] | None = None,
     ) -> CommitInfo:
         """Commit an assistant response.
 
@@ -1036,6 +1099,7 @@ class Tract:
             improve: If True, use LLM to improve the text and apply as
                 an EDIT commit on top of the original.  Requires an LLM
                 client to be configured.
+            tags: Optional list of immutable tags to attach.
 
         Returns:
             :class:`CommitInfo` for the new commit.
@@ -1049,6 +1113,7 @@ class Tract:
             message=message,
             metadata=metadata,
             generation_config=generation_config,
+            tags=tags,
         )
         if priority is not None:
             self.annotate(
@@ -2131,15 +2196,15 @@ class Tract:
             :class:`CompiledContext` when ``order`` is None (default).
             ``(CompiledContext, list[ReorderWarning])`` when ``order`` is provided.
         """
-        # Evaluate compile-triggered policies (before compilation)
+        # Evaluate compile-triggered triggers (before compilation)
         if (
-            self._policy_evaluator is not None
+            self._trigger_evaluator is not None
             and not self._in_batch
             and not self._orchestrating
         ):
-            self._policy_evaluator.evaluate(trigger="compile")
+            self._trigger_evaluator.evaluate(trigger="compile")
 
-        # Check orchestrator triggers (after policy evaluation)
+        # Check orchestrator triggers (after trigger evaluation)
         if not self._orchestrating and not self._in_batch:
             self._check_orchestrator_triggers("compile")
 
@@ -2489,17 +2554,330 @@ class Tract:
                     skip += 1
         return {"pinned": pinned, "skip": skip}
 
+    # ------------------------------------------------------------------
+    # Tag system
+    # ------------------------------------------------------------------
+
+    def tag(self, target_hash: str, tag_name: str) -> None:
+        """Add a mutable tag annotation to a commit.
+
+        Unlike immutable tags set at commit time, annotation tags can be
+        added retrospectively.
+
+        Args:
+            target_hash: Hash of the commit to tag.
+            tag_name: Tag name to add.
+
+        Raises:
+            CommitNotFoundError: If the commit doesn't exist.
+            TagNotRegisteredError: If strict mode is on and tag is not registered.
+        """
+        commit = self._commit_repo.get(target_hash)
+        if commit is None:
+            raise CommitNotFoundError(target_hash)
+        if self._strict_tags and self._tag_registry_repo is not None:
+            if not self._tag_registry_repo.is_registered(self._tract_id, tag_name):
+                raise TagNotRegisteredError(tag_name)
+        if self._tag_annotation_repo is not None:
+            from datetime import timezone
+            now = datetime.now(timezone.utc)
+            self._tag_annotation_repo.add_tag(
+                self._tract_id, target_hash, tag_name, now,
+            )
+            self._session.commit()
+
+    def untag(self, target_hash: str, tag_name: str) -> bool:
+        """Remove a mutable tag annotation from a commit.
+
+        Args:
+            target_hash: Hash of the commit to untag.
+            tag_name: Tag name to remove.
+
+        Returns:
+            True if the tag was removed, False if it didn't exist.
+        """
+        if self._tag_annotation_repo is None:
+            return False
+        result = self._tag_annotation_repo.remove_tag(
+            self._tract_id, target_hash, tag_name,
+        )
+        self._session.commit()
+        return result
+
+    def get_tags(self, target_hash: str) -> list[str]:
+        """Get all tags for a commit (immutable + mutable combined).
+
+        Args:
+            target_hash: Hash of the commit.
+
+        Returns:
+            Deduplicated list of tag names.
+        """
+        tags: set[str] = set()
+        # Immutable tags from CommitRow
+        commit_row = self._commit_repo.get(target_hash)
+        if commit_row is not None and commit_row.tags_json:
+            tags.update(commit_row.tags_json)
+        # Mutable annotation tags
+        if self._tag_annotation_repo is not None:
+            annotation_tags = self._tag_annotation_repo.get_tags(target_hash)
+            tags.update(annotation_tags)
+        return sorted(tags)
+
+    def register_tag(self, name: str, description: str | None = None) -> None:
+        """Register a new tag name.
+
+        Registered tags can be used with ``tag()`` and ``commit(tags=[...])``.
+        In strict mode (default), only registered tags are allowed.
+
+        Args:
+            name: Tag name.
+            description: Optional description of the tag.
+        """
+        if self._tag_registry_repo is None:
+            return
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        self._tag_registry_repo.register(
+            self._tract_id, name, description, auto_created=False, created_at=now,
+        )
+        self._session.commit()
+
+    def list_tags(self) -> list[dict]:
+        """List all registered tags with descriptions and usage counts.
+
+        Returns:
+            List of dicts with ``name``, ``description``, ``auto_created``,
+            and ``count`` keys.
+        """
+        if self._tag_registry_repo is None:
+            return []
+        rows = self._tag_registry_repo.list_all(self._tract_id)
+        result = []
+        for row in rows:
+            # Count usage from both immutable and annotation tags
+            count = 0
+            if self._tag_annotation_repo is not None:
+                annotation_hashes = self._tag_annotation_repo.get_commits_by_tag(
+                    self._tract_id, row.tag_name,
+                )
+                count += len(annotation_hashes)
+            # Count immutable tags from commits (walk recent history)
+            head = self.head
+            if head is not None:
+                ancestors = self._commit_repo.get_ancestors(head, limit=500)
+                for ancestor in ancestors:
+                    if ancestor.tags_json and row.tag_name in ancestor.tags_json:
+                        count += 1
+            result.append({
+                "name": row.tag_name,
+                "description": row.description,
+                "auto_created": bool(row.auto_created),
+                "count": count,
+            })
+        return result
+
+    def query_by_tags(
+        self,
+        tags: list[str],
+        *,
+        match: str = "any",
+        limit: int = 100,
+    ) -> list[CommitInfo]:
+        """Query commits by tags (combining immutable and mutable tags).
+
+        Args:
+            tags: Tag names to filter by.
+            match: ``"any"`` (OR -- commit has at least one tag) or
+                ``"all"`` (AND -- commit has every listed tag).
+            limit: Maximum results.
+
+        Returns:
+            List of :class:`CommitInfo` matching the tag criteria.
+        """
+        if not tags:
+            return []
+
+        # Collect candidate commit hashes from both sources.
+        # For "all" match, we first gather candidates with "any" match,
+        # then re-check that ALL tags are present across both sources.
+        candidate_hashes: set[str] = set()
+        collect_match = "any" if match == "all" else match
+
+        # Source 1: Annotation tags
+        if self._tag_annotation_repo is not None:
+            annotation_matches = self._tag_annotation_repo.get_commits_by_tags(
+                self._tract_id, tags, match=collect_match,
+            )
+            candidate_hashes.update(annotation_matches)
+
+        # Source 2: Immutable tags from CommitRow (walk history)
+        head = self.head
+        if head is not None:
+            ancestors = self._commit_repo.get_ancestors(head, limit=500)
+            for row in ancestors:
+                if row.tags_json:
+                    commit_tags = set(row.tags_json)
+                    if commit_tags & set(tags):
+                        candidate_hashes.add(row.commit_hash)
+
+        # For "all" match, re-check: each hash must have ALL tags
+        # when combining immutable + annotation sources
+        if match == "all":
+            final_hashes: set[str] = set()
+            for h in candidate_hashes:
+                all_tags = set(self.get_tags(h))
+                if set(tags) <= all_tags:
+                    final_hashes.add(h)
+            candidate_hashes = final_hashes
+
+        # Convert to CommitInfo, in reverse chronological order
+        results: list[CommitInfo] = []
+        if head is not None:
+            ancestors = self._commit_repo.get_ancestors(head, limit=500)
+            for row in ancestors:
+                if row.commit_hash in candidate_hashes:
+                    results.append(self._commit_engine._row_to_info(row))
+                    if len(results) >= limit:
+                        break
+        return results
+
+    def _seed_base_tags(self) -> None:
+        """Seed the tag registry with base tags (idempotent)."""
+        if self._tag_registry_repo is None:
+            return
+
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+
+        base_tags = {
+            "instruction": "System messages / instructions",
+            "tool_call": "Messages containing tool calls",
+            "tool_result": "Tool result messages",
+            "reasoning": "Assistant reasoning without tool calls",
+            "revision": "EDIT operations",
+            "observation": "User messages with data / observations",
+            "decision": "Assistant messages with explicit choices",
+            "summary": "Compression output / summaries",
+        }
+        for tag_name, description in base_tags.items():
+            self._tag_registry_repo.register(
+                self._tract_id, tag_name, description,
+                auto_created=True, created_at=now,
+            )
+        self._session.commit()
+
+    def _validate_tags(self, tags: list[str]) -> None:
+        """Validate tags against registry in strict mode.
+
+        Raises:
+            TagNotRegisteredError: If any tag is not registered.
+        """
+        if not self._strict_tags or self._tag_registry_repo is None:
+            return
+        for tag in tags:
+            if not self._tag_registry_repo.is_registered(self._tract_id, tag):
+                raise TagNotRegisteredError(tag)
+
+    def _classify_tags(
+        self,
+        content_type: str,
+        *,
+        role: str | None = None,
+        operation: CommitOperation | None = None,
+        metadata: dict | None = None,
+    ) -> list[str]:
+        """Heuristic-based tag classification (no LLM call).
+
+        Args:
+            content_type: The content type discriminator.
+            role: The message role (if dialogue).
+            operation: The commit operation.
+            metadata: The commit metadata.
+
+        Returns:
+            Deduplicated list of tag names.
+        """
+        tags: list[str] = []
+
+        # Classify based on content type and role
+        if content_type == "instruction" or role == "system":
+            tags.append("instruction")
+        if role == "assistant":
+            if metadata and metadata.get("tool_calls"):
+                tags.append("tool_call")
+            else:
+                tags.append("reasoning")
+        if role == "user":
+            if metadata and metadata.get("tool_call_id"):
+                tags.append("tool_result")
+        if role == "tool":
+            tags.append("tool_result")
+        if content_type == "tool_io":
+            if "tool_call" not in tags and "tool_result" not in tags:
+                tags.append("tool_call")
+        if operation == CommitOperation.EDIT:
+            tags.append("revision")
+        if content_type == "session" or (content_type and "session" in content_type):
+            tags.append("observation")
+
+        # Deduplicate preserving order
+        seen: set[str] = set()
+        unique_tags: list[str] = []
+        for tag in tags:
+            if tag not in seen:
+                seen.add(tag)
+                unique_tags.append(tag)
+
+        return unique_tags
+
+    def _auto_classify(
+        self,
+        content_type: str,
+        text: str,
+        *,
+        role: str | None = None,
+        operation: CommitOperation | None = None,
+        metadata: dict | None = None,
+    ) -> tuple[str, list[str]]:
+        """Generate a commit message and auto-classify tags.
+
+        Combines ``_auto_message()`` (may use LLM) with ``_classify_tags()``
+        (pure heuristic, no LLM).
+
+        Args:
+            content_type: The content type discriminator.
+            text: The text content.
+            role: The message role (if dialogue).
+            operation: The commit operation.
+            metadata: The commit metadata.
+
+        Returns:
+            Tuple of (message, tags).
+        """
+        tags = self._classify_tags(
+            content_type, role=role, operation=operation, metadata=metadata,
+        )
+        message = self._auto_message(content_type, text)
+        return message, tags
+
     def log(
         self,
         limit: int = 20,
         *,
         op_filter: CommitOperation | None = None,
+        tags: list[str] | None = None,
+        tag_match: str = "any",
     ) -> list[CommitInfo]:
         """Walk commit history from HEAD backward.
 
         Args:
             limit: Maximum number of commits to return.  Default 20.
             op_filter: If set, only include commits with this operation type.
+            tags: If set, only include commits that have these tags
+                (combining immutable commit tags and mutable annotation tags).
+            tag_match: ``"any"`` (OR -- at least one tag matches) or
+                ``"all"`` (AND -- all tags must match).  Default ``"any"``.
 
         Returns:
             List of :class:`CommitInfo` in reverse chronological order
@@ -2509,10 +2887,36 @@ class Tract:
         if current_head is None:
             return []
 
+        if tags is None:
+            # No tag filter -- use fast path
+            ancestors = self._commit_repo.get_ancestors(
+                current_head, limit=limit, op_filter=op_filter,
+            )
+            return [self._commit_engine._row_to_info(row) for row in ancestors]
+
+        # Tag filtering: walk more commits and filter
         ancestors = self._commit_repo.get_ancestors(
-            current_head, limit=limit, op_filter=op_filter,
+            current_head, limit=500, op_filter=op_filter,
         )
-        return [self._commit_engine._row_to_info(row) for row in ancestors]
+        results: list[CommitInfo] = []
+        tag_set = set(tags)
+        for row in ancestors:
+            # Combine immutable + mutable tags
+            commit_tags = set(row.tags_json) if row.tags_json else set()
+            if self._tag_annotation_repo is not None:
+                annotation_tags = self._tag_annotation_repo.get_tags(row.commit_hash)
+                commit_tags.update(annotation_tags)
+
+            if tag_match == "any":
+                if commit_tags & tag_set:
+                    results.append(self._commit_engine._row_to_info(row))
+            else:  # "all"
+                if tag_set <= commit_tags:
+                    results.append(self._commit_engine._row_to_info(row))
+
+            if len(results) >= limit:
+                break
+        return results
 
     def status(self) -> StatusInfo:
         """Get current tract status.
@@ -3790,8 +4194,8 @@ class Tract:
                 When set, summaries up to ``target_tokens + token_tolerance``
                 are accepted. Defaults to 500 when ``None``. Use 0 for strict
                 enforcement (only ``target_tokens`` allowed).
-            triggered_by: Optional provenance string (e.g. "policy:auto_compress").
-                Passed to the PendingCompress for policy feedback routing.
+            triggered_by: Optional provenance string (e.g. "trigger:auto_compress").
+                Passed to the PendingCompress for trigger feedback routing.
             two_stage: When True and LLM is available, generate guidance first
                 (what should the summary focus on?) then generate summaries using
                 that guidance. The guidance is stored on PendingCompress and is
@@ -4150,7 +4554,7 @@ class Tract:
         """Garbage-collect unreachable commits.
 
         Removes commits not reachable from any branch tip, subject to
-        configurable retention policies.
+        configurable retention triggers.
 
         Three-tier routing determines what happens after planning:
         1. ``review=True``: Returns :class:`PendingGC` to the caller.
@@ -4414,78 +4818,78 @@ class Tract:
 
 
     # ------------------------------------------------------------------
-    # Policy management
+    # Trigger management
     # ------------------------------------------------------------------
 
-    def configure_policies(
+    def configure_triggers(
         self,
-        policies: list | None = None,
+        triggers: list | None = None,
         *,
         cooldown_seconds: float = 0,
     ) -> None:
-        """Configure the policy evaluator.
+        """Configure the trigger evaluator.
 
-        Creates a PolicyEvaluator with the given policies, enabling
-        automatic policy evaluation on compile() and commit() calls.
+        Creates a TriggerEvaluator with the given triggers, enabling
+        automatic trigger evaluation on compile() and commit() calls.
 
         Args:
-            policies: List of Policy instances to register.
+            triggers: List of Trigger instances to register.
             cooldown_seconds: Minimum seconds between re-evaluations
-                of the same policy. Default 0 (no cooldown).
+                of the same trigger. Default 0 (no cooldown).
         """
-        from tract.policy.evaluator import PolicyEvaluator as _PolicyEvaluator
+        from tract.triggers.evaluator import TriggerEvaluator as _TriggerEvaluator
 
-        self._policy_evaluator = _PolicyEvaluator(
+        self._trigger_evaluator = _TriggerEvaluator(
             tract=self,
-            policies=policies,
-            policy_repo=self._policy_repo,
+            triggers=triggers,
+            trigger_repo=self._trigger_repo,
             cooldown_seconds=cooldown_seconds,
         )
 
-    def register_policy(self, policy: object) -> None:
-        """Register a single policy with the evaluator.
+    def register_trigger(self, trigger: object) -> None:
+        """Register a single trigger with the evaluator.
 
         If no evaluator exists, one is created automatically.
 
         Args:
-            policy: A Policy instance to register.
+            trigger: A Trigger instance to register.
         """
-        if self._policy_evaluator is None:
-            self.configure_policies()
-        self._policy_evaluator.register(policy)  # type: ignore[union-attr]
+        if self._trigger_evaluator is None:
+            self.configure_triggers()
+        self._trigger_evaluator.register(trigger)  # type: ignore[union-attr]
 
-    def unregister_policy(self, policy_name: str) -> None:
-        """Remove a policy by name.
+    def unregister_trigger(self, trigger_name: str) -> None:
+        """Remove a trigger by name.
 
         No-op if no evaluator exists.
 
         Args:
-            policy_name: The name of the policy to remove.
+            trigger_name: The name of the trigger to remove.
         """
-        if self._policy_evaluator is not None:
-            self._policy_evaluator.unregister(policy_name)
+        if self._trigger_evaluator is not None:
+            self._trigger_evaluator.unregister(trigger_name)
 
-    def pause_all_policies(self) -> None:
-        """Pause all policy evaluation (emergency kill switch).
+    def pause_all_triggers(self) -> None:
+        """Pause all trigger evaluation (emergency kill switch).
 
         No-op if no evaluator exists.
         """
-        if self._policy_evaluator is not None:
-            self._policy_evaluator.pause()
+        if self._trigger_evaluator is not None:
+            self._trigger_evaluator.pause()
 
-    def resume_all_policies(self) -> None:
-        """Resume all policy evaluation.
+    def resume_all_triggers(self) -> None:
+        """Resume all trigger evaluation.
 
         No-op if no evaluator exists.
         """
-        if self._policy_evaluator is not None:
-            self._policy_evaluator.resume()
+        if self._trigger_evaluator is not None:
+            self._trigger_evaluator.resume()
 
-    def save_policy_config(self, config_data: dict) -> None:
-        """Persist policy configuration to _trace_meta.
+    def save_trigger_config(self, config_data: dict) -> None:
+        """Persist trigger configuration to _trace_meta.
 
         Args:
-            config_data: Dictionary of policy configuration to persist.
+            config_data: Dictionary of trigger configuration to persist.
         """
         import json as _json
 
@@ -4493,21 +4897,21 @@ class Tract:
 
         from tract.storage.schema import TraceMetaRow
 
-        stmt = _select(TraceMetaRow).where(TraceMetaRow.key == "policy_config")
+        stmt = _select(TraceMetaRow).where(TraceMetaRow.key == "trigger_config")
         existing = self._session.execute(stmt).scalar_one_or_none()
         if existing is None:
             self._session.add(
-                TraceMetaRow(key="policy_config", value=_json.dumps(config_data))
+                TraceMetaRow(key="trigger_config", value=_json.dumps(config_data))
             )
         else:
             existing.value = _json.dumps(config_data)
         self._session.commit()
 
-    def load_policy_config(self) -> dict | None:
-        """Load policy configuration from _trace_meta.
+    def load_trigger_config(self) -> dict | None:
+        """Load trigger configuration from _trace_meta.
 
         Returns:
-            Dictionary of policy configuration, or None if not set.
+            Dictionary of trigger configuration, or None if not set.
         """
         import json as _json
 
@@ -4515,7 +4919,7 @@ class Tract:
 
         from tract.storage.schema import TraceMetaRow
 
-        stmt = _select(TraceMetaRow).where(TraceMetaRow.key == "policy_config")
+        stmt = _select(TraceMetaRow).where(TraceMetaRow.key == "trigger_config")
         row = self._session.execute(stmt).scalar_one_or_none()
         if row is None:
             return None
@@ -4609,7 +5013,7 @@ class Tract:
     def _set_orchestrating(self, flag: bool) -> None:
         """Set the orchestrating recursion guard flag.
 
-        Called by the Orchestrator to prevent policy evaluation from
+        Called by the Orchestrator to prevent trigger evaluation from
         re-triggering orchestrator runs.
 
         Args:
@@ -4620,7 +5024,7 @@ class Tract:
     def _check_orchestrator_triggers(self, trigger: str) -> None:
         """Check if orchestrator triggers should fire.
 
-        Called from compile() and commit() after policy evaluation,
+        Called from compile() and commit() after trigger evaluation,
         guarded by ``not self._orchestrating and not self._in_batch``.
 
         Args:
@@ -4920,7 +5324,7 @@ class Tract:
     # Hook system
     # ------------------------------------------------------------------
 
-    _HOOKABLE_OPS: set[str] = {"compress", "gc", "rebase", "merge", "policy", "tool_result"}
+    _HOOKABLE_OPS: set[str] = {"compress", "gc", "rebase", "merge", "trigger", "tool_result"}
 
     def on(
         self,
@@ -4940,7 +5344,7 @@ class Tract:
 
         Args:
             operation: Operation name ("compress", "gc", "rebase", "merge",
-                "policy", "tool_result", or "*" for catch-all).
+                "trigger", "tool_result", or "*" for catch-all).
             handler: Callable that takes a Pending subclass. Handler calls
                 methods on the Pending (approve, reject, pass_through, etc.).
             name: Display name for the handler. Defaults to
@@ -5194,6 +5598,455 @@ class Tract:
                     f"approve() or reject(). The pending operation remains unresolved.",
                     stacklevel=2,
                 )
+
+    # ------------------------------------------------------------------
+    # File-based persistence (.tract/ directory)
+    # ------------------------------------------------------------------
+
+    @property
+    def tract_dir(self) -> "Path | None":
+        """Path to .tract/ directory, or None for in-memory databases."""
+        from pathlib import Path
+
+        if self._db_path == ":memory:":
+            return None
+        db = Path(self._db_path)
+        return db.parent / ".tract"
+
+    @property
+    def quarantined(self) -> list[str]:
+        """List of modules that failed to load on startup."""
+        return list(self._quarantined)
+
+    def _ensure_tract_dir(self, subdir: str | None = None) -> "Path":
+        """Create .tract/ (and optional subdir) lazily. Returns the dir path.
+
+        Raises RuntimeError for in-memory databases.
+        """
+        from pathlib import Path
+
+        td = self.tract_dir
+        if td is None:
+            raise RuntimeError(
+                "File-based persistence is not available for in-memory databases."
+            )
+        if subdir:
+            target = td / subdir
+        else:
+            target = td
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def _load_persisted_state(self) -> None:
+        """Load persisted hooks, dynamic ops, and configs from DB + files.
+
+        Called during Tract.open() after all repos are initialized.
+        For :memory: databases, only loads DB-stored inline handlers.
+        """
+        import importlib.util
+        import json as _json
+        import logging
+        import sys
+
+        logger = logging.getLogger(__name__)
+        repo = self._persistence_repo
+        if repo is None:
+            return
+
+        # 1. Load dynamic op specs from DB
+        for spec_row in repo.get_dynamic_ops(self._tract_id):
+            try:
+                from tract.hooks.dynamic import spec_from_dict
+                spec = spec_from_dict(_json.loads(spec_row.spec_json))
+                if not self._operation_registry.is_registered(spec.name):
+                    self._operation_registry.register(spec)
+                    self._custom_hookable_ops.add(spec.name)
+            except Exception:
+                logger.warning(
+                    "Failed to load dynamic op '%s': skipping.",
+                    spec_row.name,
+                    exc_info=True,
+                )
+                self._quarantined.append(f"dynamic_op:{spec_row.name}")
+
+        # 2. Load hook wirings from DB -> import and register handlers
+        for wiring in repo.get_hook_wirings(self._tract_id):
+            if not wiring.enabled:
+                continue
+
+            handler = None
+            source_name = wiring.handler_path or f"inline:{wiring.operation}"
+
+            if wiring.handler_source == "file" and wiring.handler_path:
+                td = self.tract_dir
+                if td is None:
+                    continue
+                file_path = td / wiring.handler_path
+                if not file_path.exists():
+                    logger.warning(
+                        "Hook file '%s' not found: skipping.", file_path
+                    )
+                    self._quarantined.append(f"hook:{source_name}")
+                    continue
+                try:
+                    mod_name = f"_tract_hook_{wiring.handler_path.replace('/', '_').replace('.py', '')}"
+                    spec = importlib.util.spec_from_file_location(
+                        mod_name, str(file_path)
+                    )
+                    if spec is None or spec.loader is None:
+                        raise ImportError(f"Cannot create module spec for {file_path}")
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[mod_name] = module
+                    spec.loader.exec_module(module)
+                    handler = getattr(module, wiring.handler_function, None)
+                    if handler is None:
+                        raise ImportError(
+                            f"Function '{wiring.handler_function}' not found in {file_path}"
+                        )
+                except Exception:
+                    logger.warning(
+                        "Failed to import hook '%s': quarantining.",
+                        source_name,
+                        exc_info=True,
+                    )
+                    self._quarantined.append(f"hook:{source_name}")
+                    continue
+
+            elif wiring.handler_source == "inline" and wiring.handler_code:
+                try:
+                    ns: dict = {}
+                    exec(compile(wiring.handler_code, f"<hook:{wiring.operation}>", "exec"), ns)
+                    handler = ns.get(wiring.handler_function)
+                    if handler is None:
+                        raise ImportError(
+                            f"Function '{wiring.handler_function}' not found in inline code"
+                        )
+                except Exception:
+                    logger.warning(
+                        "Failed to compile inline hook for '%s': quarantining.",
+                        wiring.operation,
+                        exc_info=True,
+                    )
+                    self._quarantined.append(f"hook:{source_name}")
+                    continue
+
+            if handler is not None:
+                try:
+                    # Extract name from handler_path: "hooks/foo.py" -> "foo"
+                    hook_name = source_name
+                    if wiring.handler_path:
+                        import os
+                        hook_name = os.path.splitext(
+                            os.path.basename(wiring.handler_path)
+                        )[0]
+                    _all_hookable = self._HOOKABLE_OPS | self._custom_hookable_ops
+                    if wiring.operation in _all_hookable or wiring.operation == "*":
+                        self.on(wiring.operation, handler, name=hook_name)
+                except Exception:
+                    logger.warning(
+                        "Failed to register hook '%s': quarantining.",
+                        source_name,
+                        exc_info=True,
+                    )
+                    self._quarantined.append(f"hook:{source_name}")
+
+        # 3. Load operation configs from DB (for future use)
+        # Currently configs are loaded via load_trigger_config; this
+        # provides a more general mechanism.
+        for config_row in repo.get_operation_configs(self._tract_id):
+            try:
+                _json.loads(config_row.config_json)  # validate JSON
+            except Exception:
+                logger.warning(
+                    "Failed to load config '%s': skipping.",
+                    config_row.config_key,
+                    exc_info=True,
+                )
+                self._quarantined.append(f"config:{config_row.config_key}")
+
+    def save_hook(
+        self,
+        name: str,
+        code: str,
+        operation: str,
+        *,
+        priority: int = 100,
+    ) -> "Path":
+        """Write a hook handler to .tract/hooks/{name}.py and register in DB.
+
+        Args:
+            name: Hook name (used as filename without .py).
+            code: Python source code with a ``handler(pending)`` function.
+            operation: Operation to hook (``"compress"``, ``"gc"``, etc.).
+            priority: Handler priority (lower fires first).
+
+        Returns:
+            Path to the written file.
+
+        Raises:
+            ValueError: If operation is not hookable.
+            SyntaxError: If code has syntax errors (validated before writing).
+            RuntimeError: If database is in-memory.
+        """
+        from pathlib import Path
+
+        # Validate operation is hookable
+        _all_hookable = self._HOOKABLE_OPS | self._custom_hookable_ops
+        if operation != "*" and operation not in _all_hookable:
+            raise ValueError(
+                f"Cannot hook '{operation}': not a hookable operation. "
+                f"Hookable operations: {', '.join(sorted(_all_hookable))}"
+            )
+
+        # Validate syntax
+        compile(code, f"{name}.py", "exec")
+
+        # Write file
+        hooks_dir = self._ensure_tract_dir("hooks")
+        file_path = hooks_dir / f"{name}.py"
+        file_path.write_text(code, encoding="utf-8")
+
+        # Save DB entry
+        handler_path = f"hooks/{name}.py"
+        repo = self._persistence_repo
+        if repo is not None:
+            from tract.storage.schema import HookWiringRow
+
+            # Remove existing wiring for same path if any
+            repo.delete_hook_wiring_by_name(self._tract_id, name)
+
+            wiring = HookWiringRow(
+                tract_id=self._tract_id,
+                operation=operation,
+                handler_source="file",
+                handler_path=handler_path,
+                handler_function="handler",
+                handler_code=None,
+                priority=priority,
+                enabled=True,
+                created_at=datetime.now(),
+            )
+            repo.save_hook_wiring(wiring)
+            self._session.commit()
+
+        # Register the handler in-memory
+        import importlib.util
+        import sys
+
+        mod_name = f"_tract_hook_hooks_{name}"
+        spec = importlib.util.spec_from_file_location(mod_name, str(file_path))
+        if spec is not None and spec.loader is not None:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = module
+            spec.loader.exec_module(module)
+            handler_fn = getattr(module, "handler", None)
+            if handler_fn is not None:
+                # Remove existing hook with same name if any
+                try:
+                    self.off(operation, name)
+                except (ValueError, KeyError):
+                    pass
+                self.on(operation, handler_fn, name=name)
+
+        return file_path
+
+    def save_trigger(
+        self,
+        name: str,
+        code: str,
+        *,
+        config: dict | None = None,
+    ) -> "Path":
+        """Write a trigger to .tract/triggers/{name}.py and register in DB.
+
+        Args:
+            name: Trigger name (used as filename without .py).
+            code: Python source code with a Trigger subclass or instance.
+            config: Optional configuration dict.
+
+        Returns:
+            Path to the written file.
+
+        Raises:
+            SyntaxError: If code has syntax errors (validated before writing).
+            RuntimeError: If database is in-memory.
+        """
+        # Validate syntax
+        compile(code, f"{name}.py", "exec")
+
+        # Write file
+        triggers_dir = self._ensure_tract_dir("triggers")
+        file_path = triggers_dir / f"{name}.py"
+        file_path.write_text(code, encoding="utf-8")
+
+        # Save DB entry (as a dynamic op spec for tracking)
+        import json as _json
+
+        repo = self._persistence_repo
+        if repo is not None:
+            from tract.storage.schema import DynamicOpSpecRow
+
+            # Remove existing if any
+            repo.delete_dynamic_op(self._tract_id, f"trigger:{name}")
+
+            spec_data = {
+                "type": "trigger",
+                "name": name,
+                "path": f"triggers/{name}.py",
+                "config": config,
+            }
+            spec_row = DynamicOpSpecRow(
+                tract_id=self._tract_id,
+                name=f"trigger:{name}",
+                spec_json=_json.dumps(spec_data),
+                created_at=datetime.now(),
+            )
+            repo.save_dynamic_op(spec_row)
+            self._session.commit()
+
+        return file_path
+
+    def save_workflow(
+        self,
+        name: str,
+        code: str,
+        *,
+        description: str = "",
+    ) -> "Path":
+        """Write a workflow to .tract/workflows/{name}.py.
+
+        Args:
+            name: Workflow name (used as filename).
+            code: Python source code.
+            description: Human-readable description.
+
+        Returns:
+            Path to the written file.
+
+        Raises:
+            SyntaxError: If code has syntax errors (validated before writing).
+            RuntimeError: If database is in-memory.
+        """
+        # Validate syntax
+        compile(code, f"{name}.py", "exec")
+
+        # Write file
+        workflows_dir = self._ensure_tract_dir("workflows")
+        file_path = workflows_dir / f"{name}.py"
+        file_path.write_text(code, encoding="utf-8")
+
+        return file_path
+
+    def delete_hook(self, name: str) -> None:
+        """Remove a saved hook (file + DB entry).
+
+        Args:
+            name: The hook name (filename without .py).
+        """
+        # Remove DB entry
+        repo = self._persistence_repo
+        if repo is not None:
+            repo.delete_hook_wiring_by_name(self._tract_id, name)
+            self._session.commit()
+
+        # Remove file
+        td = self.tract_dir
+        if td is not None:
+            file_path = td / "hooks" / f"{name}.py"
+            if file_path.exists():
+                file_path.unlink()
+
+        # Remove in-memory hook registration
+        for op in list(self._hooks.keys()):
+            entries = self._hooks[op]
+            self._hooks[op] = [e for e in entries if e.name != name]
+            if not self._hooks[op]:
+                del self._hooks[op]
+
+    def delete_trigger(self, name: str) -> None:
+        """Remove a saved trigger (file + DB entry).
+
+        Args:
+            name: The trigger name (filename without .py).
+        """
+        # Remove DB entry
+        repo = self._persistence_repo
+        if repo is not None:
+            repo.delete_dynamic_op(self._tract_id, f"trigger:{name}")
+            self._session.commit()
+
+        # Remove file
+        td = self.tract_dir
+        if td is not None:
+            file_path = td / "triggers" / f"{name}.py"
+            if file_path.exists():
+                file_path.unlink()
+
+    def list_saved_hooks(self) -> list[dict]:
+        """List all persisted hooks with their status.
+
+        Returns:
+            List of dicts with keys: name, operation, priority, enabled,
+            handler_source, handler_path, created_at.
+        """
+        repo = self._persistence_repo
+        if repo is None:
+            return []
+
+        result = []
+        for wiring in repo.get_hook_wirings(self._tract_id):
+            # Determine if quarantined
+            source_name = wiring.handler_path or f"inline:{wiring.operation}"
+            is_quarantined = f"hook:{source_name}" in self._quarantined
+
+            # Extract display name from path
+            hook_name = source_name
+            if wiring.handler_path:
+                import os
+                hook_name = os.path.splitext(os.path.basename(wiring.handler_path))[0]
+
+            result.append({
+                "name": hook_name,
+                "operation": wiring.operation,
+                "priority": wiring.priority,
+                "enabled": wiring.enabled,
+                "handler_source": wiring.handler_source,
+                "handler_path": wiring.handler_path,
+                "quarantined": is_quarantined,
+                "created_at": wiring.created_at,
+            })
+        return result
+
+    def list_saved_triggers(self) -> list[dict]:
+        """List all persisted triggers with their status.
+
+        Returns:
+            List of dicts with keys: name, path, config, created_at.
+        """
+        import json as _json
+
+        repo = self._persistence_repo
+        if repo is None:
+            return []
+
+        result = []
+        for spec_row in repo.get_dynamic_ops(self._tract_id):
+            if not spec_row.name.startswith("trigger:"):
+                continue
+            try:
+                data = _json.loads(spec_row.spec_json)
+            except Exception:
+                data = {}
+            trigger_name = spec_row.name.removeprefix("trigger:")
+            is_quarantined = f"dynamic_op:{spec_row.name}" in self._quarantined
+            result.append({
+                "name": trigger_name,
+                "path": data.get("path"),
+                "config": data.get("config"),
+                "quarantined": is_quarantined,
+                "created_at": spec_row.created_at,
+            })
+        return result
 
     def close(self) -> None:
         """Close the session and dispose the engine."""

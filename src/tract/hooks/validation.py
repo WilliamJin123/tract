@@ -2,7 +2,7 @@
 
 Provides ValidationResult for per-item validation feedback and
 HookRejection for structured rejection reporting back to callers
-(e.g. policy feedback loops).
+(e.g. trigger feedback loops).
 """
 
 from __future__ import annotations
@@ -48,10 +48,10 @@ class ValidationResult:
 
 @dataclass(frozen=True)
 class HookRejection:
-    """Structured rejection information for policy feedback.
+    """Structured rejection information for trigger feedback.
 
     Created when a hook handler or validation rejects a pending
-    operation. Routed to policy.on_rejection() for adaptive behavior.
+    operation. Routed to trigger_obj.on_rejection() for adaptive behavior.
 
     Attributes:
         reason: Human-readable rejection reason.

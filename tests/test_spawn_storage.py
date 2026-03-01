@@ -94,11 +94,11 @@ class TestSpawnPointerSchema:
 
         from tract.storage.schema import Base
 
-        # Create all tables, then drop spawn_pointers + policy + v6 tables to simulate v3
+        # Create all tables, then drop spawn_pointers + trigger + v6 tables to simulate v3
         Base.metadata.create_all(engine)
         with engine.connect() as conn:
-            conn.execute(text("DROP TABLE IF EXISTS policy_log"))
-            conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
+            conn.execute(text("DROP TABLE IF EXISTS trigger_log"))
+            conn.execute(text("DROP TABLE IF EXISTS trigger_proposals"))
             conn.execute(text("DROP TABLE IF EXISTS spawn_pointers"))
             conn.execute(text("DROP TABLE IF EXISTS compile_effectives"))
             conn.execute(text("DROP TABLE IF EXISTS compile_records"))
@@ -135,11 +135,11 @@ class TestSpawnPointerSchema:
 
         from tract.storage.schema import Base
 
-        # Create all tables, then drop compression + spawn + policy + v6 tables to simulate v2
+        # Create all tables, then drop compression + spawn + trigger + v6 tables to simulate v2
         Base.metadata.create_all(engine)
         with engine.connect() as conn:
-            conn.execute(text("DROP TABLE IF EXISTS policy_log"))
-            conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
+            conn.execute(text("DROP TABLE IF EXISTS trigger_log"))
+            conn.execute(text("DROP TABLE IF EXISTS trigger_proposals"))
             conn.execute(text("DROP TABLE IF EXISTS spawn_pointers"))
             conn.execute(text("DROP TABLE IF EXISTS compile_effectives"))
             conn.execute(text("DROP TABLE IF EXISTS compile_records"))

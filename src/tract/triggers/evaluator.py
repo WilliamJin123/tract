@@ -1,15 +1,15 @@
-"""PolicyEvaluator -- sidecar class that evaluates policies against a Tract.
+"""TriggerEvaluator -- sidecar class that evaluates triggers against a Tract.
 
-The evaluator iterates registered policies sorted by priority, dispatches
+The evaluator iterates registered triggers sorted by priority, dispatches
 actions based on autonomy level, and logs audit entries for every evaluation.
 
-Recursion guard: if a policy's action triggers compile() or commit(),
+Recursion guard: if a trigger's action triggers compile() or commit(),
 the evaluator will not re-enter evaluate() (same pattern as Tract._in_batch).
 
-Collaborative mode routes through the hook system via PendingPolicy.
+Collaborative mode routes through the hook system via PendingTrigger.
 Three-tier handler precedence:
-    1. User hook (t.on("policy", handler)) -- highest priority
-    2. Policy.default_handler() -- policy-specific review logic
+    1. User hook (t.on("trigger", handler)) -- highest priority
+    2. Trigger.default_handler() -- trigger-specific review logic
     3. Auto-approve -- if no hook and no default_handler override
 """
 
@@ -20,45 +20,45 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from tract.models.annotations import Priority
-from tract.models.policy import EvaluationResult, PolicyAction
-from tract.policy.protocols import Policy
+from tract.models.trigger import EvaluationResult, TriggerAction
+from tract.triggers.protocols import Trigger
 
 if TYPE_CHECKING:
-    from tract.hooks.policy import PendingPolicy
+    from tract.hooks.trigger import PendingTrigger
     from tract.hooks.validation import HookRejection
-    from tract.storage.sqlite import SqlitePolicyRepository
+    from tract.storage.sqlite import SqliteTriggerRepository
     from tract.tract import Tract
 
 logger = logging.getLogger(__name__)
 
 
-class PolicyEvaluator:
-    """Evaluates policies against a Tract instance.
+class TriggerEvaluator:
+    """Evaluates triggers against a Tract instance.
 
     Supports the full autonomy spectrum:
     - **autonomous**: executes actions immediately
-    - **collaborative**: creates PendingPolicy, routes through hook system
+    - **collaborative**: creates PendingTrigger, routes through hook system
     - **manual/supervised**: skips execution, logs only
 
     Features:
     - Priority-sorted evaluation (lower priority runs first)
-    - Recursion guard (prevents infinite loops from policies triggering compile/commit)
+    - Recursion guard (prevents infinite loops from triggers triggering compile/commit)
     - Cooldown tracking (prevents rapid re-firing)
-    - Audit logging (every evaluation logged to DB if policy_repo available)
+    - Audit logging (every evaluation logged to DB if trigger_repo available)
     """
 
     def __init__(
         self,
         tract: Tract,
-        policies: list[Policy] | None = None,
-        policy_repo: SqlitePolicyRepository | None = None,
+        triggers: list[Trigger] | None = None,
+        trigger_repo: SqliteTriggerRepository | None = None,
         cooldown_seconds: float = 0,
     ) -> None:
         self._tract = tract
-        self._policies: list[Policy] = sorted(
-            policies or [], key=lambda p: p.priority
+        self._triggers: list[Trigger] = sorted(
+            triggers or [], key=lambda p: p.priority
         )
-        self._policy_repo = policy_repo
+        self._trigger_repo = trigger_repo
         self._paused: bool = False
         self._evaluating: bool = False
         self._last_fired: dict[str, datetime] = {}
@@ -68,25 +68,25 @@ class PolicyEvaluator:
     # Registration
     # ------------------------------------------------------------------
 
-    def register(self, policy: Policy) -> None:
-        """Add a policy to the evaluator, maintaining priority sort order."""
-        self._policies.append(policy)
-        self._policies.sort(key=lambda p: p.priority)
+    def register(self, trigger_obj: Trigger) -> None:
+        """Add a trigger to the evaluator, maintaining priority sort order."""
+        self._triggers.append(trigger_obj)
+        self._triggers.sort(key=lambda p: p.priority)
 
-    def unregister(self, policy_name: str) -> None:
-        """Remove a policy by name."""
-        self._policies = [p for p in self._policies if p.name != policy_name]
+    def unregister(self, trigger_name: str) -> None:
+        """Remove a trigger by name."""
+        self._triggers = [p for p in self._triggers if p.name != trigger_name]
 
     # ------------------------------------------------------------------
     # Pause / Resume
     # ------------------------------------------------------------------
 
     def pause(self) -> None:
-        """Pause all policy evaluation (emergency kill switch)."""
+        """Pause all trigger evaluation (emergency kill switch)."""
         self._paused = True
 
     def resume(self) -> None:
-        """Resume policy evaluation."""
+        """Resume trigger evaluation."""
         self._paused = False
 
     @property
@@ -99,13 +99,13 @@ class PolicyEvaluator:
     # ------------------------------------------------------------------
 
     def evaluate(self, trigger: str = "compile") -> list[EvaluationResult]:
-        """Evaluate all registered policies matching the given trigger.
+        """Evaluate all registered triggers matching the given trigger.
 
         Args:
             trigger: The evaluation trigger -- "compile" or "commit".
 
         Returns:
-            List of EvaluationResult for each policy that matched the trigger.
+            List of EvaluationResult for each trigger that matched the trigger.
         """
         if self._paused or self._evaluating:
             return []
@@ -120,76 +120,76 @@ class PolicyEvaluator:
         """Internal evaluation loop (called inside recursion guard)."""
         results: list[EvaluationResult] = []
 
-        # Filter policies matching this trigger
-        matching = [p for p in self._policies if p.trigger == trigger]
+        # Filter triggers matching this trigger
+        matching = [p for p in self._triggers if p.fires_on == trigger]
 
-        for policy in matching:
+        for trigger_obj in matching:
             # Check cooldown
-            if self._cooldown_seconds > 0 and policy.name in self._last_fired:
+            if self._cooldown_seconds > 0 and trigger_obj.name in self._last_fired:
                 elapsed = (
-                    datetime.now() - self._last_fired[policy.name]
+                    datetime.now() - self._last_fired[trigger_obj.name]
                 ).total_seconds()
                 if elapsed < self._cooldown_seconds:
                     result = EvaluationResult(
-                        policy_name=policy.name,
+                        trigger_name=trigger_obj.name,
                         triggered=False,
                         outcome="skipped",
                     )
                     results.append(result)
                     continue
 
-            # Evaluate the policy
+            # Evaluate the trigger
             try:
-                action = policy.evaluate(self._tract)
+                action = trigger_obj.evaluate(self._tract)
             except Exception as exc:
                 logger.error(
-                    "Policy '%s' raised %s: %s",
-                    policy.name,
+                    "Trigger '%s' raised %s: %s",
+                    trigger_obj.name,
                     type(exc).__name__,
                     exc,
                 )
                 result = EvaluationResult(
-                    policy_name=policy.name,
+                    trigger_name=trigger_obj.name,
                     triggered=True,
                     outcome="error",
                     error=str(exc),
                 )
-                self._log_evaluation(policy, trigger, result)
+                self._log_evaluation(trigger_obj, trigger, result)
                 results.append(result)
                 continue
 
             if action is None:
-                # Policy didn't fire
+                # Trigger didn't fire
                 result = EvaluationResult(
-                    policy_name=policy.name,
+                    trigger_name=trigger_obj.name,
                     triggered=False,
                     outcome="skipped",
                 )
                 results.append(result)
                 continue
 
-            # Policy wants to fire -- dispatch based on autonomy
-            self._last_fired[policy.name] = datetime.now()
+            # Trigger wants to fire -- dispatch based on autonomy
+            self._last_fired[trigger_obj.name] = datetime.now()
 
             if action.autonomy == "autonomous":
-                result = self._execute_action(policy, action)
+                result = self._execute_action(trigger_obj, action)
             elif action.autonomy == "collaborative":
-                result = self._handle_collaborative(policy, action)
+                result = self._handle_collaborative(trigger_obj, action)
             else:
                 # manual / supervised -- skip execution
                 result = EvaluationResult(
-                    policy_name=policy.name,
+                    trigger_name=trigger_obj.name,
                     triggered=True,
                     action=action,
                     outcome="skipped",
                 )
                 logger.debug(
-                    "Policy '%s' action skipped (autonomy=%s)",
-                    policy.name,
+                    "Trigger '%s' action skipped (autonomy=%s)",
+                    trigger_obj.name,
                     action.autonomy,
                 )
 
-            self._log_evaluation(policy, trigger, result)
+            self._log_evaluation(trigger_obj, trigger, result)
             results.append(result)
 
         return results
@@ -199,27 +199,27 @@ class PolicyEvaluator:
     # ------------------------------------------------------------------
 
     def _execute_action(
-        self, policy: Policy, action: PolicyAction
+        self, trigger_obj: Trigger, action: TriggerAction
     ) -> EvaluationResult:
-        """Execute a policy action immediately (autonomous mode).
+        """Execute a trigger action immediately (autonomous mode).
 
         Dispatches to the appropriate Tract method based on action_type.
         """
         try:
             commit_hash = self._dispatch_action(action)
             logger.debug(
-                "Policy '%s' executed: %s -> %s",
-                policy.name,
+                "Trigger '%s' executed: %s -> %s",
+                trigger_obj.name,
                 action.action_type,
                 commit_hash,
             )
-            # Notify policy of success
+            # Notify trigger of success
             try:
-                policy.on_success(commit_hash)
+                trigger_obj.on_success(commit_hash)
             except Exception:
                 pass  # Don't let on_success errors break the flow
             return EvaluationResult(
-                policy_name=policy.name,
+                trigger_name=trigger_obj.name,
                 triggered=True,
                 action=action,
                 outcome="executed",
@@ -227,17 +227,17 @@ class PolicyEvaluator:
             )
         except Exception as exc:
             logger.error(
-                "Policy '%s' action failed: %s", policy.name, exc
+                "Trigger '%s' action failed: %s", trigger_obj.name, exc
             )
             return EvaluationResult(
-                policy_name=policy.name,
+                trigger_name=trigger_obj.name,
                 triggered=True,
                 action=action,
                 outcome="error",
                 error=str(exc),
             )
 
-    def _dispatch_action(self, action: PolicyAction) -> str | None:
+    def _dispatch_action(self, action: TriggerAction) -> str | None:
         """Dispatch an action to the appropriate Tract method.
 
         Returns the resulting commit_hash if applicable.
@@ -277,6 +277,32 @@ class PolicyEvaluator:
             source = action.params.get("source")
             return self._tract.branch(archive_name, source=source, switch=False)
 
+        if action.action_type == "rebase":
+            target = action.params.get("target", "main")
+            result = self._tract.rebase(target)
+            if hasattr(result, "new_head"):
+                return result.new_head
+            return None
+
+        if action.action_type == "gc":
+            result = self._tract.gc()
+            if hasattr(result, "commits_removed"):
+                return None  # GC doesn't produce a commit hash
+            return None
+
+        if action.action_type == "merge":
+            source = action.params.get("source")
+            target = action.params.get("target")
+            if source is None:
+                raise ValueError("merge action missing 'source' in params")
+            # If we need to switch to the target branch first
+            if target is not None and self._tract.current_branch != target:
+                self._tract.switch(target)
+            result = self._tract.merge(source)
+            if hasattr(result, "merge_commit_hash"):
+                return result.merge_commit_hash
+            return None
+
         raise ValueError(f"Unknown action_type: {action.action_type}")
 
     # ------------------------------------------------------------------
@@ -284,31 +310,31 @@ class PolicyEvaluator:
     # ------------------------------------------------------------------
 
     def _handle_collaborative(
-        self, policy: Policy, action: PolicyAction
+        self, trigger_obj: Trigger, action: TriggerAction
     ) -> EvaluationResult:
-        """Handle collaborative mode via PendingPolicy + hook system.
+        """Handle collaborative mode via PendingTrigger + hook system.
 
         Three-tier handler precedence:
-        1. User hook (t.on("policy", handler))
-        2. Policy.default_handler()
+        1. User hook (t.on("trigger", handler))
+        2. Trigger.default_handler()
         3. Auto-approve
         """
-        from tract.hooks.policy import PendingPolicy
+        from tract.hooks.trigger import PendingTrigger
 
-        pending = PendingPolicy(
-            operation="policy",
+        pending = PendingTrigger(
+            operation="trigger",
             tract=self._tract,
-            policy_name=policy.name,
+            trigger_name=trigger_obj.name,
             action_type=action.action_type,
             action_params=dict(action.params),
             reason=action.reason,
-            triggered_by=f"policy:{policy.name}",
+            triggered_by=f"trigger:{trigger_obj.name}",
         )
 
         # Set execute function to dispatch the action
-        def _execute_fn(p: PendingPolicy) -> object:
+        def _execute_fn(p: PendingTrigger) -> object:
             result = self._dispatch_action(
-                PolicyAction(
+                TriggerAction(
                     action_type=p.action_type,
                     params=dict(p.action_params),
                     reason=p.reason,
@@ -319,42 +345,42 @@ class PolicyEvaluator:
 
         pending._execute_fn = _execute_fn
 
-        # Three-tier routing for policy:
-        # 1. User hook (t.on("policy", handler))
+        # Three-tier routing for trigger:
+        # 1. User hook (t.on("trigger", handler))
         has_user_hook = (
-            "policy" in self._tract._hooks or "*" in self._tract._hooks
+            "trigger" in self._tract._hooks or "*" in self._tract._hooks
         )
 
         if has_user_hook and not self._tract._in_hook:
             # User hook takes precedence
             self._tract._fire_hook(pending)
         else:
-            # 2. Policy.default_handler()
+            # 2. Trigger.default_handler()
             try:
-                policy.default_handler(pending)
+                trigger_obj.default_handler(pending)
             except Exception as exc:
                 logger.error(
-                    "Policy '%s' default_handler raised: %s", policy.name, exc
+                    "Trigger '%s' default_handler raised: %s", trigger_obj.name, exc
                 )
                 if pending.status == "pending":
                     pending.reject(f"default_handler error: {exc}")
 
         # Route feedback based on outcome
         if pending.status == "approved":
-            # Notify policy of success
+            # Notify trigger of success
             try:
-                policy.on_success(getattr(pending, "_result", None))
+                trigger_obj.on_success(getattr(pending, "_result", None))
             except Exception:
                 pass
             return EvaluationResult(
-                policy_name=policy.name,
+                trigger_name=trigger_obj.name,
                 triggered=True,
                 action=action,
                 outcome="executed",
             )
 
         if pending.status == "rejected":
-            # Notify policy of rejection
+            # Notify trigger of rejection
             from tract.hooks.validation import HookRejection
 
             rejection = HookRejection(
@@ -363,11 +389,11 @@ class PolicyEvaluator:
                 rejection_source="hook",
             )
             try:
-                policy.on_rejection(rejection)
+                trigger_obj.on_rejection(rejection)
             except Exception:
                 pass
             return EvaluationResult(
-                policy_name=policy.name,
+                trigger_name=trigger_obj.name,
                 triggered=True,
                 action=action,
                 outcome="proposed",  # Still "proposed" for backward compat
@@ -375,7 +401,7 @@ class PolicyEvaluator:
 
         # Still pending (handler didn't resolve) -- treat as proposed
         return EvaluationResult(
-            policy_name=policy.name,
+            trigger_name=trigger_obj.name,
             triggered=True,
             action=action,
             outcome="proposed",
@@ -386,22 +412,22 @@ class PolicyEvaluator:
     # ------------------------------------------------------------------
 
     def _log_evaluation(
-        self, policy: Policy, trigger: str, result: EvaluationResult
+        self, trigger_obj: Trigger, trigger: str, result: EvaluationResult
     ) -> None:
-        """Log a policy evaluation to the audit log."""
+        """Log a trigger evaluation to the audit log."""
         logger.debug(
-            "Policy '%s' [%s]: outcome=%s",
-            policy.name,
+            "Trigger '%s' [%s]: outcome=%s",
+            trigger_obj.name,
             trigger,
             result.outcome,
         )
 
-        if self._policy_repo is not None:
-            from tract.storage.schema import PolicyLogRow
+        if self._trigger_repo is not None:
+            from tract.storage.schema import TriggerLogRow
 
-            entry = PolicyLogRow(
+            entry = TriggerLogRow(
                 tract_id=self._tract.tract_id,
-                policy_name=policy.name,
+                trigger_name=trigger_obj.name,
                 trigger=trigger,
                 action_type=result.action.action_type if result.action else None,
                 reason=result.action.reason if result.action else None,
@@ -410,5 +436,5 @@ class PolicyEvaluator:
                 error_message=result.error,
                 created_at=datetime.now(),
             )
-            self._policy_repo.save_log_entry(entry)
+            self._trigger_repo.save_log_entry(entry)
             self._tract._session.commit()

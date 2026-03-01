@@ -76,7 +76,7 @@ class Pending:
         created_at: When this pending was created (UTC).
         tract: The Tract instance that created this pending (full SDK access).
         status: Current status -- "pending", "approved", or "rejected".
-        triggered_by: Optional provenance string (e.g. "policy:auto_compress").
+        triggered_by: Optional provenance string (e.g. "trigger:auto_compress").
         rejection_reason: Human-readable reason if status is "rejected".
 
     Internal:

@@ -117,7 +117,7 @@ class TestRejectAll:
         """reject_all calls pending.reject()."""
         reject_all(mock_pending)
         assert mock_pending.status == "rejected"
-        assert mock_pending.rejection_reason == "Rejected by policy"
+        assert mock_pending.rejection_reason == "Rejected by trigger"
 
     def test_reject_all_custom_reason(self, mock_pending):
         """reject_all accepts custom reason."""
@@ -155,7 +155,7 @@ class TestMakeRejectHandler:
         handler = make_reject_handler()
         handler(mock_pending)
         assert mock_pending.status == "rejected"
-        assert mock_pending.rejection_reason == "Rejected by policy"
+        assert mock_pending.rejection_reason == "Rejected by trigger"
 
     def test_make_reject_handler_custom_reason(self, mock_pending):
         """make_reject_handler with custom reason."""

@@ -19,7 +19,10 @@ from tract.storage.repositories import (
     CommitRepository,
     CompileRecordRepository,
     OperationEventRepository,
-    PolicyRepository,
+    PersistenceRepository,
+    TagAnnotationRepository,
+    TagRegistryRepository,
+    TriggerRepository,
     RefRepository,
     SpawnPointerRepository,
     ToolSchemaRepository,
@@ -32,10 +35,15 @@ from tract.storage.schema import (
     CommitToolRow,
     CompileEffectiveRow,
     CompileRecordRow,
+    DynamicOpSpecRow,
+    HookWiringRow,
     OperationCommitRow,
+    OperationConfigRow,
     OperationEventRow,
-    PolicyLogRow,
-    PolicyProposalRow,
+    TagAnnotationRow,
+    TagRegistryRow,
+    TriggerLogRow,
+    TriggerProposalRow,
     RefRow,
     SpawnPointerRow,
     ToolSchemaRow,
@@ -897,41 +905,41 @@ class SqliteSpawnPointerRepository(SpawnPointerRepository):
             current = pointer.parent_tract_id
 
 
-class SqlitePolicyRepository(PolicyRepository):
-    """SQLite implementation of policy proposal and log storage.
+class SqliteTriggerRepository(TriggerRepository):
+    """SQLite implementation of trigger proposal and log storage.
 
-    Provides CRUD for policy proposals and audit log entries.
+    Provides CRUD for trigger proposals and audit log entries.
     """
 
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def save_proposal(self, proposal: PolicyProposalRow) -> None:
+    def save_proposal(self, proposal: TriggerProposalRow) -> None:
         self._session.add(proposal)
         self._session.flush()
 
-    def get_proposal(self, proposal_id: str) -> PolicyProposalRow | None:
-        stmt = select(PolicyProposalRow).where(
-            PolicyProposalRow.proposal_id == proposal_id
+    def get_proposal(self, proposal_id: str) -> TriggerProposalRow | None:
+        stmt = select(TriggerProposalRow).where(
+            TriggerProposalRow.proposal_id == proposal_id
         )
         return self._session.execute(stmt).scalar_one_or_none()
 
-    def get_pending_proposals(self, tract_id: str) -> list[PolicyProposalRow]:
+    def get_pending_proposals(self, tract_id: str) -> list[TriggerProposalRow]:
         stmt = (
-            select(PolicyProposalRow)
+            select(TriggerProposalRow)
             .where(
-                PolicyProposalRow.tract_id == tract_id,
-                PolicyProposalRow.status == "pending",
+                TriggerProposalRow.tract_id == tract_id,
+                TriggerProposalRow.status == "pending",
             )
-            .order_by(PolicyProposalRow.created_at)
+            .order_by(TriggerProposalRow.created_at)
         )
         return list(self._session.execute(stmt).scalars().all())
 
     def update_proposal_status(
         self, proposal_id: str, status: str, resolved_at: datetime
     ) -> None:
-        stmt = select(PolicyProposalRow).where(
-            PolicyProposalRow.proposal_id == proposal_id
+        stmt = select(TriggerProposalRow).where(
+            TriggerProposalRow.proposal_id == proposal_id
         )
         proposal = self._session.execute(stmt).scalar_one_or_none()
         if proposal is not None:
@@ -939,7 +947,7 @@ class SqlitePolicyRepository(PolicyRepository):
             proposal.resolved_at = resolved_at
             self._session.flush()
 
-    def save_log_entry(self, entry: PolicyLogRow) -> None:
+    def save_log_entry(self, entry: TriggerLogRow) -> None:
         self._session.add(entry)
         self._session.flush()
 
@@ -949,29 +957,29 @@ class SqlitePolicyRepository(PolicyRepository):
         *,
         since: datetime | None = None,
         until: datetime | None = None,
-        policy_name: str | None = None,
+        trigger_name: str | None = None,
         limit: int = 100,
-    ) -> list[PolicyLogRow]:
-        conditions = [PolicyLogRow.tract_id == tract_id]
+    ) -> list[TriggerLogRow]:
+        conditions = [TriggerLogRow.tract_id == tract_id]
         if since is not None:
-            conditions.append(PolicyLogRow.created_at >= since)
+            conditions.append(TriggerLogRow.created_at >= since)
         if until is not None:
-            conditions.append(PolicyLogRow.created_at <= until)
-        if policy_name is not None:
-            conditions.append(PolicyLogRow.policy_name == policy_name)
+            conditions.append(TriggerLogRow.created_at <= until)
+        if trigger_name is not None:
+            conditions.append(TriggerLogRow.trigger_name == trigger_name)
 
         stmt = (
-            select(PolicyLogRow)
+            select(TriggerLogRow)
             .where(and_(*conditions))
-            .order_by(PolicyLogRow.created_at.desc())
+            .order_by(TriggerLogRow.created_at.desc())
             .limit(limit)
         )
         return list(self._session.execute(stmt).scalars().all())
 
     def delete_log_entries(self, tract_id: str, before: datetime) -> int:
-        stmt = select(PolicyLogRow).where(
-            PolicyLogRow.tract_id == tract_id,
-            PolicyLogRow.created_at < before,
+        stmt = select(TriggerLogRow).where(
+            TriggerLogRow.tract_id == tract_id,
+            TriggerLogRow.created_at < before,
         )
         rows = self._session.execute(stmt).scalars().all()
         count = len(rows)
@@ -1053,3 +1061,286 @@ class SqliteToolSchemaRepository(ToolSchemaRepository):
             .order_by(CommitToolRow.position)
         )
         return list(self._session.execute(stmt).scalars().all())
+
+
+class SqliteTagAnnotationRepository(TagAnnotationRepository):
+    """SQLite implementation of mutable tag annotation storage."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add_tag(
+        self, tract_id: str, target_hash: str, tag: str, created_at: datetime
+    ) -> TagAnnotationRow:
+        row = TagAnnotationRow(
+            tract_id=tract_id,
+            target_hash=target_hash,
+            tag=tag,
+            created_at=created_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return row
+
+    def remove_tag(self, tract_id: str, target_hash: str, tag: str) -> bool:
+        stmt = select(TagAnnotationRow).where(
+            and_(
+                TagAnnotationRow.tract_id == tract_id,
+                TagAnnotationRow.target_hash == target_hash,
+                TagAnnotationRow.tag == tag,
+            )
+        )
+        rows = list(self._session.execute(stmt).scalars().all())
+        if not rows:
+            return False
+        for row in rows:
+            self._session.delete(row)
+        self._session.flush()
+        return True
+
+    def get_tags(self, target_hash: str) -> list[str]:
+        stmt = (
+            select(TagAnnotationRow.tag)
+            .where(TagAnnotationRow.target_hash == target_hash)
+            .order_by(TagAnnotationRow.created_at)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def get_commits_by_tag(self, tract_id: str, tag: str) -> list[str]:
+        stmt = (
+            select(TagAnnotationRow.target_hash)
+            .where(
+                and_(
+                    TagAnnotationRow.tract_id == tract_id,
+                    TagAnnotationRow.tag == tag,
+                )
+            )
+            .distinct()
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def get_commits_by_tags(
+        self, tract_id: str, tags: list[str], match: str = "any"
+    ) -> list[str]:
+        if not tags:
+            return []
+
+        if match == "any":
+            stmt = (
+                select(TagAnnotationRow.target_hash)
+                .where(
+                    and_(
+                        TagAnnotationRow.tract_id == tract_id,
+                        TagAnnotationRow.tag.in_(tags),
+                    )
+                )
+                .distinct()
+            )
+            return list(self._session.execute(stmt).scalars().all())
+        else:
+            # "all" -- must have every tag
+            stmt = (
+                select(TagAnnotationRow.target_hash)
+                .where(
+                    and_(
+                        TagAnnotationRow.tract_id == tract_id,
+                        TagAnnotationRow.tag.in_(tags),
+                    )
+                )
+                .group_by(TagAnnotationRow.target_hash)
+                .having(func.count(func.distinct(TagAnnotationRow.tag)) == len(tags))
+            )
+            return list(self._session.execute(stmt).scalars().all())
+
+
+class SqliteTagRegistryRepository(TagRegistryRepository):
+    """SQLite implementation of tag registry storage."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def register(
+        self,
+        tract_id: str,
+        tag_name: str,
+        description: str | None,
+        auto_created: bool,
+        created_at: datetime,
+    ) -> TagRegistryRow:
+        # Check if already registered (idempotent)
+        existing = self.get(tract_id, tag_name)
+        if existing is not None:
+            # Update description if changed
+            if description is not None and existing.description != description:
+                existing.description = description
+                self._session.flush()
+            return existing
+        row = TagRegistryRow(
+            tract_id=tract_id,
+            tag_name=tag_name,
+            description=description,
+            auto_created=auto_created,
+            created_at=created_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return row
+
+    def get(self, tract_id: str, tag_name: str) -> TagRegistryRow | None:
+        stmt = select(TagRegistryRow).where(
+            and_(
+                TagRegistryRow.tract_id == tract_id,
+                TagRegistryRow.tag_name == tag_name,
+            )
+        )
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def list_all(self, tract_id: str) -> list[TagRegistryRow]:
+        stmt = (
+            select(TagRegistryRow)
+            .where(TagRegistryRow.tract_id == tract_id)
+            .order_by(TagRegistryRow.tag_name)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def is_registered(self, tract_id: str, tag_name: str) -> bool:
+        return self.get(tract_id, tag_name) is not None
+
+    def delete(self, tract_id: str, tag_name: str) -> bool:
+        row = self.get(tract_id, tag_name)
+        if row is None:
+            return False
+        self._session.delete(row)
+        self._session.flush()
+        return True
+
+
+class SqlitePersistenceRepository(PersistenceRepository):
+    """SQLite implementation of persistence repository.
+
+    Provides CRUD for hook wirings, dynamic op specs, and operation configs.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    # -- Hook wirings --
+
+    def save_hook_wiring(self, wiring: HookWiringRow) -> HookWiringRow:
+        self._session.add(wiring)
+        self._session.flush()
+        return wiring
+
+    def get_hook_wirings(self, tract_id: str) -> list[HookWiringRow]:
+        stmt = (
+            select(HookWiringRow)
+            .where(HookWiringRow.tract_id == tract_id)
+            .order_by(HookWiringRow.priority, HookWiringRow.id)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def delete_hook_wiring(
+        self, tract_id: str, operation: str, handler_path: str | None = None
+    ) -> bool:
+        stmt = select(HookWiringRow).where(
+            and_(
+                HookWiringRow.tract_id == tract_id,
+                HookWiringRow.operation == operation,
+            )
+        )
+        if handler_path is not None:
+            stmt = stmt.where(HookWiringRow.handler_path == handler_path)
+        rows = list(self._session.execute(stmt).scalars().all())
+        if not rows:
+            return False
+        for row in rows:
+            self._session.delete(row)
+        self._session.flush()
+        return True
+
+    def delete_hook_wiring_by_name(self, tract_id: str, name: str) -> bool:
+        # Match on handler_path containing the name (e.g., "hooks/name.py")
+        path_pattern = f"hooks/{name}.py"
+        stmt = select(HookWiringRow).where(
+            and_(
+                HookWiringRow.tract_id == tract_id,
+                HookWiringRow.handler_path == path_pattern,
+            )
+        )
+        rows = list(self._session.execute(stmt).scalars().all())
+        if not rows:
+            return False
+        for row in rows:
+            self._session.delete(row)
+        self._session.flush()
+        return True
+
+    # -- Dynamic op specs --
+
+    def save_dynamic_op(self, spec_row: DynamicOpSpecRow) -> DynamicOpSpecRow:
+        self._session.add(spec_row)
+        self._session.flush()
+        return spec_row
+
+    def get_dynamic_ops(self, tract_id: str) -> list[DynamicOpSpecRow]:
+        stmt = (
+            select(DynamicOpSpecRow)
+            .where(DynamicOpSpecRow.tract_id == tract_id)
+            .order_by(DynamicOpSpecRow.id)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def delete_dynamic_op(self, tract_id: str, name: str) -> bool:
+        stmt = select(DynamicOpSpecRow).where(
+            and_(
+                DynamicOpSpecRow.tract_id == tract_id,
+                DynamicOpSpecRow.name == name,
+            )
+        )
+        row = self._session.execute(stmt).scalar_one_or_none()
+        if row is None:
+            return False
+        self._session.delete(row)
+        self._session.flush()
+        return True
+
+    # -- Operation configs --
+
+    def save_operation_config(self, config_row: OperationConfigRow) -> OperationConfigRow:
+        # Upsert: if config_key already exists for this tract_id, update it
+        existing = self.get_operation_config(config_row.tract_id, config_row.config_key)
+        if existing is not None:
+            existing.config_json = config_row.config_json
+            existing.created_at = config_row.created_at
+            self._session.flush()
+            return existing
+        self._session.add(config_row)
+        self._session.flush()
+        return config_row
+
+    def get_operation_configs(self, tract_id: str) -> list[OperationConfigRow]:
+        stmt = (
+            select(OperationConfigRow)
+            .where(OperationConfigRow.tract_id == tract_id)
+            .order_by(OperationConfigRow.id)
+        )
+        return list(self._session.execute(stmt).scalars().all())
+
+    def get_operation_config(
+        self, tract_id: str, config_key: str
+    ) -> OperationConfigRow | None:
+        stmt = select(OperationConfigRow).where(
+            and_(
+                OperationConfigRow.tract_id == tract_id,
+                OperationConfigRow.config_key == config_key,
+            )
+        )
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def delete_operation_config(self, tract_id: str, config_key: str) -> bool:
+        row = self.get_operation_config(tract_id, config_key)
+        if row is None:
+            return False
+        self._session.delete(row)
+        self._session.flush()
+        return True

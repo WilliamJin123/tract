@@ -345,7 +345,7 @@ class TestOperationRegistry:
 
     def test_register_builtin_name_raises(self):
         reg = OperationRegistry()
-        for name in ["compress", "gc", "rebase", "merge", "policy", "tool_result"]:
+        for name in ["compress", "gc", "rebase", "merge", "trigger", "tool_result"]:
             spec = OperationSpec(name=name, description="x", fields={}, actions={})
             with pytest.raises(ValueError, match="built-in"):
                 reg.register(spec)
@@ -584,8 +584,8 @@ class TestTractIntegration:
         spec = _simple_spec()
         t.register_operation(spec)
 
-        result = t.fire("test_op", triggered_by="policy:auto", review=True)
-        assert result.triggered_by == "policy:auto"
+        result = t.fire("test_op", triggered_by="trigger:auto", review=True)
+        assert result.triggered_by == "trigger:auto"
 
     def test_fire_rejected_by_handler(self):
         t = Tract.open()

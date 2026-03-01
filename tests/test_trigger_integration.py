@@ -1,20 +1,20 @@
-"""End-to-end integration tests for the policy engine.
+"""End-to-end integration tests for the trigger engine.
 
-Tests the full lifecycle: configure policies -> commit content ->
+Tests the full lifecycle: configure triggers -> commit content ->
 trigger evaluation -> verify actions executed/proposed.
 
 Covers:
 - Auto-pin on commit (autonomous mode)
 - Auto-compress on compile (collaborative mode with approval)
-- Policy priority ordering via audit log
+- Trigger priority ordering via audit log
 - Pause/resume lifecycle
 - Collaborative approve/reject via hook system
-- Policy config persistence (save/load)
+- Trigger config persistence (save/load)
 - Recursive evaluation prevention
-- Multiple policy composition
-- Custom policy subclass
-- Policy hook callback
-- Policy config survives restart (file-backed)
+- Multiple trigger composition
+- Custom trigger subclass
+- Trigger hook callback
+- Trigger config survives restart (file-backed)
 """
 
 from __future__ import annotations
@@ -29,10 +29,10 @@ from tract import (
     DialogueContent,
     EvaluationResult,
     InstructionContent,
-    Policy,
-    PolicyAction,
-    PolicyEvaluator,
-    PolicyExecutionError,
+    Trigger,
+    TriggerAction,
+    TriggerEvaluator,
+    TriggerExecutionError,
     Priority,
     Tract,
     TractConfig,
@@ -40,8 +40,8 @@ from tract import (
 )
 from tract.models.content import ArtifactContent, ReasoningContent
 from tract.models.session import SessionContent
-from tract.policy.builtin.compress import CompressPolicy
-from tract.policy.builtin.pin import PinPolicy
+from tract.triggers.builtin.compress import CompressTrigger
+from tract.triggers.builtin.pin import PinTrigger
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ from tract.policy.builtin.pin import PinPolicy
 # ---------------------------------------------------------------------------
 
 
-class CountingPolicy(Policy):
+class CountingTrigger(Trigger):
     """Test helper that counts evaluations and returns configurable action.
 
     default_handler does nothing (leaves pending unresolved) to preserve
@@ -59,7 +59,7 @@ class CountingPolicy(Policy):
 
     def __init__(
         self, name: str = "counter", priority: int = 100,
-        trigger: str = "compile", action: PolicyAction | None = None,
+        trigger: str = "compile", action: TriggerAction | None = None,
         auto_approve_default: bool = False,
     ):
         self._name = name
@@ -78,10 +78,10 @@ class CountingPolicy(Policy):
         return self._priority
 
     @property
-    def trigger(self) -> str:
+    def fires_on(self) -> str:
         return self._trigger
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         self.count += 1
         return self._action
 
@@ -97,15 +97,15 @@ class CountingPolicy(Policy):
 
 
 class TestAutoPinOnCommit:
-    """PinPolicy auto-pins InstructionContent on commit."""
+    """PinTrigger auto-pins InstructionContent on commit."""
 
     def test_auto_pin_on_commit(self):
-        """Configure PinPolicy (autonomous), commit InstructionContent, verify auto-pinned."""
+        """Configure PinTrigger (autonomous), commit InstructionContent, verify auto-pinned."""
         t = Tract.open(":memory:")
         try:
-            # Configure PinPolicy
-            pin_policy = PinPolicy()
-            t.configure_policies(policies=[pin_policy])
+            # Configure PinTrigger
+            pin_trigger = PinTrigger()
+            t.configure_triggers(triggers=[pin_trigger])
 
             # Commit instruction content -- should trigger commit-time evaluation
             info = t.commit(InstructionContent(text="You are a helpful assistant."))
@@ -118,11 +118,11 @@ class TestAutoPinOnCommit:
             t.close()
 
     def test_auto_pin_does_not_pin_dialogue(self):
-        """PinPolicy does not pin DialogueContent."""
+        """PinTrigger does not pin DialogueContent."""
         t = Tract.open(":memory:")
         try:
-            pin_policy = PinPolicy()
-            t.configure_policies(policies=[pin_policy])
+            pin_trigger = PinTrigger()
+            t.configure_triggers(triggers=[pin_trigger])
 
             # First commit to establish HEAD
             t.commit(InstructionContent(text="system"))
@@ -142,37 +142,37 @@ class TestAutoPinOnCommit:
 
 
 class TestAutoCompressOnCompile:
-    """CompressPolicy proposes compression in collaborative mode."""
+    """CompressTrigger proposes compression in collaborative mode."""
 
     def test_auto_compress_on_compile(self):
-        """Configure CompressPolicy with low threshold, compile triggers proposal."""
+        """Configure CompressTrigger with low threshold, compile triggers proposal."""
         config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=10))
         t = Tract.open(":memory:", config=config)
         try:
             proposals = []
 
-            # Register a policy hook that captures but doesn't approve/reject
-            # This overrides the policy's default_handler auto-approve
-            def policy_hook(pending):
+            # Register a trigger hook that captures but doesn't approve/reject
+            # This overrides the trigger's default_handler auto-approve
+            def trigger_hook(pending):
                 proposals.append(pending)
                 # Leave pending unresolved to test proposal creation
 
-            t.on("policy", policy_hook)
+            t.on("trigger", trigger_hook)
 
-            compress_policy = CompressPolicy(threshold=0.5, summary_content="Compressed")
-            t.configure_policies(
-                policies=[compress_policy],
+            compress_trigger = CompressTrigger(threshold=0.5, summary_content="Compressed")
+            t.configure_triggers(
+                triggers=[compress_trigger],
             )
 
             # Commit enough to exceed threshold
             t.commit(InstructionContent(text="This is a fairly long instruction text"))
 
-            # Compile triggers the compress policy
+            # Compile triggers the compress trigger
             t.compile()
 
             # Should have created a proposal
             assert len(proposals) >= 1
-            assert proposals[0].policy_name == "auto-compress"
+            assert proposals[0].trigger_name == "auto-compress"
             assert proposals[0].status == "pending"
         finally:
             t.close()
@@ -183,20 +183,20 @@ class TestAutoCompressOnCompile:
 # ---------------------------------------------------------------------------
 
 
-class TestPolicyPriorityOrdering:
+class TestTriggerPriorityOrdering:
     """Verify pin runs before compress via audit log."""
 
-    def test_policy_priority_ordering(self):
-        """PinPolicy (priority=100) evaluates before CompressPolicy (priority=200)."""
+    def test_trigger_priority_ordering(self):
+        """PinTrigger (priority=100) evaluates before CompressTrigger (priority=200)."""
         config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=10))
         t = Tract.open(":memory:", config=config)
         try:
-            # Use counting policies with known priorities
-            p_first = CountingPolicy(name="first", priority=50, trigger="compile")
-            p_second = CountingPolicy(name="second", priority=150, trigger="compile")
-            p_third = CountingPolicy(name="third", priority=250, trigger="compile")
+            # Use counting triggers with known priorities
+            p_first = CountingTrigger(name="first", priority=50, trigger="compile")
+            p_second = CountingTrigger(name="second", priority=150, trigger="compile")
+            p_third = CountingTrigger(name="third", priority=250, trigger="compile")
 
-            t.configure_policies(policies=[p_third, p_first, p_second])
+            t.configure_triggers(triggers=[p_third, p_first, p_second])
 
             t.commit(InstructionContent(text="hello"))
             t.compile()
@@ -207,12 +207,12 @@ class TestPolicyPriorityOrdering:
             assert p_third.count >= 1
 
             # Check audit log order
-            log_entries = t._policy_repo.get_log(t.tract_id)
+            log_entries = t._trigger_repo.get_log(t.tract_id)
             # Filter for compile trigger entries
             compile_entries = [e for e in log_entries if e.trigger == "compile"]
 
             if len(compile_entries) >= 3:
-                names = [e.policy_name for e in compile_entries[:3]]
+                names = [e.trigger_name for e in compile_entries[:3]]
                 assert names == ["first", "second", "third"]
         finally:
             t.close()
@@ -224,27 +224,27 @@ class TestPolicyPriorityOrdering:
 
 
 class TestPauseResume:
-    """Pause and resume policy evaluation lifecycle."""
+    """Pause and resume trigger evaluation lifecycle."""
 
     def test_pause_resume_lifecycle(self):
-        """Paused policies don't fire, resumed policies do."""
+        """Paused triggers don't fire, resumed triggers do."""
         t = Tract.open(":memory:")
         try:
-            counter = CountingPolicy(name="lifecycle", trigger="commit")
-            t.configure_policies(policies=[counter])
+            counter = CountingTrigger(name="lifecycle", trigger="commit")
+            t.configure_triggers(triggers=[counter])
 
-            # Commit while active -- both trigger the policy
+            # Commit while active -- both trigger the trigger
             t.commit(InstructionContent(text="first"))
             t.commit(DialogueContent(role="user", text="second"))
             assert counter.count == 2
 
             # Pause
-            t.pause_all_policies()
+            t.pause_all_triggers()
             t.commit(DialogueContent(role="assistant", text="third"))
             assert counter.count == 2  # No additional evaluation
 
             # Resume
-            t.resume_all_policies()
+            t.resume_all_triggers()
             t.commit(DialogueContent(role="user", text="fourth"))
             assert counter.count == 3  # Resumed
         finally:
@@ -267,7 +267,7 @@ class TestCollaborativeApproveReject:
             t.commit(InstructionContent(text="system"))
             info = t.commit(DialogueContent(role="user", text="hello"))
 
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={"target_hash": info.commit_hash, "priority": "pinned"},
                 reason="Should we pin?",
@@ -283,10 +283,10 @@ class TestCollaborativeApproveReject:
                 else:
                     pending.approve()
 
-            t.on("policy", hook)
+            t.on("trigger", hook)
 
-            p = CountingPolicy(name="collab", trigger="compile", action=action)
-            t.configure_policies(policies=[p])
+            p = CountingTrigger(name="collab", trigger="compile", action=action)
+            t.configure_triggers(triggers=[p])
 
             # First compile -- hook rejects
             t.compile()
@@ -306,16 +306,16 @@ class TestCollaborativeApproveReject:
         try:
             info = t.commit(InstructionContent(text="hello"))
 
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={"target_hash": info.commit_hash, "priority": "pinned"},
                 reason="Should we pin?",
                 autonomy="collaborative",
             )
-            p = CountingPolicy(name="collab", trigger="compile", action=action)
+            p = CountingTrigger(name="collab", trigger="compile", action=action)
 
-            t.on("policy", lambda pending: pending.approve())
-            t.configure_policies(policies=[p])
+            t.on("trigger", lambda pending: pending.approve())
+            t.configure_triggers(triggers=[p])
 
             t.compile()
 
@@ -331,27 +331,27 @@ class TestCollaborativeApproveReject:
 # ---------------------------------------------------------------------------
 
 
-class TestPolicyConfigPersistence:
-    """Policy config save/load roundtrip."""
+class TestTriggerConfigPersistence:
+    """Trigger config save/load roundtrip."""
 
-    def test_policy_config_persistence(self):
-        """Built-in policy configs roundtrip through save/load."""
+    def test_trigger_config_persistence(self):
+        """Built-in trigger configs roundtrip through save/load."""
         t = Tract.open(":memory:")
         try:
-            pin = PinPolicy()
-            compress = CompressPolicy(threshold=0.8)
+            pin = PinTrigger()
+            compress = CompressTrigger(threshold=0.8)
 
             config = {
-                "policies": [pin.to_config(), compress.to_config()],
+                "triggers": [pin.to_config(), compress.to_config()],
             }
-            t.save_policy_config(config)
+            t.save_trigger_config(config)
 
-            loaded = t.load_policy_config()
+            loaded = t.load_trigger_config()
             assert loaded is not None
-            assert len(loaded["policies"]) == 2
-            assert loaded["policies"][0]["name"] == "auto-pin"
-            assert loaded["policies"][1]["name"] == "auto-compress"
-            assert loaded["policies"][1]["threshold"] == 0.8
+            assert len(loaded["triggers"]) == 2
+            assert loaded["triggers"][0]["name"] == "auto-pin"
+            assert loaded["triggers"][1]["name"] == "auto-compress"
+            assert loaded["triggers"][1]["threshold"] == 0.8
         finally:
             t.close()
 
@@ -362,18 +362,18 @@ class TestPolicyConfigPersistence:
 
 
 class TestRecursiveEvaluationPrevention:
-    """Policy that calls compile() during evaluation should not infinite-loop."""
+    """Trigger that calls compile() during evaluation should not infinite-loop."""
 
     def test_recursive_evaluation_prevention(self):
-        """Policy calling compile() inside evaluate() does not recurse infinitely."""
+        """Trigger calling compile() inside evaluate() does not recurse infinitely."""
 
-        class RecursiveCompilePolicy(Policy):
+        class RecursiveCompileTrigger(Trigger):
             @property
             def name(self) -> str:
                 return "recursive-compile"
 
-            def evaluate(self, tract: Tract) -> PolicyAction | None:
-                # This triggers compile, which would re-trigger this policy
+            def evaluate(self, tract: Tract) -> TriggerAction | None:
+                # This triggers compile, which would re-enter this trigger
                 # without the recursion guard
                 tract.compile()
                 return None
@@ -381,8 +381,8 @@ class TestRecursiveEvaluationPrevention:
         t = Tract.open(":memory:")
         try:
             t.commit(InstructionContent(text="hello"))
-            p = RecursiveCompilePolicy()
-            t.configure_policies(policies=[p])
+            p = RecursiveCompileTrigger()
+            t.configure_triggers(triggers=[p])
 
             # This should complete without stack overflow
             result = t.compile()
@@ -392,31 +392,31 @@ class TestRecursiveEvaluationPrevention:
 
 
 # ---------------------------------------------------------------------------
-# 8. Multiple Policies Compose
+# 8. Multiple Triggers Compose
 # ---------------------------------------------------------------------------
 
 
-class TestMultiplePoliciesCompose:
-    """Multiple policies interact correctly via priority ordering."""
+class TestMultipleTriggersCompose:
+    """Multiple triggers interact correctly via priority ordering."""
 
-    def test_multiple_policies_compose(self):
-        """PinPolicy + CompressPolicy together: pin runs first, then compress."""
+    def test_multiple_triggers_compose(self):
+        """PinTrigger + CompressTrigger together: pin runs first, then compress."""
         config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=10))
         t = Tract.open(":memory:", config=config)
         try:
             proposals = []
 
-            # Register a policy hook to capture proposals without auto-approving
-            def policy_hook(pending):
+            # Register a trigger hook to capture proposals without auto-approving
+            def trigger_hook(pending):
                 proposals.append(pending)
 
-            t.on("policy", policy_hook)
+            t.on("trigger", trigger_hook)
 
-            pin = PinPolicy()
-            compress = CompressPolicy(threshold=0.5, summary_content="Summary")
+            pin = PinTrigger()
+            compress = CompressTrigger(threshold=0.5, summary_content="Summary")
 
-            t.configure_policies(
-                policies=[compress, pin],  # Deliberately reverse order
+            t.configure_triggers(
+                triggers=[compress, pin],  # Deliberately reverse order
             )
 
             # Commit instruction (triggers pin, which is commit-triggered)
@@ -430,23 +430,23 @@ class TestMultiplePoliciesCompose:
             t.compile()
 
             # Compress should have proposed (collaborative, compile-triggered)
-            assert any(p.policy_name == "auto-compress" for p in proposals)
+            assert any(p.trigger_name == "auto-compress" for p in proposals)
         finally:
             t.close()
 
 
 # ---------------------------------------------------------------------------
-# 9. Custom Policy Subclass
+# 9. Custom Trigger Subclass
 # ---------------------------------------------------------------------------
 
 
-class TestCustomPolicySubclass:
-    """User-defined custom policies work with the evaluator."""
+class TestCustomTriggerSubclass:
+    """User-defined custom triggers work with the evaluator."""
 
-    def test_custom_policy_subclass(self):
-        """Custom Policy subclass works with configure_policies."""
+    def test_custom_trigger_subclass(self):
+        """Custom Trigger subclass works with configure_triggers."""
 
-        class MyCustomPolicy(Policy):
+        class MyCustomTrigger(Trigger):
             @property
             def name(self) -> str:
                 return "my-custom"
@@ -456,16 +456,16 @@ class TestCustomPolicySubclass:
                 return 42
 
             @property
-            def trigger(self) -> str:
+            def fires_on(self) -> str:
                 return "commit"
 
-            def evaluate(self, tract: Tract) -> PolicyAction | None:
+            def evaluate(self, tract: Tract) -> TriggerAction | None:
                 head = tract.head
                 if head is None:
                     return None
                 commit = tract.get_commit(head)
                 if commit and commit.content_type == "reasoning":
-                    return PolicyAction(
+                    return TriggerAction(
                         action_type="annotate",
                         params={"target_hash": head, "priority": "skip"},
                         reason="Auto-skip reasoning",
@@ -475,8 +475,8 @@ class TestCustomPolicySubclass:
 
         t = Tract.open(":memory:")
         try:
-            custom = MyCustomPolicy()
-            t.configure_policies(policies=[custom])
+            custom = MyCustomTrigger()
+            t.configure_triggers(triggers=[custom])
 
             # Commit reasoning content
             t.commit(InstructionContent(text="system"))
@@ -490,69 +490,69 @@ class TestCustomPolicySubclass:
 
 
 # ---------------------------------------------------------------------------
-# 10. Policy Hook Callback
+# 10. Trigger Hook Callback
 # ---------------------------------------------------------------------------
 
 
-class TestPolicyHookCallback:
-    """Policy hook is invoked for collaborative proposals."""
+class TestTriggerHookCallback:
+    """Trigger hook is invoked for collaborative proposals."""
 
-    def test_policy_hook_captures_pending(self):
-        """Policy hook receives PendingPolicy for collaborative actions."""
+    def test_trigger_hook_captures_pending(self):
+        """Trigger hook receives PendingTrigger for collaborative actions."""
         t = Tract.open(":memory:")
         try:
             hook_calls = []
             info = t.commit(InstructionContent(text="hello"))
 
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={"target_hash": info.commit_hash, "priority": "pinned"},
                 reason="Test hook",
                 autonomy="collaborative",
             )
-            p = CountingPolicy(name="hook-test", action=action)
+            p = CountingTrigger(name="hook-test", action=action)
 
-            t.on("policy", lambda pending: hook_calls.append(pending))
-            t.configure_policies(policies=[p])
+            t.on("trigger", lambda pending: hook_calls.append(pending))
+            t.configure_triggers(triggers=[p])
 
             t.compile()
 
             assert len(hook_calls) == 1
-            assert hook_calls[0].policy_name == "hook-test"
+            assert hook_calls[0].trigger_name == "hook-test"
             assert hook_calls[0].status == "pending"
         finally:
             t.close()
 
 
 # ---------------------------------------------------------------------------
-# 11. Policy Config Survives Restart (File-Backed)
+# 11. Trigger Config Survives Restart (File-Backed)
 # ---------------------------------------------------------------------------
 
 
-class TestPolicyConfigSurvivesRestart:
-    """Policy config persists across Tract.open() calls (file-backed)."""
+class TestTriggerConfigSurvivesRestart:
+    """Trigger config persists across Tract.open() calls (file-backed)."""
 
-    def test_policy_config_survives_restart_file_backed(self):
-        """Policies auto-load from _trace_meta on Tract.open()."""
+    def test_trigger_config_survives_restart_file_backed(self):
+        """Triggers auto-load from _trace_meta on Tract.open()."""
         db_path = os.path.join(tempfile.mkdtemp(), "test_restart.db")
         tract_id = "restart-test-tract"
 
         try:
-            # First session: configure and save policies
+            # First session: configure and save triggers
             config = TractConfig(
                 db_path=db_path,
                 token_budget=TokenBudgetConfig(max_tokens=1000),
             )
             t1 = Tract.open(db_path, tract_id=tract_id, config=config)
-            pin = PinPolicy(pin_types={"instruction", "session"})
-            compress = CompressPolicy(threshold=0.75)
-            t1.configure_policies(policies=[pin, compress])
+            pin = PinTrigger(pin_types={"instruction", "session"})
+            compress = CompressTrigger(threshold=0.75)
+            t1.configure_triggers(triggers=[pin, compress])
 
             # Save config
-            policy_config = {
-                "policies": [pin.to_config(), compress.to_config()],
+            trigger_config = {
+                "triggers": [pin.to_config(), compress.to_config()],
             }
-            t1.save_policy_config(policy_config)
+            t1.save_trigger_config(trigger_config)
 
             # Commit some content
             t1.commit(InstructionContent(text="System prompt"))
@@ -566,28 +566,28 @@ class TestPolicyConfigSurvivesRestart:
             t2 = Tract.open(db_path, tract_id=tract_id, config=config2)
 
             # Verify evaluator was auto-created
-            assert t2.policy_evaluator is not None
+            assert t2.trigger_evaluator is not None
 
-            # Verify both policies are registered
-            policies = t2.policy_evaluator._policies
-            assert len(policies) == 2
-            policy_names = {p.name for p in policies}
-            assert "auto-pin" in policy_names
-            assert "auto-compress" in policy_names
+            # Verify both triggers are registered
+            registered = t2.trigger_evaluator._triggers
+            assert len(registered) == 2
+            trigger_names = {p.name for p in registered}
+            assert "auto-pin" in trigger_names
+            assert "auto-compress" in trigger_names
 
             # Verify priority ordering (pin=100, compress=200)
-            assert policies[0].name == "auto-pin"
-            assert policies[1].name == "auto-compress"
+            assert registered[0].name == "auto-pin"
+            assert registered[1].name == "auto-compress"
 
             # Verify compress threshold was restored
             compress_restored = next(
-                p for p in policies if p.name == "auto-compress"
+                p for p in registered if p.name == "auto-compress"
             )
             assert compress_restored._threshold == 0.75
 
-            # Verify policies evaluate correctly -- commit SessionContent
+            # Verify triggers evaluate correctly -- commit SessionContent
             info = t2.commit(SessionContent(session_type="start", summary="Restart"))
-            # PinPolicy should have pinned it
+            # PinTrigger should have pinned it
             annotations = t2.get_annotations(info.commit_hash)
             assert any(a.priority == Priority.PINNED for a in annotations)
 

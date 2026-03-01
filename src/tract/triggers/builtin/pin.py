@@ -1,11 +1,11 @@
-"""PinPolicy -- auto-pin commits based on content type.
+"""PinTrigger -- auto-pin commits based on content type.
 
 Fires on ``commit`` trigger.  Checks whether the newly committed content
 type matches a configurable set of types (default: instruction, session)
 and auto-pins them with an ``annotate`` action in autonomous mode.
 
 Respects manual overrides: if a user has already annotated a commit
-(set it to NORMAL, SKIP, or PINNED), the policy will not re-annotate.
+(set it to NORMAL, SKIP, or PINNED), the trigger will not re-annotate.
 
 Known limitation: ``evaluate()`` only looks at HEAD (the latest commit).
 For batch operations, call ``retroactive_scan()`` after the batch to
@@ -17,18 +17,18 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from tract.models.policy import PolicyAction
-from tract.policy.protocols import Policy
+from tract.models.trigger import TriggerAction
+from tract.triggers.protocols import Trigger
 
 if TYPE_CHECKING:
-    from tract.hooks.policy import PendingPolicy
+    from tract.hooks.trigger import PendingTrigger
     from tract.hooks.validation import HookRejection
     from tract.tract import Tract
 
 logger = logging.getLogger(__name__)
 
 
-class PinPolicy(Policy):
+class PinTrigger(Trigger):
     """Auto-pin commits whose content type matches a configured set.
 
     Constructor Args:
@@ -55,10 +55,10 @@ class PinPolicy(Policy):
         return 100
 
     @property
-    def trigger(self) -> str:
+    def fires_on(self) -> str:
         return "commit"
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         """Check if the latest commit should be auto-pinned."""
         head = tract.head
         if head is None:
@@ -69,14 +69,14 @@ class PinPolicy(Policy):
             return None
 
         # Check manual override: if ANY annotation exists, the user (or
-        # another policy) already made a choice -- do not override.
+        # another trigger) already made a choice -- do not override.
         annotations = tract.get_annotations(head)
         if annotations:
             return None
 
         # Check content_type match
         if commit.content_type in self._pin_types:
-            return PolicyAction(
+            return TriggerAction(
                 action_type="annotate",
                 params={"target_hash": head, "priority": "pinned"},
                 reason=f"Auto-pinned: content_type={commit.content_type}",
@@ -85,7 +85,7 @@ class PinPolicy(Policy):
 
         # Check pattern match
         if self._matches_pattern(commit):
-            return PolicyAction(
+            return TriggerAction(
                 action_type="annotate",
                 params={"target_hash": head, "priority": "pinned"},
                 reason=f"Auto-pinned: matched pattern for {commit.content_type}",
@@ -126,7 +126,7 @@ class PinPolicy(Policy):
     def retroactive_scan(self, tract: Tract, *, limit: int = 10000) -> list[str]:
         """Walk all commits and pin matching ones that lack annotations.
 
-        Should be called once when the policy is first enabled to
+        Should be called once when the trigger is first enabled to
         retroactively pin existing commits.
 
         Args:
@@ -162,20 +162,20 @@ class PinPolicy(Policy):
     # Hook integration
     # ------------------------------------------------------------------
 
-    def default_handler(self, pending: PendingPolicy) -> None:
+    def default_handler(self, pending: PendingTrigger) -> None:
         """Auto-approve pin actions (autonomous by default anyway)."""
         pending.approve()
 
     def on_rejection(self, rejection: HookRejection) -> None:
         """Log pin rejection."""
-        logger.info("PinPolicy action rejected: %s", rejection.reason)
+        logger.info("PinTrigger action rejected: %s", rejection.reason)
 
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
 
     def to_config(self) -> dict:
-        """Serialize policy configuration to a dict."""
+        """Serialize trigger configuration to a dict."""
         return {
             "name": self.name,
             "pin_types": sorted(self._pin_types),
@@ -184,8 +184,8 @@ class PinPolicy(Policy):
         }
 
     @classmethod
-    def from_config(cls, config: dict) -> PinPolicy:
-        """Deserialize a PinPolicy from a config dict."""
+    def from_config(cls, config: dict) -> PinTrigger:
+        """Deserialize a PinTrigger from a config dict."""
         pin_types = config.get("pin_types")
         if pin_types is not None:
             pin_types = set(pin_types)

@@ -128,8 +128,8 @@ class TestOperationEventSchema:
 
         Base.metadata.create_all(engine)
         with engine.connect() as conn:
-            conn.execute(text("DROP TABLE IF EXISTS policy_log"))
-            conn.execute(text("DROP TABLE IF EXISTS policy_proposals"))
+            conn.execute(text("DROP TABLE IF EXISTS trigger_log"))
+            conn.execute(text("DROP TABLE IF EXISTS trigger_proposals"))
             conn.execute(text("DROP TABLE IF EXISTS operation_commits"))
             conn.execute(text("DROP TABLE IF EXISTS operation_events"))
             conn.execute(text("DROP TABLE IF EXISTS compile_effectives"))
@@ -161,7 +161,7 @@ class TestOperationEventSchema:
         assert "compile_records" in table_names
         assert "compile_effectives" in table_names
         assert "spawn_pointers" in table_names
-        assert "policy_proposals" in table_names
+        assert "trigger_proposals" in table_names
         # Old tables should be dropped
         assert "compressions" not in table_names
         assert "compression_sources" not in table_names

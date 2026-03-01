@@ -21,10 +21,15 @@ if TYPE_CHECKING:
         CommitRow,
         CompileEffectiveRow,
         CompileRecordRow,
+        DynamicOpSpecRow,
+        HookWiringRow,
         OperationCommitRow,
+        OperationConfigRow,
         OperationEventRow,
-        PolicyLogRow,
-        PolicyProposalRow,
+        TagAnnotationRow,
+        TagRegistryRow,
+        TriggerLogRow,
+        TriggerProposalRow,
         SpawnPointerRow,
         ToolSchemaRow,
     )
@@ -466,25 +471,25 @@ class SpawnPointerRepository(ABC):
         ...
 
 
-class PolicyRepository(ABC):
-    """Abstract interface for policy proposal and log storage.
+class TriggerRepository(ABC):
+    """Abstract interface for trigger proposal and log storage.
 
-    Provides CRUD for policy proposals (collaborative approval workflow)
-    and audit log entries (tracking all policy evaluations).
+    Provides CRUD for trigger proposals (collaborative approval workflow)
+    and audit log entries (tracking all trigger evaluations).
     """
 
     @abstractmethod
-    def save_proposal(self, proposal: PolicyProposalRow) -> None:
-        """Save a new policy proposal."""
+    def save_proposal(self, proposal: TriggerProposalRow) -> None:
+        """Save a new trigger proposal."""
         ...
 
     @abstractmethod
-    def get_proposal(self, proposal_id: str) -> PolicyProposalRow | None:
+    def get_proposal(self, proposal_id: str) -> TriggerProposalRow | None:
         """Get a proposal by its ID. Returns None if not found."""
         ...
 
     @abstractmethod
-    def get_pending_proposals(self, tract_id: str) -> list[PolicyProposalRow]:
+    def get_pending_proposals(self, tract_id: str) -> list[TriggerProposalRow]:
         """Get all pending proposals for a tract.
 
         Returns proposals with status="pending", ordered by created_at ascending.
@@ -499,8 +504,8 @@ class PolicyRepository(ABC):
         ...
 
     @abstractmethod
-    def save_log_entry(self, entry: PolicyLogRow) -> None:
-        """Save a policy evaluation log entry."""
+    def save_log_entry(self, entry: TriggerLogRow) -> None:
+        """Save a trigger evaluation log entry."""
         ...
 
     @abstractmethod
@@ -510,10 +515,10 @@ class PolicyRepository(ABC):
         *,
         since: datetime | None = None,
         until: datetime | None = None,
-        policy_name: str | None = None,
+        trigger_name: str | None = None,
         limit: int = 100,
-    ) -> list[PolicyLogRow]:
-        """Get policy log entries for a tract.
+    ) -> list[TriggerLogRow]:
+        """Get trigger log entries for a tract.
 
         Returns entries ordered by created_at DESC, with optional filters.
         """
@@ -578,4 +583,171 @@ class ToolSchemaRepository(ABC):
     @abstractmethod
     def get_commit_tool_hashes(self, commit_hash: str) -> Sequence[str]:
         """Get content hashes of tools linked to a commit, ordered by position."""
+        ...
+
+
+class TagAnnotationRepository(ABC):
+    """Abstract interface for mutable tag annotation storage.
+
+    Tag annotations are separate from immutable commit tags. They can be
+    added and removed retrospectively.
+    """
+
+    @abstractmethod
+    def add_tag(
+        self, tract_id: str, target_hash: str, tag: str, created_at: datetime
+    ) -> TagAnnotationRow:
+        """Add a tag annotation to a commit. Returns the created row."""
+        ...
+
+    @abstractmethod
+    def remove_tag(self, tract_id: str, target_hash: str, tag: str) -> bool:
+        """Remove a tag annotation from a commit.
+
+        Returns True if a tag was removed, False if it didn't exist.
+        """
+        ...
+
+    @abstractmethod
+    def get_tags(self, target_hash: str) -> list[str]:
+        """Get all annotation tag names for a commit."""
+        ...
+
+    @abstractmethod
+    def get_commits_by_tag(
+        self, tract_id: str, tag: str
+    ) -> list[str]:
+        """Get all commit hashes that have a given annotation tag."""
+        ...
+
+    @abstractmethod
+    def get_commits_by_tags(
+        self, tract_id: str, tags: list[str], match: str = "any"
+    ) -> list[str]:
+        """Get commit hashes matching tag criteria.
+
+        Args:
+            tract_id: Tract identifier.
+            tags: Tags to match.
+            match: ``"any"`` (OR) or ``"all"`` (AND).
+
+        Returns:
+            List of matching commit hashes.
+        """
+        ...
+
+
+class TagRegistryRepository(ABC):
+    """Abstract interface for tag registry storage.
+
+    Tracks known tag names and their descriptions for strict mode enforcement.
+    """
+
+    @abstractmethod
+    def register(
+        self,
+        tract_id: str,
+        tag_name: str,
+        description: str | None,
+        auto_created: bool,
+        created_at: datetime,
+    ) -> TagRegistryRow:
+        """Register a tag. Returns the created row."""
+        ...
+
+    @abstractmethod
+    def get(self, tract_id: str, tag_name: str) -> TagRegistryRow | None:
+        """Get a tag registration by name. Returns None if not found."""
+        ...
+
+    @abstractmethod
+    def list_all(self, tract_id: str) -> list[TagRegistryRow]:
+        """List all registered tags for a tract."""
+        ...
+
+    @abstractmethod
+    def is_registered(self, tract_id: str, tag_name: str) -> bool:
+        """Check if a tag name is registered."""
+        ...
+
+    @abstractmethod
+    def delete(self, tract_id: str, tag_name: str) -> bool:
+        """Delete a tag registration. Returns True if deleted."""
+        ...
+
+
+class PersistenceRepository(ABC):
+    """Abstract interface for persistence storage (hook wirings, dynamic ops, configs).
+
+    Provides CRUD for persisted hook registrations, dynamic operation specs,
+    and operation configurations.
+    """
+
+    # -- Hook wirings --
+
+    @abstractmethod
+    def save_hook_wiring(self, wiring: HookWiringRow) -> HookWiringRow:
+        """Save a hook wiring entry. Returns the created row."""
+        ...
+
+    @abstractmethod
+    def get_hook_wirings(self, tract_id: str) -> list[HookWiringRow]:
+        """Get all hook wirings for a tract, ordered by priority then id."""
+        ...
+
+    @abstractmethod
+    def delete_hook_wiring(self, tract_id: str, operation: str, handler_path: str | None = None) -> bool:
+        """Delete hook wiring(s). Returns True if any were deleted.
+
+        If handler_path is provided, deletes only that specific wiring.
+        Otherwise deletes all wirings for the operation.
+        """
+        ...
+
+    @abstractmethod
+    def delete_hook_wiring_by_name(self, tract_id: str, name: str) -> bool:
+        """Delete hook wiring by the handler file name (without .py extension).
+
+        Matches on handler_path containing the name.
+        Returns True if a wiring was deleted.
+        """
+        ...
+
+    # -- Dynamic op specs --
+
+    @abstractmethod
+    def save_dynamic_op(self, spec_row: DynamicOpSpecRow) -> DynamicOpSpecRow:
+        """Save a dynamic op spec. Returns the created row."""
+        ...
+
+    @abstractmethod
+    def get_dynamic_ops(self, tract_id: str) -> list[DynamicOpSpecRow]:
+        """Get all dynamic op specs for a tract."""
+        ...
+
+    @abstractmethod
+    def delete_dynamic_op(self, tract_id: str, name: str) -> bool:
+        """Delete a dynamic op spec by name. Returns True if deleted."""
+        ...
+
+    # -- Operation configs --
+
+    @abstractmethod
+    def save_operation_config(self, config_row: OperationConfigRow) -> OperationConfigRow:
+        """Save or update an operation config. Returns the row."""
+        ...
+
+    @abstractmethod
+    def get_operation_configs(self, tract_id: str) -> list[OperationConfigRow]:
+        """Get all operation configs for a tract."""
+        ...
+
+    @abstractmethod
+    def get_operation_config(self, tract_id: str, config_key: str) -> OperationConfigRow | None:
+        """Get a specific operation config by key. Returns None if not found."""
+        ...
+
+    @abstractmethod
+    def delete_operation_config(self, tract_id: str, config_key: str) -> bool:
+        """Delete an operation config by key. Returns True if deleted."""
         ...

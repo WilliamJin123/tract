@@ -100,6 +100,7 @@ class CommitEngine:
         edit_target: str | None = None,
         metadata: dict | None = None,
         generation_config: dict | None = None,
+        tags: list[str] | None = None,
     ) -> CommitInfo:
         """Create a new commit in the repository.
 
@@ -187,7 +188,10 @@ class CommitEngine:
                     f"Cannot edit an EDIT commit: {edit_target}"
                 )
 
-        # 10. Create CommitRow and save
+        # 10. Normalize tags
+        effective_tags = list(tags) if tags else []
+
+        # 11. Create CommitRow and save
         commit_row = CommitRow(
             commit_hash=c_commit_hash,
             tract_id=self._tract_id,
@@ -200,14 +204,15 @@ class CommitEngine:
             token_count=token_count,
             metadata_json=metadata,
             generation_config_json=generation_config,
+            tags_json=effective_tags if effective_tags else None,
             created_at=timestamp,
         )
         self._commit_repo.save(commit_row)
 
-        # 11. Update HEAD
+        # 12. Update HEAD
         self._ref_repo.update_head(self._tract_id, c_commit_hash)
 
-        # 12. Auto-create priority annotation if content type has non-NORMAL default
+        # 13. Auto-create priority annotation if content type has non-NORMAL default
         default_priority = DEFAULT_TYPE_PRIORITIES.get(content_type, Priority.NORMAL)
         if default_priority != Priority.NORMAL:
             annotation = AnnotationRow(
@@ -219,7 +224,7 @@ class CommitEngine:
             )
             self._annotation_repo.save(annotation)
 
-        # 13. Return CommitInfo
+        # 14. Return CommitInfo
         return CommitInfo(
             commit_hash=c_commit_hash,
             tract_id=self._tract_id,
@@ -232,6 +237,7 @@ class CommitEngine:
             token_count=token_count,
             metadata=metadata,
             generation_config=generation_config,
+            tags=effective_tags,
             created_at=timestamp,
         )
 
@@ -243,6 +249,7 @@ class CommitEngine:
         message: str | None = None,
         metadata: dict | None = None,
         generation_config: dict | None = None,
+        tags: list[str] | None = None,
     ) -> CommitInfo:
         """Create a merge commit with multiple parents.
 
@@ -305,7 +312,10 @@ class CommitEngine:
             extra_parents=extra_parents,
         )
 
-        # 7. Create and save CommitRow
+        # 7. Normalize tags
+        effective_tags = list(tags) if tags else []
+
+        # 8. Create and save CommitRow
         commit_row = CommitRow(
             commit_hash=c_commit_hash,
             tract_id=self._tract_id,
@@ -318,17 +328,18 @@ class CommitEngine:
             token_count=token_count,
             metadata_json=metadata,
             generation_config_json=generation_config,
+            tags_json=effective_tags if effective_tags else None,
             created_at=timestamp,
         )
         self._commit_repo.save(commit_row)
 
-        # 8. Record all parents in commit_parents table
+        # 9. Record all parents in commit_parents table
         self._parent_repo.add_parents(c_commit_hash, parent_hashes)
 
-        # 9. Update HEAD
+        # 10. Update HEAD
         self._ref_repo.update_head(self._tract_id, c_commit_hash)
 
-        # 10. Return CommitInfo
+        # 11. Return CommitInfo
         return CommitInfo(
             commit_hash=c_commit_hash,
             tract_id=self._tract_id,
@@ -341,6 +352,7 @@ class CommitEngine:
             token_count=token_count,
             metadata=metadata,
             generation_config=generation_config,
+            tags=effective_tags,
             created_at=timestamp,
         )
 
@@ -437,5 +449,6 @@ class CommitEngine:
             token_count=row.token_count,
             metadata=row.metadata_json,
             generation_config=row.generation_config_json,
+            tags=list(row.tags_json) if row.tags_json else [],
             created_at=row.created_at,
         )

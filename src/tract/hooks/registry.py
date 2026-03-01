@@ -16,7 +16,7 @@ from tract.hooks.dynamic import (
 )
 
 # Built-in operation names that cannot be overridden
-_BUILTIN_OPS = frozenset({"compress", "gc", "rebase", "merge", "policy", "tool_result"})
+_BUILTIN_OPS = frozenset({"compress", "gc", "rebase", "merge", "trigger", "tool_result"})
 
 
 class OperationRegistry:

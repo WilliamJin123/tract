@@ -73,10 +73,18 @@ from tract.prompts.summarize import (
     TOOL_CONTEXT_SUMMARIZE_SYSTEM,
 )
 
-# Policy engine
-from tract.policy import Policy, PolicyEvaluator
-from tract.policy.builtin import ArchivePolicy, CompressPolicy, PinPolicy, BranchPolicy, RebasePolicy
-from tract.models.policy import PolicyAction, EvaluationResult, PolicyLogEntry
+# Trigger engine
+from tract.triggers import Trigger, TriggerEvaluator
+from tract.triggers.builtin import (
+    ArchiveTrigger,
+    BranchTrigger,
+    CompressTrigger,
+    GCTrigger,
+    MergeTrigger,
+    PinTrigger,
+    RebaseTrigger,
+)
+from tract.models.trigger import TriggerAction, EvaluationResult, TriggerLogEntry
 
 # Session and spawn models
 from tract.session import Session
@@ -145,10 +153,12 @@ from tract.exceptions import (
     GCError,
     SpawnError,
     SessionError,
-    PolicyExecutionError,
-    PolicyConfigError,
+    TriggerExecutionError,
+    TriggerConfigError,
     OrchestratorError,
     RetryExhaustedError,
+    TagNotRegisteredError,
+    CurationError,
 )
 
 __all__ = [
@@ -232,26 +242,30 @@ __all__ = [
     "GCError",
     "SpawnError",
     "SessionError",
-    "PolicyExecutionError",
-    "PolicyConfigError",
+    "TriggerExecutionError",
+    "TriggerConfigError",
     "OrchestratorError",
     "RetryExhaustedError",
+    "TagNotRegisteredError",
+    "CurationError",
     # Tool tracking
     "hash_tool_schema",
     # Retry protocol
     "RetryResult",
     "retry_with_steering",
-    # Policy engine
-    "Policy",
-    "PolicyEvaluator",
-    "CompressPolicy",
-    "PinPolicy",
-    "BranchPolicy",
-    "ArchivePolicy",
-    "RebasePolicy",
-    "PolicyAction",
+    # Trigger engine
+    "Trigger",
+    "TriggerEvaluator",
+    "CompressTrigger",
+    "PinTrigger",
+    "BranchTrigger",
+    "MergeTrigger",
+    "RebaseTrigger",
+    "GCTrigger",
+    "ArchiveTrigger",
+    "TriggerAction",
     "EvaluationResult",
-    "PolicyLogEntry",
+    "TriggerLogEntry",
     # Compression models
     "CompressResult",
     "GCResult",

@@ -1,4 +1,4 @@
-"""BranchPolicy -- auto-detect content type tangents and propose branching.
+"""BranchTrigger -- auto-detect content type tangents and propose branching.
 
 Fires on ``commit`` trigger.  Examines recent commits for rapid content
 type transitions (e.g., switching between dialogue and artifact rapidly),
@@ -13,15 +13,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from tract.models.policy import PolicyAction
-from tract.policy.protocols import Policy
+from tract.models.trigger import TriggerAction
+from tract.triggers.protocols import Trigger
 
 if TYPE_CHECKING:
-    from tract.hooks.policy import PendingPolicy
+    from tract.hooks.trigger import PendingTrigger
     from tract.tract import Tract
 
 
-class BranchPolicy(Policy):
+class BranchTrigger(Trigger):
     """Detect content type switching patterns and propose tangent branches.
 
     Constructor Args:
@@ -54,10 +54,10 @@ class BranchPolicy(Policy):
         return 300
 
     @property
-    def trigger(self) -> str:
+    def fires_on(self) -> str:
         return "commit"
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         """Check if recent commits show rapid content type switching."""
         # Detached HEAD or no branch -- skip
         current_branch = tract.current_branch
@@ -83,7 +83,7 @@ class BranchPolicy(Policy):
 
         if transitions >= self._switch_threshold:
             branch_name = f"tangent/{current_branch}/{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-            return PolicyAction(
+            return TriggerAction(
                 action_type="branch",
                 params={"name": branch_name, "switch": False},
                 reason=(
@@ -99,7 +99,7 @@ class BranchPolicy(Policy):
     # Hook integration
     # ------------------------------------------------------------------
 
-    def default_handler(self, pending: PendingPolicy) -> None:
+    def default_handler(self, pending: PendingTrigger) -> None:
         """Auto-approve branch creation proposals."""
         pending.approve()
 
@@ -108,7 +108,7 @@ class BranchPolicy(Policy):
     # ------------------------------------------------------------------
 
     def to_config(self) -> dict:
-        """Serialize policy configuration to a dict."""
+        """Serialize trigger configuration to a dict."""
         return {
             "name": self.name,
             "content_type_window": self._content_type_window,
@@ -118,8 +118,8 @@ class BranchPolicy(Policy):
         }
 
     @classmethod
-    def from_config(cls, config: dict) -> BranchPolicy:
-        """Deserialize a BranchPolicy from a config dict."""
+    def from_config(cls, config: dict) -> BranchTrigger:
+        """Deserialize a BranchTrigger from a config dict."""
         ignore = config.get("ignore_transitions")
         if ignore is not None:
             ignore = {tuple(t) for t in ignore}

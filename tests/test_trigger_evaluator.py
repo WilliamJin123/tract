@@ -1,19 +1,19 @@
-"""Tests for Policy ABC, PolicyEvaluator, and Tract integration.
+"""Tests for Trigger ABC, TriggerEvaluator, and Tract integration.
 
 Covers:
-- Policy ABC subclassing and instantiation
-- PolicyEvaluator priority sorting, trigger filtering, recursion guard
+- Trigger ABC subclassing and instantiation
+- TriggerEvaluator priority sorting, trigger filtering, recursion guard
 - Autonomous mode: immediate execution
-- Collaborative mode: PendingPolicy creation via hook system
+- Collaborative mode: PendingTrigger creation via hook system
 - Manual mode: action skipped
 - Audit log entries for every triggered evaluation
 - Cooldown: rapid evaluations within cooldown_seconds are skipped
-- Tract.configure_policies() and register_policy()
-- Tract.pause_all_policies() and resume_all_policies()
-- Tract.compile() triggers compile-triggered policies
-- Tract.commit() triggers commit-triggered policies
-- save_policy_config() and load_policy_config() roundtrip
-- Error handling: exception in policy.evaluate() is caught and logged
+- Tract.configure_triggers() and register_trigger()
+- Tract.pause_all_triggers() and resume_all_triggers()
+- Tract.compile() triggers compile-triggered triggers
+- Tract.commit() triggers commit-triggered triggers
+- save_trigger_config() and load_trigger_config() roundtrip
+- Error handling: exception in trigger_obj.evaluate() is caught and logged
 - _execute_action dispatches to correct Tract method
 """
 
@@ -28,22 +28,22 @@ from tract import (
     DialogueContent,
     EvaluationResult,
     InstructionContent,
-    Policy,
-    PolicyAction,
-    PolicyEvaluator,
-    PolicyExecutionError,
+    Trigger,
+    TriggerAction,
+    TriggerEvaluator,
+    TriggerExecutionError,
     Priority,
     Tract,
 )
 
 
 # ---------------------------------------------------------------------------
-# DummyPolicy -- configurable test policy
+# DummyTrigger -- configurable test trigger
 # ---------------------------------------------------------------------------
 
 
-class DummyPolicy(Policy):
-    """Configurable test policy.
+class DummyTrigger(Trigger):
+    """Configurable test trigger.
 
     By default, default_handler does nothing (leaves pending unresolved)
     so tests can verify the proposal lifecycle. Set auto_approve_default=True
@@ -55,7 +55,7 @@ class DummyPolicy(Policy):
         name: str = "dummy",
         priority: int = 100,
         trigger: str = "compile",
-        action: PolicyAction | None = None,
+        action: TriggerAction | None = None,
         should_raise: Exception | None = None,
         auto_approve_default: bool = False,
     ):
@@ -76,10 +76,10 @@ class DummyPolicy(Policy):
         return self._priority
 
     @property
-    def trigger(self) -> str:
+    def fires_on(self) -> str:
         return self._trigger
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         self.evaluate_count += 1
         if self._should_raise:
             raise self._should_raise
@@ -91,47 +91,47 @@ class DummyPolicy(Policy):
             pending.approve()
 
 
-class RecursivePolicy(Policy):
-    """Policy that tries to call tract.compile() during evaluation (tests recursion guard)."""
+class RecursiveTrigger(Trigger):
+    """Trigger that tries to call tract.compile() during evaluation (tests recursion guard)."""
 
     @property
     def name(self) -> str:
         return "recursive"
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         # This should NOT cause infinite recursion due to the recursion guard
         tract.compile()
         return None
 
 
 # ---------------------------------------------------------------------------
-# 1. Policy ABC Tests
+# 1. Trigger ABC Tests
 # ---------------------------------------------------------------------------
 
 
-class TestPolicyABC:
-    """Test Policy ABC can be subclassed and instantiated."""
+class TestTriggerABC:
+    """Test Trigger ABC can be subclassed and instantiated."""
 
     def test_subclass_and_instantiate(self):
-        """Policy ABC can be subclassed with required methods."""
-        p = DummyPolicy(name="test-policy", priority=50, trigger="commit")
-        assert p.name == "test-policy"
+        """Trigger ABC can be subclassed with required methods."""
+        p = DummyTrigger(name="test-trigger", priority=50, trigger="commit")
+        assert p.name == "test-trigger"
         assert p.priority == 50
-        assert p.trigger == "commit"
+        assert p.fires_on == "commit"
 
     def test_default_priority(self):
         """Default priority is 100."""
-        p = DummyPolicy(name="default-prio")
+        p = DummyTrigger(name="default-prio")
         assert p.priority == 100
 
     def test_default_trigger(self):
         """Default trigger is 'compile'."""
-        p = DummyPolicy(name="default-trigger")
-        assert p.trigger == "compile"
+        p = DummyTrigger(name="default-trigger")
+        assert p.fires_on == "compile"
 
     def test_evaluate_returns_none(self):
-        """Policy that doesn't fire returns None."""
-        p = DummyPolicy(name="no-fire")
+        """Trigger that doesn't fire returns None."""
+        p = DummyTrigger(name="no-fire")
         t = Tract.open(":memory:")
         try:
             assert p.evaluate(t) is None
@@ -139,9 +139,9 @@ class TestPolicyABC:
             t.close()
 
     def test_evaluate_returns_action(self):
-        """Policy that fires returns PolicyAction."""
-        action = PolicyAction(action_type="annotate", params={"target_hash": "abc"})
-        p = DummyPolicy(name="fire", action=action)
+        """Trigger that fires returns TriggerAction."""
+        action = TriggerAction(action_type="annotate", params={"target_hash": "abc"})
+        p = DummyTrigger(name="fire", action=action)
         t = Tract.open(":memory:")
         try:
             result = p.evaluate(t)
@@ -151,42 +151,42 @@ class TestPolicyABC:
 
 
 # ---------------------------------------------------------------------------
-# 2. PolicyEvaluator Tests
+# 2. TriggerEvaluator Tests
 # ---------------------------------------------------------------------------
 
 
-class TestPolicyEvaluator:
-    """Test PolicyEvaluator core functionality."""
+class TestTriggerEvaluator:
+    """Test TriggerEvaluator core functionality."""
 
     def test_sorts_by_priority(self):
-        """Policies are sorted by priority on init."""
-        p_high = DummyPolicy(name="high", priority=10)
-        p_low = DummyPolicy(name="low", priority=200)
-        p_mid = DummyPolicy(name="mid", priority=100)
+        """Triggers are sorted by priority on init."""
+        p_high = DummyTrigger(name="high", priority=10)
+        p_low = DummyTrigger(name="low", priority=200)
+        p_mid = DummyTrigger(name="mid", priority=100)
 
         t = Tract.open(":memory:")
         try:
-            ev = PolicyEvaluator(t, policies=[p_low, p_high, p_mid])
-            assert [p.name for p in ev._policies] == ["high", "mid", "low"]
+            ev = TriggerEvaluator(t, triggers=[p_low, p_high, p_mid])
+            assert [p.name for p in ev._triggers] == ["high", "mid", "low"]
         finally:
             t.close()
 
     def test_filters_by_trigger(self):
-        """evaluate() only runs policies matching the trigger."""
-        compile_policy = DummyPolicy(name="compile-p", trigger="compile")
-        commit_policy = DummyPolicy(name="commit-p", trigger="commit")
+        """evaluate() only runs triggers matching the trigger."""
+        compile_trigger = DummyTrigger(name="compile-p", trigger="compile")
+        commit_trigger = DummyTrigger(name="commit-p", trigger="commit")
 
         t = Tract.open(":memory:")
         try:
-            ev = PolicyEvaluator(t, policies=[compile_policy, commit_policy])
+            ev = TriggerEvaluator(t, triggers=[compile_trigger, commit_trigger])
 
             ev.evaluate(trigger="compile")
-            assert compile_policy.evaluate_count == 1
-            assert commit_policy.evaluate_count == 0
+            assert compile_trigger.evaluate_count == 1
+            assert commit_trigger.evaluate_count == 0
 
             ev.evaluate(trigger="commit")
-            assert compile_policy.evaluate_count == 1
-            assert commit_policy.evaluate_count == 1
+            assert compile_trigger.evaluate_count == 1
+            assert commit_trigger.evaluate_count == 1
         finally:
             t.close()
 
@@ -195,20 +195,20 @@ class TestPolicyEvaluator:
         t = Tract.open(":memory:")
         try:
             t.commit(InstructionContent(text="hello"))
-            recursive = RecursivePolicy()
-            ev = PolicyEvaluator(t, policies=[recursive])
+            recursive = RecursiveTrigger()
+            ev = TriggerEvaluator(t, triggers=[recursive])
             # This should NOT recurse infinitely
             results = ev.evaluate(trigger="compile")
-            assert len(results) == 1  # The recursive policy ran once
+            assert len(results) == 1  # The recursive trigger ran once
         finally:
             t.close()
 
     def test_pause_resume(self):
         """Paused evaluator returns empty list."""
-        p = DummyPolicy(name="p")
+        p = DummyTrigger(name="p")
         t = Tract.open(":memory:")
         try:
-            ev = PolicyEvaluator(t, policies=[p])
+            ev = TriggerEvaluator(t, triggers=[p])
 
             ev.pause()
             assert ev.is_paused
@@ -225,28 +225,28 @@ class TestPolicyEvaluator:
             t.close()
 
     def test_register_maintains_priority_order(self):
-        """register() adds policy and re-sorts by priority."""
-        p1 = DummyPolicy(name="p1", priority=100)
-        p2 = DummyPolicy(name="p2", priority=50)
+        """register() adds trigger and re-sorts by priority."""
+        p1 = DummyTrigger(name="p1", priority=100)
+        p2 = DummyTrigger(name="p2", priority=50)
 
         t = Tract.open(":memory:")
         try:
-            ev = PolicyEvaluator(t, policies=[p1])
+            ev = TriggerEvaluator(t, triggers=[p1])
             ev.register(p2)
-            assert [p.name for p in ev._policies] == ["p2", "p1"]
+            assert [p.name for p in ev._triggers] == ["p2", "p1"]
         finally:
             t.close()
 
     def test_unregister(self):
-        """unregister() removes policy by name."""
-        p1 = DummyPolicy(name="p1")
-        p2 = DummyPolicy(name="p2")
+        """unregister() removes trigger by name."""
+        p1 = DummyTrigger(name="p1")
+        p2 = DummyTrigger(name="p2")
 
         t = Tract.open(":memory:")
         try:
-            ev = PolicyEvaluator(t, policies=[p1, p2])
+            ev = TriggerEvaluator(t, triggers=[p1, p2])
             ev.unregister("p1")
-            assert [p.name for p in ev._policies] == ["p2"]
+            assert [p.name for p in ev._triggers] == ["p2"]
         finally:
             t.close()
 
@@ -265,7 +265,7 @@ class TestAutonomousMode:
         try:
             info = t.commit(InstructionContent(text="hello"))
 
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={
                     "target_hash": info.commit_hash,
@@ -275,8 +275,8 @@ class TestAutonomousMode:
                 reason="Auto-pin important commit",
                 autonomy="autonomous",
             )
-            p = DummyPolicy(name="auto-pin", action=action)
-            ev = PolicyEvaluator(t, policies=[p])
+            p = DummyTrigger(name="auto-pin", action=action)
+            ev = TriggerEvaluator(t, triggers=[p])
 
             results = ev.evaluate()
             assert len(results) == 1
@@ -297,14 +297,14 @@ class TestAutonomousMode:
             t.commit(DialogueContent(role="user", text="two"))
             t.commit(DialogueContent(role="assistant", text="three"))
 
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="compress",
                 params={"content": "Summary of conversation"},
                 reason="Auto-compress",
                 autonomy="autonomous",
             )
-            p = DummyPolicy(name="auto-compress", action=action)
-            ev = PolicyEvaluator(t, policies=[p])
+            p = DummyTrigger(name="auto-compress", action=action)
+            ev = TriggerEvaluator(t, triggers=[p])
 
             results = ev.evaluate()
             assert len(results) == 1
@@ -319,14 +319,14 @@ class TestAutonomousMode:
 
 
 class TestCollaborativeMode:
-    """Test collaborative mode: creates PendingPolicy via hook system."""
+    """Test collaborative mode: creates PendingTrigger via hook system."""
 
-    def test_creates_pending_policy(self):
-        """Collaborative mode creates a PendingPolicy and returns 'proposed'."""
+    def test_creates_pending_trigger(self):
+        """Collaborative mode creates a PendingTrigger and returns 'proposed'."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={
                     "target_hash": info.commit_hash,
@@ -335,10 +335,10 @@ class TestCollaborativeMode:
                 reason="Propose pinning",
                 autonomy="collaborative",
             )
-            p = DummyPolicy(name="collab-pin", action=action)
-            ev = PolicyEvaluator(
-                t, policies=[p],
-                policy_repo=t._policy_repo,
+            p = DummyTrigger(name="collab-pin", action=action)
+            ev = TriggerEvaluator(
+                t, triggers=[p],
+                trigger_repo=t._trigger_repo,
             )
 
             results = ev.evaluate()
@@ -352,7 +352,7 @@ class TestCollaborativeMode:
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={
                     "target_hash": info.commit_hash,
@@ -361,13 +361,13 @@ class TestCollaborativeMode:
                 reason="Propose pinning",
                 autonomy="collaborative",
             )
-            p = DummyPolicy(name="collab-pin", action=action)
+            p = DummyTrigger(name="collab-pin", action=action)
 
             # Register a hook that auto-approves
-            t.on("policy", lambda pending: pending.approve())
+            t.on("trigger", lambda pending: pending.approve())
 
-            ev = PolicyEvaluator(
-                t, policies=[p], policy_repo=t._policy_repo,
+            ev = TriggerEvaluator(
+                t, triggers=[p], trigger_repo=t._trigger_repo,
             )
 
             results = ev.evaluate()
@@ -385,7 +385,7 @@ class TestCollaborativeMode:
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={
                     "target_hash": info.commit_hash,
@@ -393,13 +393,13 @@ class TestCollaborativeMode:
                 },
                 autonomy="collaborative",
             )
-            p = DummyPolicy(name="collab-pin", action=action)
+            p = DummyTrigger(name="collab-pin", action=action)
 
             # Register a hook that rejects
-            t.on("policy", lambda pending: pending.reject("Not needed"))
+            t.on("trigger", lambda pending: pending.reject("Not needed"))
 
-            ev = PolicyEvaluator(
-                t, policies=[p], policy_repo=t._policy_repo,
+            ev = TriggerEvaluator(
+                t, triggers=[p], trigger_repo=t._trigger_repo,
             )
 
             results = ev.evaluate()
@@ -413,7 +413,7 @@ class TestCollaborativeMode:
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={
                     "target_hash": info.commit_hash,
@@ -422,11 +422,11 @@ class TestCollaborativeMode:
                 reason="Propose pinning",
                 autonomy="collaborative",
             )
-            p = DummyPolicy(
+            p = DummyTrigger(
                 name="collab-pin", action=action, auto_approve_default=True,
             )
-            ev = PolicyEvaluator(
-                t, policies=[p], policy_repo=t._policy_repo,
+            ev = TriggerEvaluator(
+                t, triggers=[p], trigger_repo=t._trigger_repo,
             )
 
             results = ev.evaluate()
@@ -446,14 +446,14 @@ class TestCollaborativeMode:
 
 
 class TestAuditLog:
-    """Test audit log entries for policy evaluations."""
+    """Test audit log entries for trigger evaluations."""
 
     def test_audit_log_created(self):
-        """Evaluation creates PolicyLogRow entries."""
+        """Evaluation creates TriggerLogRow entries."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={
                     "target_hash": info.commit_hash,
@@ -462,18 +462,18 @@ class TestAuditLog:
                 reason="Test log",
                 autonomy="autonomous",
             )
-            p = DummyPolicy(name="logged-policy", action=action)
-            ev = PolicyEvaluator(
-                t, policies=[p], policy_repo=t._policy_repo,
+            p = DummyTrigger(name="logged-trigger", action=action)
+            ev = TriggerEvaluator(
+                t, triggers=[p], trigger_repo=t._trigger_repo,
             )
 
             ev.evaluate()
 
             # Check audit log
-            log_entries = t._policy_repo.get_log(t.tract_id)
+            log_entries = t._trigger_repo.get_log(t.tract_id)
             assert len(log_entries) >= 1
             entry = log_entries[0]
-            assert entry.policy_name == "logged-policy"
+            assert entry.trigger_name == "logged-trigger"
             assert entry.outcome == "executed"
             assert entry.trigger == "compile"
         finally:
@@ -490,16 +490,16 @@ class TestCooldown:
 
     def test_cooldown_skips_rapid_evaluations(self):
         """Within cooldown_seconds, re-evaluations are skipped."""
-        action = PolicyAction(
+        action = TriggerAction(
             action_type="annotate",
             params={"target_hash": "abc", "priority": "normal"},
             autonomy="autonomous",
         )
-        # Use a policy that always fires
+        # Use a trigger that always fires
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={
                     "target_hash": info.commit_hash,
@@ -507,8 +507,8 @@ class TestCooldown:
                 },
                 autonomy="autonomous",
             )
-            p = DummyPolicy(name="cooldown-test", action=action)
-            ev = PolicyEvaluator(t, policies=[p], cooldown_seconds=10.0)
+            p = DummyTrigger(name="cooldown-test", action=action)
+            ev = TriggerEvaluator(t, triggers=[p], cooldown_seconds=10.0)
 
             # First evaluation fires
             results1 = ev.evaluate()
@@ -527,19 +527,19 @@ class TestCooldown:
 
 
 class TestErrorHandling:
-    """Test error handling in policy evaluation."""
+    """Test error handling in trigger evaluation."""
 
     def test_exception_caught_and_logged(self):
-        """Exception in policy.evaluate() is caught and logged as error."""
-        p = DummyPolicy(
-            name="error-policy",
+        """Exception in trigger_obj.evaluate() is caught and logged as error."""
+        p = DummyTrigger(
+            name="error-trigger",
             should_raise=ValueError("test error"),
         )
 
         t = Tract.open(":memory:")
         try:
-            ev = PolicyEvaluator(
-                t, policies=[p], policy_repo=t._policy_repo,
+            ev = TriggerEvaluator(
+                t, triggers=[p], trigger_repo=t._trigger_repo,
             )
             results = ev.evaluate()
             assert len(results) == 1
@@ -547,7 +547,7 @@ class TestErrorHandling:
             assert "test error" in results[0].error
 
             # Check audit log has error entry
-            log_entries = t._policy_repo.get_log(t.tract_id)
+            log_entries = t._trigger_repo.get_log(t.tract_id)
             assert len(log_entries) >= 1
             assert log_entries[0].outcome == "error"
         finally:
@@ -560,121 +560,121 @@ class TestErrorHandling:
 
 
 class TestTractIntegration:
-    """Test Tract facade policy methods."""
+    """Test Tract facade trigger methods."""
 
-    def test_configure_policies(self):
-        """Tract.configure_policies() creates evaluator."""
+    def test_configure_triggers(self):
+        """Tract.configure_triggers() creates evaluator."""
         t = Tract.open(":memory:")
         try:
-            assert t.policy_evaluator is None
-            t.configure_policies()
-            assert t.policy_evaluator is not None
+            assert t.trigger_evaluator is None
+            t.configure_triggers()
+            assert t.trigger_evaluator is not None
         finally:
             t.close()
 
-    def test_register_policy_auto_creates_evaluator(self):
-        """Tract.register_policy() auto-creates evaluator if needed."""
+    def test_register_trigger_auto_creates_evaluator(self):
+        """Tract.register_trigger() auto-creates evaluator if needed."""
         t = Tract.open(":memory:")
         try:
-            assert t.policy_evaluator is None
-            p = DummyPolicy(name="auto-created")
-            t.register_policy(p)
-            assert t.policy_evaluator is not None
-            assert len(t.policy_evaluator._policies) == 1
+            assert t.trigger_evaluator is None
+            p = DummyTrigger(name="auto-created")
+            t.register_trigger(p)
+            assert t.trigger_evaluator is not None
+            assert len(t.trigger_evaluator._triggers) == 1
         finally:
             t.close()
 
-    def test_unregister_policy(self):
-        """Tract.unregister_policy() removes policy."""
+    def test_unregister_trigger(self):
+        """Tract.unregister_trigger() removes trigger."""
         t = Tract.open(":memory:")
         try:
-            p = DummyPolicy(name="to-remove")
-            t.configure_policies(policies=[p])
-            assert len(t.policy_evaluator._policies) == 1
-            t.unregister_policy("to-remove")
-            assert len(t.policy_evaluator._policies) == 0
+            p = DummyTrigger(name="to-remove")
+            t.configure_triggers(triggers=[p])
+            assert len(t.trigger_evaluator._triggers) == 1
+            t.unregister_trigger("to-remove")
+            assert len(t.trigger_evaluator._triggers) == 0
         finally:
             t.close()
 
     def test_pause_resume(self):
-        """Tract.pause_all_policies() and resume_all_policies()."""
+        """Tract.pause_all_triggers() and resume_all_triggers()."""
         t = Tract.open(":memory:")
         try:
-            p = DummyPolicy(name="pausable")
-            t.configure_policies(policies=[p])
+            p = DummyTrigger(name="pausable")
+            t.configure_triggers(triggers=[p])
 
-            t.pause_all_policies()
-            assert t.policy_evaluator.is_paused
+            t.pause_all_triggers()
+            assert t.trigger_evaluator.is_paused
 
-            t.resume_all_policies()
-            assert not t.policy_evaluator.is_paused
+            t.resume_all_triggers()
+            assert not t.trigger_evaluator.is_paused
         finally:
             t.close()
 
-    def test_compile_triggers_compile_policies(self):
-        """Tract.compile() triggers compile-triggered policies."""
+    def test_compile_triggers_compile_triggers(self):
+        """Tract.compile() triggers compile-triggered triggers."""
         t = Tract.open(":memory:")
         try:
             t.commit(InstructionContent(text="hello"))
-            p = DummyPolicy(name="compile-trigger", trigger="compile")
-            t.configure_policies(policies=[p])
+            p = DummyTrigger(name="compile-trigger", trigger="compile")
+            t.configure_triggers(triggers=[p])
 
             t.compile()
             assert p.evaluate_count == 1
         finally:
             t.close()
 
-    def test_commit_triggers_commit_policies(self):
-        """Tract.commit() triggers commit-triggered policies."""
+    def test_commit_triggers_commit_triggers(self):
+        """Tract.commit() triggers commit-triggered triggers."""
         t = Tract.open(":memory:")
         try:
-            # First commit without policies
+            # First commit without triggers
             t.commit(InstructionContent(text="first"))
 
-            p = DummyPolicy(name="commit-trigger", trigger="commit")
-            t.configure_policies(policies=[p])
+            p = DummyTrigger(name="commit-trigger", trigger="commit")
+            t.configure_triggers(triggers=[p])
 
-            # Second commit triggers the policy
+            # Second commit triggers the trigger
             t.commit(DialogueContent(role="user", text="second"))
             assert p.evaluate_count == 1
         finally:
             t.close()
 
-    def test_compile_does_not_trigger_commit_policies(self):
-        """Tract.compile() does NOT trigger commit-triggered policies."""
+    def test_compile_does_not_trigger_commit_triggers(self):
+        """Tract.compile() does NOT trigger commit-triggered triggers."""
         t = Tract.open(":memory:")
         try:
             t.commit(InstructionContent(text="hello"))
-            p = DummyPolicy(name="commit-only", trigger="commit")
-            t.configure_policies(policies=[p])
+            p = DummyTrigger(name="commit-only", trigger="commit")
+            t.configure_triggers(triggers=[p])
 
             t.compile()
             assert p.evaluate_count == 0
         finally:
             t.close()
 
-    def test_commit_does_not_trigger_compile_policies(self):
-        """Tract.commit() does NOT trigger compile-triggered policies."""
+    def test_commit_does_not_trigger_compile_triggers(self):
+        """Tract.commit() does NOT trigger compile-triggered triggers."""
         t = Tract.open(":memory:")
         try:
             t.commit(InstructionContent(text="first"))
-            p = DummyPolicy(name="compile-only", trigger="compile")
-            t.configure_policies(policies=[p])
+            p = DummyTrigger(name="compile-only", trigger="compile")
+            t.configure_triggers(triggers=[p])
 
             t.commit(DialogueContent(role="user", text="second"))
             assert p.evaluate_count == 0
         finally:
             t.close()
 
-    def test_batch_does_not_trigger_policies(self):
-        """Policies are not triggered during batch()."""
+    def test_batch_does_not_trigger_triggers(self):
+        """Triggers are not triggered during batch()."""
         t = Tract.open(":memory:")
         try:
             t.commit(InstructionContent(text="first"))
 
-            p_compile = DummyPolicy(name="batch-compile", trigger="compile")
-            p_commit = DummyPolicy(name="batch-commit", trigger="commit")
-            t.configure_policies(policies=[p_compile, p_commit])
+            p_compile = DummyTrigger(name="batch-compile", trigger="compile")
+            p_commit = DummyTrigger(name="batch-commit", trigger="commit")
+            t.configure_triggers(triggers=[p_compile, p_commit])
 
             with t.batch():
                 t.commit(DialogueContent(role="user", text="a"))
@@ -691,40 +691,40 @@ class TestTractIntegration:
 
 
 class TestConfigPersistence:
-    """Test save/load policy config via _trace_meta."""
+    """Test save/load trigger config via _trace_meta."""
 
     def test_roundtrip(self):
-        """save_policy_config() and load_policy_config() roundtrip."""
+        """save_trigger_config() and load_trigger_config() roundtrip."""
         t = Tract.open(":memory:")
         try:
             config = {
-                "policies": ["auto-compress"],
+                "triggers": ["auto-compress"],
                 "cooldown_seconds": 30,
                 "enabled": True,
             }
-            t.save_policy_config(config)
+            t.save_trigger_config(config)
 
-            loaded = t.load_policy_config()
+            loaded = t.load_trigger_config()
             assert loaded == config
         finally:
             t.close()
 
     def test_load_returns_none_when_not_set(self):
-        """load_policy_config() returns None when no config saved."""
+        """load_trigger_config() returns None when no config saved."""
         t = Tract.open(":memory:")
         try:
-            assert t.load_policy_config() is None
+            assert t.load_trigger_config() is None
         finally:
             t.close()
 
     def test_update_existing_config(self):
-        """save_policy_config() updates existing config."""
+        """save_trigger_config() updates existing config."""
         t = Tract.open(":memory:")
         try:
-            t.save_policy_config({"v": 1})
-            t.save_policy_config({"v": 2, "new_key": "value"})
+            t.save_trigger_config({"v": 1})
+            t.save_trigger_config({"v": 2, "new_key": "value"})
 
-            loaded = t.load_policy_config()
+            loaded = t.load_trigger_config()
             assert loaded == {"v": 2, "new_key": "value"}
         finally:
             t.close()
@@ -744,13 +744,13 @@ class TestDispatch:
         try:
             t.commit(InstructionContent(text="hello"))
 
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="branch",
-                params={"name": "policy-branch", "switch": False},
+                params={"name": "trigger-branch", "switch": False},
                 autonomy="autonomous",
             )
-            p = DummyPolicy(name="branch-policy", action=action)
-            ev = PolicyEvaluator(t, policies=[p])
+            p = DummyTrigger(name="branch-trigger", action=action)
+            ev = TriggerEvaluator(t, triggers=[p])
 
             results = ev.evaluate()
             assert results[0].outcome == "executed"
@@ -758,7 +758,7 @@ class TestDispatch:
             # Verify branch was created
             branches = t.list_branches()
             branch_names = [b.name for b in branches]
-            assert "policy-branch" in branch_names
+            assert "trigger-branch" in branch_names
         finally:
             t.close()
 
@@ -766,13 +766,13 @@ class TestDispatch:
         """Unknown action_type raises ValueError caught as error."""
         t = Tract.open(":memory:")
         try:
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="unknown_type",
                 params={},
                 autonomy="autonomous",
             )
-            p = DummyPolicy(name="unknown-action", action=action)
-            ev = PolicyEvaluator(t, policies=[p])
+            p = DummyTrigger(name="unknown-action", action=action)
+            ev = TriggerEvaluator(t, triggers=[p])
 
             results = ev.evaluate()
             assert results[0].outcome == "error"
@@ -793,13 +793,13 @@ class TestManualMode:
         """Manual mode creates result with outcome='skipped'."""
         t = Tract.open(":memory:")
         try:
-            action = PolicyAction(
+            action = TriggerAction(
                 action_type="annotate",
                 params={"target_hash": "abc", "priority": "pinned"},
                 autonomy="manual",
             )
-            p = DummyPolicy(name="manual-policy", action=action)
-            ev = PolicyEvaluator(t, policies=[p])
+            p = DummyTrigger(name="manual-trigger", action=action)
+            ev = TriggerEvaluator(t, triggers=[p])
 
             results = ev.evaluate()
             assert len(results) == 1

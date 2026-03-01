@@ -537,30 +537,30 @@ class TestTractConfigureOrchestrator:
 
 
 # ---------------------------------------------------------------------------
-# Test 14: Policy guard during orchestration
+# Test 14: Trigger guard during orchestration
 # ---------------------------------------------------------------------------
 
 
-class TestPolicyGuardDuringOrchestration:
-    def test_policy_guard_during_orchestration(self, tract_with_commits):
-        """Run orchestrator with policies. _orchestrating prevents re-evaluation."""
-        # Track whether policy evaluate() is called during orchestrator run
-        policy_eval_called = []
+class TestTriggerGuardDuringOrchestration:
+    def test_trigger_guard_during_orchestration(self, tract_with_commits):
+        """Run orchestrator with triggers. _orchestrating prevents re-evaluation."""
+        # Track whether trigger evaluate() is called during orchestrator run
+        trigger_eval_called = []
 
-        class MockPolicy:
-            name = "test-policy"
+        class MockTrigger:
+            name = "test-trigger"
             priority = 100
             trigger = "commit"
             enabled = True
 
             def evaluate(self, tract):
-                policy_eval_called.append(True)
+                trigger_eval_called.append(True)
                 return None
 
-        tract_with_commits.configure_policies(policies=[MockPolicy()])
-        policy_eval_called.clear()  # Clear any calls from configure
+        tract_with_commits.configure_triggers(triggers=[MockTrigger()])
+        trigger_eval_called.clear()  # Clear any calls from configure
 
-        # LLM calls commit tool which would normally trigger policy eval
+        # LLM calls commit tool which would normally trigger eval
         mock_llm = make_mock_llm([
             tool_call_response("status", {}, call_id="call_pol"),
             no_tool_call_response(),
@@ -575,9 +575,9 @@ class TestPolicyGuardDuringOrchestration:
         )
         result = orch.run()
 
-        # Policy should NOT have been called during orchestrator run
+        # Trigger should NOT have been called during orchestrator run
         # (because _orchestrating flag prevents it)
-        assert len(policy_eval_called) == 0
+        assert len(trigger_eval_called) == 0
 
 
 # ---------------------------------------------------------------------------

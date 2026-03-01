@@ -32,7 +32,7 @@ DEFAULT_SUMMARIZE_SYSTEM: str = (
 )
 
 # ---------------------------------------------------------------------------
-# Conversation -- for full-conversation compression / auto-compress policies
+# Conversation -- for full-conversation compression / auto-compress triggers
 # ---------------------------------------------------------------------------
 
 CONVERSATION_SUMMARIZE_SYSTEM: str = (

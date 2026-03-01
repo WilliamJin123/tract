@@ -543,7 +543,7 @@ def compress_range(
         token_tolerance: Additive token tolerance for summary validation.
             When set, summaries up to target_tokens + token_tolerance are
             accepted. Defaults to 500 when None. Use 0 for strict mode.
-        triggered_by: Optional provenance string (e.g. "policy:auto_compress").
+        triggered_by: Optional provenance string (e.g. "trigger:auto_compress").
 
     Returns:
         PendingCompress with all state needed for finalization.
@@ -1272,7 +1272,7 @@ def gc(
     branch if ``branch`` is set), then removes eligible ones based on
     age and archive status.
 
-    Retention policies:
+    Retention triggers:
     - Orphans (not archived): removed if older than ``orphan_retention_days``
     - Archives (compression sources): preserved by default. Removed only
       if ``archive_retention_days`` is set and the commit is old enough.

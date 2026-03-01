@@ -16,7 +16,7 @@ from tract.hooks.compress import PendingCompress
 from tract.hooks.gc import PendingGC
 from tract.hooks.merge import PendingMerge
 from tract.hooks.pending import Pending
-from tract.hooks.policy import PendingPolicy
+from tract.hooks.trigger import PendingTrigger
 from tract.hooks.rebase import PendingRebase
 from tract.hooks.introspection import (
     method_to_tool_schema,
@@ -87,13 +87,13 @@ def _make_standalone_merge() -> PendingMerge:
     )
 
 
-def _make_standalone_policy() -> PendingPolicy:
-    """Create a standalone PendingPolicy for unit testing."""
+def _make_standalone_trigger() -> PendingTrigger:
+    """Create a standalone PendingTrigger for unit testing."""
     t = Tract.open(":memory:")
-    return PendingPolicy(
-        operation="policy",
+    return PendingTrigger(
+        operation="trigger",
         tract=t,
-        policy_name="auto_compress",
+        trigger_name="auto_compress",
         action_type="compress",
         action_params={"target_tokens": 1000},
         reason="Token count exceeded threshold.",
@@ -240,14 +240,14 @@ class TestToDict:
         assert d["fields"]["source_branch"] == "feature"
         m.tract.close()
 
-    def test_to_dict_policy(self):
-        """to_dict() works for PendingPolicy."""
-        p = _make_standalone_policy()
+    def test_to_dict_trigger(self):
+        """to_dict() works for PendingTrigger."""
+        p = _make_standalone_trigger()
         d = p.to_dict()
-        assert d["operation"] == "policy"
-        assert "policy_name" in d["fields"]
+        assert d["operation"] == "trigger"
+        assert "trigger_name" in d["fields"]
         assert "action_type" in d["fields"]
-        assert d["fields"]["policy_name"] == "auto_compress"
+        assert d["fields"]["trigger_name"] == "auto_compress"
         p.tract.close()
 
 
@@ -384,9 +384,9 @@ class TestToTools:
         assert "commit_hash" in params["properties"]
         gc.tract.close()
 
-    def test_to_tools_policy(self):
-        """to_tools() works for PendingPolicy and includes modify_params."""
-        p = _make_standalone_policy()
+    def test_to_tools_trigger(self):
+        """to_tools() works for PendingTrigger and includes modify_params."""
+        p = _make_standalone_trigger()
         tools = p.to_tools()
         tool_names = {t["function"]["name"] for t in tools}
         assert "modify_params" in tool_names
@@ -462,11 +462,11 @@ class TestDescribeApi:
         assert "exclude" in api_desc
         gc.tract.close()
 
-    def test_describe_api_policy(self):
-        """describe_api() works for PendingPolicy."""
-        p = _make_standalone_policy()
+    def test_describe_api_trigger(self):
+        """describe_api() works for PendingTrigger."""
+        p = _make_standalone_trigger()
         api_desc = p.describe_api()
-        assert "PendingPolicy" in api_desc
+        assert "PendingTrigger" in api_desc
         assert "modify_params" in api_desc
         p.tract.close()
 
@@ -585,9 +585,9 @@ class TestExecuteTool:
         assert "abc123" not in gc.commits_to_remove
         gc.tract.close()
 
-    def test_execute_tool_policy_modify_params(self):
-        """execute_tool('modify_params', {'params': {...}}) on PendingPolicy works."""
-        p = _make_standalone_policy()
+    def test_execute_tool_trigger_modify_params(self):
+        """execute_tool('modify_params', {'params': {...}}) on PendingTrigger works."""
+        p = _make_standalone_trigger()
         p.execute_tool("modify_params", {"params": {"target_tokens": 2000}})
         assert p.action_params["target_tokens"] == 2000
         p.tract.close()
@@ -686,12 +686,12 @@ class TestPprintSmoke:
         assert "PendingMerge" in captured.out
         m.tract.close()
 
-    def test_pprint_policy(self, capsys):
-        """pprint() on PendingPolicy doesn't crash."""
-        p = _make_standalone_policy()
+    def test_pprint_trigger(self, capsys):
+        """pprint() on PendingTrigger doesn't crash."""
+        p = _make_standalone_trigger()
         p.pprint()
         captured = capsys.readouterr()
-        assert "PendingPolicy" in captured.out
+        assert "PendingTrigger" in captured.out
         p.tract.close()
 
     def test_pprint_shows_status(self, capsys):

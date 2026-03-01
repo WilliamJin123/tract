@@ -169,12 +169,12 @@ class SessionError(TraceError):
     """Raised when session operations fail."""
 
 
-class PolicyExecutionError(TraceError):
-    """Raised when a policy action fails to execute."""
+class TriggerExecutionError(TraceError):
+    """Raised when a trigger action fails to execute."""
 
 
-class PolicyConfigError(TraceError):
-    """Raised when policy configuration is invalid."""
+class TriggerConfigError(TraceError):
+    """Raised when trigger configuration is invalid."""
 
 
 class OrchestratorError(TraceError):
@@ -193,3 +193,19 @@ class RetryExhaustedError(TraceError):
         super().__init__(
             f"All {attempts} retry attempts failed. Last diagnosis: {last_diagnosis}"
         )
+
+
+class TagNotRegisteredError(TraceError):
+    """Raised when an unregistered tag is used in strict mode."""
+
+    def __init__(self, tag_name: str) -> None:
+        self.tag_name = tag_name
+        super().__init__(
+            f"Tag '{tag_name}' is not registered. "
+            f"Use t.register_tag('{tag_name}', description) first, "
+            f"or use t.list_tags() to see available tags."
+        )
+
+
+class CurationError(TraceError):
+    """Raised when a curation operation fails during deploy()."""

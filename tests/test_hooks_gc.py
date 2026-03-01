@@ -133,9 +133,9 @@ class TestGCReview:
         try:
             pending = t.gc(
                 review=True, orphan_retention_days=0,
-                triggered_by="policy:auto_gc",
+                triggered_by="trigger:auto_gc",
             )
-            assert pending.triggered_by == "policy:auto_gc"
+            assert pending.triggered_by == "trigger:auto_gc"
         finally:
             t.close()
 

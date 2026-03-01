@@ -1,8 +1,8 @@
-"""Tests for policy hook integration (Phase 2).
+"""Tests for trigger hook integration (Phase 2).
 
-Tests the three-tier handler precedence for collaborative policy actions:
-user hook > policy.default_handler() > auto-approve.
-Also tests on_rejection/on_success callbacks and PendingPolicy lifecycle.
+Tests the three-tier handler precedence for collaborative trigger actions:
+user hook > trigger_obj.default_handler() > auto-approve.
+Also tests on_rejection/on_success callbacks and PendingTrigger lifecycle.
 """
 
 from __future__ import annotations
@@ -12,22 +12,22 @@ import pytest
 from tract import (
     InstructionContent,
     DialogueContent,
-    Policy,
-    PolicyAction,
-    PolicyEvaluator,
+    Trigger,
+    TriggerAction,
+    TriggerEvaluator,
     Tract,
 )
-from tract.hooks.policy import PendingPolicy
+from tract.hooks.trigger import PendingTrigger
 from tract.hooks.validation import HookRejection
 
 
 # ---------------------------------------------------------------------------
-# Test Policies
+# Test Triggers
 # ---------------------------------------------------------------------------
 
 
-class SimpleCollabPolicy(Policy):
-    """Collaborative policy that always fires."""
+class SimpleCollabTrigger(Trigger):
+    """Collaborative trigger that always fires."""
 
     def __init__(self, name: str = "simple-collab", action_type: str = "annotate"):
         self._name = name
@@ -41,14 +41,14 @@ class SimpleCollabPolicy(Policy):
         return self._name
 
     @property
-    def trigger(self) -> str:
+    def fires_on(self) -> str:
         return "compile"
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         head = tract.head
         if head is None:
             return None
-        return PolicyAction(
+        return TriggerAction(
             action_type=self._action_type,
             params={"target_hash": head, "priority": "pinned"},
             reason="Test collaborative action",
@@ -63,49 +63,49 @@ class SimpleCollabPolicy(Policy):
         self.success_count += 1
 
 
-class RejectingDefaultPolicy(Policy):
-    """Policy whose default_handler rejects."""
+class RejectingDefaultTrigger(Trigger):
+    """Trigger whose default_handler rejects."""
 
     @property
     def name(self) -> str:
         return "rejecting-default"
 
     @property
-    def trigger(self) -> str:
+    def fires_on(self) -> str:
         return "compile"
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         head = tract.head
         if head is None:
             return None
-        return PolicyAction(
+        return TriggerAction(
             action_type="annotate",
             params={"target_hash": head, "priority": "pinned"},
             reason="Should be rejected by default_handler",
             autonomy="collaborative",
         )
 
-    def default_handler(self, pending: PendingPolicy) -> None:
+    def default_handler(self, pending: PendingTrigger) -> None:
         """Override default_handler to reject."""
-        pending.reject("Rejected by policy default_handler")
+        pending.reject("Rejected by trigger default_handler")
 
 
-class AutoApproveDefaultPolicy(Policy):
-    """Policy whose default_handler approves (same as base ABC default)."""
+class AutoApproveDefaultTrigger(Trigger):
+    """Trigger whose default_handler approves (same as base ABC default)."""
 
     @property
     def name(self) -> str:
         return "auto-approve-default"
 
     @property
-    def trigger(self) -> str:
+    def fires_on(self) -> str:
         return "compile"
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         head = tract.head
         if head is None:
             return None
-        return PolicyAction(
+        return TriggerAction(
             action_type="annotate",
             params={"target_hash": head, "priority": "pinned"},
             reason="Should be approved by default_handler",
@@ -118,11 +118,11 @@ class AutoApproveDefaultPolicy(Policy):
 # ===========================================================================
 
 
-class TestPolicyThreeTier:
+class TestTriggerThreeTier:
     """Test user hook > default_handler > auto-approve precedence."""
 
     def test_user_hook_takes_precedence(self):
-        """User hook (t.on('policy', handler)) beats default_handler."""
+        """User hook (t.on('trigger', handler)) beats default_handler."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
@@ -132,27 +132,27 @@ class TestPolicyThreeTier:
                 hook_calls.append(pending)
                 pending.reject("User says no")
 
-            t.on("policy", user_hook)
+            t.on("trigger", user_hook)
 
-            policy = AutoApproveDefaultPolicy()
-            ev = PolicyEvaluator(t, policies=[policy])
+            trigger_obj = AutoApproveDefaultTrigger()
+            ev = TriggerEvaluator(t, triggers=[trigger_obj])
             results = ev.evaluate()
 
             # User hook should have fired, not default_handler
             assert len(hook_calls) == 1
-            assert isinstance(hook_calls[0], PendingPolicy)
+            assert isinstance(hook_calls[0], PendingTrigger)
             assert hook_calls[0].status == "rejected"
         finally:
             t.close()
 
     def test_default_handler_fires_when_no_user_hook(self):
-        """Policy.default_handler() fires when no user hook registered."""
+        """Trigger.default_handler() fires when no user hook registered."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
 
-            policy = RejectingDefaultPolicy()
-            ev = PolicyEvaluator(t, policies=[policy])
+            trigger_obj = RejectingDefaultTrigger()
+            ev = TriggerEvaluator(t, triggers=[trigger_obj])
             results = ev.evaluate()
 
             # default_handler should have rejected
@@ -167,8 +167,8 @@ class TestPolicyThreeTier:
         try:
             info = t.commit(InstructionContent(text="hello"))
 
-            policy = AutoApproveDefaultPolicy()
-            ev = PolicyEvaluator(t, policies=[policy])
+            trigger_obj = AutoApproveDefaultTrigger()
+            ev = TriggerEvaluator(t, triggers=[trigger_obj])
             results = ev.evaluate()
 
             # default_handler should have approved and executed
@@ -179,27 +179,27 @@ class TestPolicyThreeTier:
 
 
 # ===========================================================================
-# 2. PendingPolicy lifecycle
+# 2. PendingTrigger lifecycle
 # ===========================================================================
 
 
-class TestPendingPolicyLifecycle:
-    """Test PendingPolicy creation and methods."""
+class TestPendingTriggerLifecycle:
+    """Test PendingTrigger creation and methods."""
 
-    def test_pending_policy_creation(self):
-        """PendingPolicy is created with correct fields."""
+    def test_pending_trigger_creation(self):
+        """PendingTrigger is created with correct fields."""
         t = Tract.open(":memory:")
         try:
-            pending = PendingPolicy(
-                operation="policy",
+            pending = PendingTrigger(
+                operation="trigger",
                 tract=t,
-                policy_name="test-policy",
+                trigger_name="test-trigger",
                 action_type="annotate",
                 action_params={"target_hash": "abc", "priority": "pinned"},
                 reason="Test reason",
             )
-            assert pending.operation == "policy"
-            assert pending.policy_name == "test-policy"
+            assert pending.operation == "trigger"
+            assert pending.trigger_name == "test-trigger"
             assert pending.action_type == "annotate"
             assert pending.action_params["target_hash"] == "abc"
             assert pending.reason == "Test reason"
@@ -211,10 +211,10 @@ class TestPendingPolicyLifecycle:
         """modify_params() updates action_params."""
         t = Tract.open(":memory:")
         try:
-            pending = PendingPolicy(
-                operation="policy",
+            pending = PendingTrigger(
+                operation="trigger",
                 tract=t,
-                policy_name="test",
+                trigger_name="test",
                 action_type="annotate",
                 action_params={"target_hash": "abc"},
             )
@@ -229,10 +229,10 @@ class TestPendingPolicyLifecycle:
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
-            pending = PendingPolicy(
-                operation="policy",
+            pending = PendingTrigger(
+                operation="trigger",
                 tract=t,
-                policy_name="test",
+                trigger_name="test",
                 action_type="annotate",
                 action_params={"target_hash": info.commit_hash, "priority": "pinned"},
             )
@@ -244,14 +244,14 @@ class TestPendingPolicyLifecycle:
         finally:
             t.close()
 
-    def test_pending_policy_reject(self):
+    def test_pending_trigger_reject(self):
         """reject() sets status and reason."""
         t = Tract.open(":memory:")
         try:
-            pending = PendingPolicy(
-                operation="policy",
+            pending = PendingTrigger(
+                operation="trigger",
                 tract=t,
-                policy_name="test",
+                trigger_name="test",
                 action_type="annotate",
             )
             pending.reject("Not appropriate")
@@ -266,26 +266,26 @@ class TestPendingPolicyLifecycle:
 # ===========================================================================
 
 
-class TestPolicyFeedback:
-    """Test on_rejection and on_success policy callbacks."""
+class TestTriggerFeedback:
+    """Test on_rejection and on_success trigger callbacks."""
 
     def test_on_success_called_on_approve(self):
-        """Policy.on_success() called when action is approved and executed."""
+        """Trigger.on_success() called when action is approved and executed."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
 
-            policy = SimpleCollabPolicy()
-            ev = PolicyEvaluator(t, policies=[policy])
+            trigger_obj = SimpleCollabTrigger()
+            ev = TriggerEvaluator(t, triggers=[trigger_obj])
             ev.evaluate()
 
             # default_handler (from ABC) approves -> on_success called
-            assert policy.success_count >= 1
+            assert trigger_obj.success_count >= 1
         finally:
             t.close()
 
     def test_on_rejection_called_on_reject(self):
-        """Policy.on_rejection() called when action is rejected by hook."""
+        """Trigger.on_rejection() called when action is rejected by hook."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
@@ -293,71 +293,71 @@ class TestPolicyFeedback:
             def user_hook(pending):
                 pending.reject("User rejects")
 
-            t.on("policy", user_hook)
+            t.on("trigger", user_hook)
 
-            policy = SimpleCollabPolicy()
-            ev = PolicyEvaluator(t, policies=[policy])
+            trigger_obj = SimpleCollabTrigger()
+            ev = TriggerEvaluator(t, triggers=[trigger_obj])
             ev.evaluate()
 
-            assert policy.rejection_count == 1
-            assert policy.last_rejection is not None
-            assert policy.last_rejection.reason == "User rejects"
+            assert trigger_obj.rejection_count == 1
+            assert trigger_obj.last_rejection is not None
+            assert trigger_obj.last_rejection.reason == "User rejects"
         finally:
             t.close()
 
     def test_on_rejection_called_when_default_handler_rejects(self):
-        """Policy.on_rejection() called when default_handler rejects."""
+        """Trigger.on_rejection() called when default_handler rejects."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
 
-            policy = RejectingDefaultPolicy()
+            trigger_obj = RejectingDefaultTrigger()
             # Patch on_rejection to track
             rejections = []
-            original_on_rejection = policy.on_rejection
+            original_on_rejection = trigger_obj.on_rejection
             def tracking_on_rejection(rejection):
                 rejections.append(rejection)
-            policy.on_rejection = tracking_on_rejection
+            trigger_obj.on_rejection = tracking_on_rejection
 
-            ev = PolicyEvaluator(t, policies=[policy])
+            ev = TriggerEvaluator(t, triggers=[trigger_obj])
             ev.evaluate()
 
             assert len(rejections) == 1
-            assert "Rejected by policy default_handler" in rejections[0].reason
+            assert "Rejected by trigger default_handler" in rejections[0].reason
         finally:
             t.close()
 
 
 # ===========================================================================
-# 4. Policy hook with Tract.on()
+# 4. Trigger hook with Tract.on()
 # ===========================================================================
 
 
-class TestPolicyHookRegistration:
-    """Test t.on('policy', handler) registration and invocation."""
+class TestTriggerHookRegistration:
+    """Test t.on('trigger', handler) registration and invocation."""
 
-    def test_register_policy_hook(self):
-        """t.on('policy', handler) registers successfully."""
+    def test_register_trigger_hook(self):
+        """t.on('trigger', handler) registers successfully."""
         t = Tract.open(":memory:")
         try:
-            t.on("policy", lambda p: p.approve())
-            assert "policy" in t.hooks
+            t.on("trigger", lambda p: p.approve())
+            assert "trigger" in t.hooks
         finally:
             t.close()
 
-    def test_off_removes_policy_hook(self):
-        """t.off('policy') removes the hook."""
+    def test_off_removes_trigger_hook(self):
+        """t.off('trigger') removes the hook."""
         t = Tract.open(":memory:")
         try:
-            t.on("policy", lambda p: p.approve())
-            assert "policy" in t.hooks
-            t.off("policy")
-            assert "policy" not in t.hooks
+            t.on("trigger", lambda p: p.approve())
+            assert "trigger" in t.hooks
+            t.off("trigger")
+            assert "trigger" not in t.hooks
         finally:
             t.close()
 
-    def test_policy_hook_receives_pending_policy(self):
-        """Policy hook handler receives PendingPolicy instance."""
+    def test_trigger_hook_receives_pending_trigger(self):
+        """Trigger hook handler receives PendingTrigger instance."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
@@ -367,42 +367,42 @@ class TestPolicyHookRegistration:
                 received.append(pending)
                 pending.approve()
 
-            t.on("policy", handler)
+            t.on("trigger", handler)
 
-            policy = SimpleCollabPolicy()
-            ev = PolicyEvaluator(t, policies=[policy])
+            trigger_obj = SimpleCollabTrigger()
+            ev = TriggerEvaluator(t, triggers=[trigger_obj])
             ev.evaluate()
 
             assert len(received) == 1
-            assert isinstance(received[0], PendingPolicy)
-            assert received[0].policy_name == "simple-collab"
+            assert isinstance(received[0], PendingTrigger)
+            assert received[0].trigger_name == "simple-collab"
             assert received[0].action_type == "annotate"
         finally:
             t.close()
 
 
 # ===========================================================================
-# 5. Policy hook replaces on_proposal callback
+# 5. Trigger hook replaces on_proposal callback
 # ===========================================================================
 
 
-class TestPolicyHookReplacesOnProposal:
-    """Policy hook captures collaborative proposals (on_proposal removed)."""
+class TestTriggerHookReplacesOnProposal:
+    """Trigger hook captures collaborative proposals (on_proposal removed)."""
 
-    def test_policy_hook_captures_collaborative(self):
-        """Policy hook fires for collaborative proposals."""
+    def test_trigger_hook_captures_collaborative(self):
+        """Trigger hook fires for collaborative proposals."""
         t = Tract.open(":memory:")
         try:
             info = t.commit(InstructionContent(text="hello"))
 
             proposals = []
-            policy = SimpleCollabPolicy()
+            trigger_obj = SimpleCollabTrigger()
 
             # Use hook system (new API)
-            t.on("policy", lambda p: proposals.append(p))
+            t.on("trigger", lambda p: proposals.append(p))
 
-            ev = PolicyEvaluator(
-                t, policies=[policy],
+            ev = TriggerEvaluator(
+                t, triggers=[trigger_obj],
             )
             ev.evaluate()
 
@@ -414,59 +414,59 @@ class TestPolicyHookReplacesOnProposal:
 
 
 # ===========================================================================
-# 6. Policy ABC new methods
+# 6. Trigger ABC new methods
 # ===========================================================================
 
 
-class TestPolicyABCNewMethods:
-    """Test the three new optional methods on the Policy ABC."""
+class TestTriggerABCNewMethods:
+    """Test the three new optional methods on the Trigger ABC."""
 
     def test_default_handler_auto_approves(self):
-        """Base Policy.default_handler() auto-approves."""
+        """Base Trigger.default_handler() auto-approves."""
         t = Tract.open(":memory:")
         try:
-            pending = PendingPolicy(
-                operation="policy",
+            pending = PendingTrigger(
+                operation="trigger",
                 tract=t,
-                policy_name="test",
+                trigger_name="test",
                 action_type="annotate",
             )
             pending._execute_fn = lambda p: "executed"
 
-            # Use a policy with default ABC implementation
-            policy = AutoApproveDefaultPolicy()
-            policy.default_handler(pending)
+            # Use a trigger with default ABC implementation
+            trigger_obj = AutoApproveDefaultTrigger()
+            trigger_obj.default_handler(pending)
 
             assert pending.status == "approved"
         finally:
             t.close()
 
     def test_on_rejection_is_noop_by_default(self):
-        """Base Policy.on_rejection() is a no-op."""
+        """Base Trigger.on_rejection() is a no-op."""
         t = Tract.open(":memory:")
         try:
-            pending = PendingPolicy(
-                operation="policy",
+            pending = PendingTrigger(
+                operation="trigger",
                 tract=t,
-                policy_name="test",
+                trigger_name="test",
             )
             rejection = HookRejection(
                 reason="test",
                 pending=pending,
                 rejection_source="hook",
             )
-            policy = AutoApproveDefaultPolicy()
+            trigger_obj = AutoApproveDefaultTrigger()
             # Should not raise
-            policy.on_rejection(rejection)
+            trigger_obj.on_rejection(rejection)
         finally:
             t.close()
 
     def test_on_success_is_noop_by_default(self):
-        """Base Policy.on_success() is a no-op."""
+        """Base Trigger.on_success() is a no-op."""
         t = Tract.open(":memory:")
         try:
-            policy = AutoApproveDefaultPolicy()
+            trigger_obj = AutoApproveDefaultTrigger()
             # Should not raise
-            policy.on_success("some_result")
+            trigger_obj.on_success("some_result")
         finally:
             t.close()

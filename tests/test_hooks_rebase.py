@@ -146,9 +146,9 @@ class TestRebaseReview:
         t, _, _ = _make_divergent_tract()
         try:
             pending = t.rebase(
-                "main", review=True, triggered_by="policy:auto_rebase"
+                "main", review=True, triggered_by="trigger:auto_rebase"
             )
-            assert pending.triggered_by == "policy:auto_rebase"
+            assert pending.triggered_by == "trigger:auto_rebase"
         finally:
             t.close()
 

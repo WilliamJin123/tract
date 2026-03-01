@@ -5,7 +5,7 @@ assess context, send tools + assessment to LLM, execute tool calls,
 repeat until LLM stops or max_steps reached.
 
 The orchestrator no longer has its own proposal system. Hookable
-operations (compress, gc, merge, rebase, policy) are gated by
+operations (compress, gc, merge, rebase, trigger) are gated by
 Tract's unified hook system. Non-hookable tool calls are gated
 by the ``on_tool_call`` callback in collaborative mode.
 """
@@ -54,7 +54,7 @@ class Orchestrator:
     to an LLM, executes tool calls (respecting autonomy constraints),
     and repeats until the LLM stops calling tools or max_steps is reached.
 
-    Hookable operations (compress, gc, merge, rebase, policy) are gated
+    Hookable operations (compress, gc, merge, rebase, trigger) are gated
     automatically by Tract's hook system -- the orchestrator does not
     need to intercept them separately.
 
@@ -532,26 +532,26 @@ class Orchestrator:
         )
 
     def _effective_autonomy(
-        self, policy_autonomy: AutonomyLevel | None = None
+        self, trigger_autonomy: AutonomyLevel | None = None
     ) -> AutonomyLevel:
-        """Compute effective autonomy as min(ceiling, policy_autonomy).
+        """Compute effective autonomy as min(ceiling, trigger_autonomy).
 
         The hierarchy is MANUAL < COLLABORATIVE < AUTONOMOUS.
-        If policy_autonomy is None, returns the ceiling.
+        If trigger_autonomy is None, returns the ceiling.
 
         Args:
-            policy_autonomy: The autonomy level requested by policy.
+            trigger_autonomy: The autonomy level requested by trigger.
 
         Returns:
             The effective autonomy level (the lower of the two).
         """
         ceiling = self._config.autonomy_ceiling
-        if policy_autonomy is None:
+        if trigger_autonomy is None:
             return ceiling
 
         ceiling_order = _AUTONOMY_ORDER[ceiling]
-        policy_order = _AUTONOMY_ORDER[policy_autonomy]
-        min_order = min(ceiling_order, policy_order)
+        trigger_order = _AUTONOMY_ORDER[trigger_autonomy]
+        min_order = min(ceiling_order, trigger_order)
 
         # Return the level with the lower ordinal
         for level, order in _AUTONOMY_ORDER.items():

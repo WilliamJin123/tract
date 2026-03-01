@@ -1,4 +1,4 @@
-"""ArchivePolicy -- detect stale branches and propose archiving.
+"""ArchiveTrigger -- detect stale branches and propose archiving.
 
 Fires on ``compile`` trigger.  Checks whether the current branch has
 few commits and has been inactive for a configurable number of days.
@@ -13,15 +13,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from tract.models.policy import PolicyAction
-from tract.policy.protocols import Policy
+from tract.models.trigger import TriggerAction
+from tract.triggers.protocols import Trigger
 
 if TYPE_CHECKING:
-    from tract.hooks.policy import PendingPolicy
+    from tract.hooks.trigger import PendingTrigger
     from tract.tract import Tract
 
 
-class ArchivePolicy(Policy):
+class ArchiveTrigger(Trigger):
     """Detect stale branches and propose archiving to archive/ prefix.
 
     Constructor Args:
@@ -50,10 +50,10 @@ class ArchivePolicy(Policy):
         return 500
 
     @property
-    def trigger(self) -> str:
+    def fires_on(self) -> str:
         return "compile"
 
-    def evaluate(self, tract: Tract) -> PolicyAction | None:
+    def evaluate(self, tract: Tract) -> TriggerAction | None:
         """Check if current branch is stale and small enough to archive."""
         current_branch = tract.current_branch
         if current_branch is None or current_branch == "main":
@@ -79,7 +79,7 @@ class ArchivePolicy(Policy):
         # Branch qualifies if it has few commits AND is stale
         if len(commits) <= self._min_commits and age_days >= self._stale_days:
             archive_name = f"{self._archive_prefix}{current_branch}"
-            return PolicyAction(
+            return TriggerAction(
                 action_type="archive",
                 params={
                     "archive_name": archive_name,
@@ -99,7 +99,7 @@ class ArchivePolicy(Policy):
     # Hook integration
     # ------------------------------------------------------------------
 
-    def default_handler(self, pending: PendingPolicy) -> None:
+    def default_handler(self, pending: PendingTrigger) -> None:
         """Auto-approve archive proposals."""
         pending.approve()
 
@@ -108,7 +108,7 @@ class ArchivePolicy(Policy):
     # ------------------------------------------------------------------
 
     def to_config(self) -> dict:
-        """Serialize policy configuration to a dict."""
+        """Serialize trigger configuration to a dict."""
         return {
             "name": self.name,
             "stale_days": self._stale_days,
@@ -118,8 +118,8 @@ class ArchivePolicy(Policy):
         }
 
     @classmethod
-    def from_config(cls, config: dict) -> ArchivePolicy:
-        """Deserialize an ArchivePolicy from a config dict."""
+    def from_config(cls, config: dict) -> ArchiveTrigger:
+        """Deserialize an ArchiveTrigger from a config dict."""
         return cls(
             stale_days=config.get("stale_days", 7),
             min_commits=config.get("min_commits", 3),

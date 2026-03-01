@@ -1,7 +1,7 @@
 """Pre-built hook handlers for orchestrator-like review patterns.
 
-These demonstrate how to build orchestrator behavior from hooks + policies.
-Import and use with ``t.on("policy", handler)`` or ``t.on("compress", handler)``, etc.
+These demonstrate how to build orchestrator behavior from hooks + triggers.
+Import and use with ``t.on("trigger", handler)`` or ``t.on("compress", handler)``, etc.
 
 The handlers in this module work with any :class:`~tract.hooks.pending.Pending`
 subclass.  They call ``pending.approve()`` or ``pending.reject()`` directly,
@@ -43,7 +43,7 @@ def log_and_approve(pending: Pending, *, logger: logging.Logger | None = None) -
     pending.approve()
 
 
-def reject_all(pending: Pending, *, reason: str = "Rejected by policy") -> None:
+def reject_all(pending: Pending, *, reason: str = "Rejected by trigger") -> None:
     """Reject all pending operations."""
     pending.reject(reason)
 
@@ -91,7 +91,7 @@ def make_log_handler(logger: logging.Logger):
     return handler
 
 
-def make_reject_handler(reason: str = "Rejected by policy"):
+def make_reject_handler(reason: str = "Rejected by trigger"):
     """Create a reject_all handler with a specific reason."""
 
     def handler(pending: Pending) -> None:
