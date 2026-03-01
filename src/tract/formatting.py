@@ -466,6 +466,11 @@ def pprint_commit_info(
     body_parts.append(f"[bold]Tokens:[/bold]    {info.token_count}")
     body_parts.append(f"[bold]Created:[/bold]   {info.created_at}")
 
+    # Tags
+    tags = getattr(info, "tags", None)
+    if tags:
+        body_parts.append(f"[bold]Tags:[/bold]      {', '.join(tags)}")
+
     # Generation config
     if info.generation_config is not None:
         fields = info.generation_config.non_none_fields()
@@ -804,3 +809,62 @@ def pprint_merge_result(result: Any, *, file: Any = None) -> None:
             line.append(" -> ", style="dim")
             line.append(text)
             console.print(line)
+
+
+def pprint_log(entries: list[Any], *, file: Any = None) -> None:
+    """Pretty-print a list of CommitInfo entries as a log table.
+
+    Args:
+        entries: List of CommitInfo instances (e.g. from ``Tract.log()``).
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    table = Table(title="Log", show_lines=False)
+    table.add_column("Hash", style="bold", width=10)
+    table.add_column("Op", width=8)
+    table.add_column("Type", width=14)
+    table.add_column("Tokens", justify="right", width=8)
+    table.add_column("Tags", no_wrap=False)
+    table.add_column("Message", no_wrap=False)
+
+    for entry in entries:
+        short_hash = entry.commit_hash[:8]
+        op = entry.operation.value if hasattr(entry.operation, "value") else str(entry.operation)
+        ctype = entry.content_type or ""
+        tokens = str(entry.token_count) if entry.token_count else ""
+        tags = getattr(entry, "tags", None) or []
+        tags_str = Text(", ".join(tags)) if tags else Text("-", style="dim")
+        msg = (entry.message or "")[:60]
+        table.add_row(short_hash, op, ctype, tokens, tags_str, msg)
+
+    console.print(table)
+    console.print(Text(f"  {len(entries)} entries", style="dim"))
+
+
+def pprint_tag_registry(entries: list[dict], *, file: Any = None) -> None:
+    """Pretty-print a tag registry listing.
+
+    Args:
+        entries: List of dicts from ``Tract.list_tags()``, each with
+            ``name``, ``count``, ``auto_created``, and ``description`` keys.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    table = Table(title="Tag Registry", show_lines=False)
+    table.add_column("Tag", style="bold", no_wrap=True)
+    table.add_column("Count", justify="right", width=7)
+    table.add_column("Source", width=8)
+    table.add_column("Description", no_wrap=False)
+
+    for entry in entries:
+        name = entry.get("name", "")
+        count = entry.get("count", 0)
+        auto = entry.get("auto_created", False)
+        desc = entry.get("description", "") or ""
+        source = "auto" if auto else "custom"
+        source_text = Text(source, style="dim" if auto else "cyan")
+        table.add_row(name, str(count), source_text, desc)
+
+    console.print(table)

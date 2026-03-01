@@ -15,7 +15,7 @@ from tract.toolkit.models import ToolConfig, ToolProfile
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# All 22 tool names (must match definitions.py)
+# All 25 tool names (must match definitions.py)
 # ---------------------------------------------------------------------------
 _ALL_TOOL_NAMES = [
     "commit",
@@ -37,6 +37,9 @@ _ALL_TOOL_NAMES = [
     "tag",
     "untag",
     "query_by_tags",
+    "register_tag",
+    "get_tags",
+    "list_tags",
     "register_trigger",
     "unregister_trigger",
     "toggle_triggers",
@@ -122,6 +125,18 @@ SELF_PROFILE = ToolProfile(
         "query_by_tags": ToolConfig(
             enabled=True,
             description="Find your commits by tag names.",
+        ),
+        "register_tag": ToolConfig(
+            enabled=True,
+            description="Register a custom tag name so you can use it.",
+        ),
+        "get_tags": ToolConfig(
+            enabled=True,
+            description="See all tags on one of your commits.",
+        ),
+        "list_tags": ToolConfig(
+            enabled=True,
+            description="List all registered tags with usage counts.",
         ),
         "configure_model": ToolConfig(
             enabled=True,
@@ -260,6 +275,18 @@ SUPERVISOR_PROFILE = ToolProfile(
         "query_by_tags": ToolConfig(
             enabled=True,
             description="Find commits by tag names in the managed agent's context.",
+        ),
+        "register_tag": ToolConfig(
+            enabled=True,
+            description="Register a custom tag name in the managed agent's tag registry.",
+        ),
+        "get_tags": ToolConfig(
+            enabled=True,
+            description="See all tags on a commit in the managed agent's context.",
+        ),
+        "list_tags": ToolConfig(
+            enabled=True,
+            description="List all registered tags in the managed agent's context.",
         ),
         "register_trigger": ToolConfig(
             enabled=True,

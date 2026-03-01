@@ -91,9 +91,9 @@ class TestToolDefinitionFormats:
 class TestGetAllTools:
     """Test that get_all_tools returns correct definitions."""
 
-    def test_returns_22_definitions(self, tract):
+    def test_returns_25_definitions(self, tract):
         tools = get_all_tools(tract)
-        assert len(tools) == 22
+        assert len(tools) == 25
 
     def test_all_have_required_fields(self, tract):
         tools = get_all_tools(tract)
@@ -119,6 +119,7 @@ class TestGetAllTools:
             "compress", "branch", "switch", "merge", "reset", "checkout",
             "gc", "list_branches", "get_commit",
             "configure_model", "tag", "untag", "query_by_tags",
+            "register_tag", "get_tags", "list_tags",
             "register_trigger", "unregister_trigger", "toggle_triggers",
         }
         assert names == expected
@@ -139,21 +140,22 @@ class TestProfiles:
         expected = {
             "commit", "compile", "annotate", "status", "log",
             "compress", "branch", "switch", "reset",
-            "tag", "untag", "query_by_tags", "configure_model",
-            "toggle_triggers",
+            "tag", "untag", "query_by_tags",
+            "register_tag", "get_tags", "list_tags",
+            "configure_model", "toggle_triggers",
         }
         assert self_names == expected
-        assert len(self_tools) == 14
+        assert len(self_tools) == 17
 
     def test_supervisor_profile_all_tools(self, tract):
         tools = get_all_tools(tract)
         sup_tools = SUPERVISOR_PROFILE.filter_tools(tools)
-        assert len(sup_tools) == 22
+        assert len(sup_tools) == 25
 
     def test_full_profile_all_tools(self, tract):
         tools = get_all_tools(tract)
         full_tools = FULL_PROFILE.filter_tools(tools)
-        assert len(full_tools) == 22
+        assert len(full_tools) == 25
 
     def test_full_profile_default_descriptions(self, tract):
         """FULL_PROFILE should NOT override any descriptions."""
@@ -234,7 +236,7 @@ class TestToolExecutor:
     def test_available_tools(self, tract):
         executor = ToolExecutor(tract)
         names = executor.available_tools()
-        assert len(names) == 22
+        assert len(names) == 25
         assert "commit" in names
         assert "status" in names
 
@@ -331,8 +333,8 @@ class TestAsTools:
     def test_default_profile_openai(self, tract):
         tools = tract.as_tools()
         assert isinstance(tools, list)
-        # Default profile is "self" with 14 tools
-        assert len(tools) == 14
+        # Default profile is "self" with 17 tools
+        assert len(tools) == 17
         # OpenAI format
         for tool in tools:
             assert tool["type"] == "function"
@@ -340,11 +342,11 @@ class TestAsTools:
 
     def test_supervisor_profile(self, tract):
         tools = tract.as_tools(profile="supervisor")
-        assert len(tools) == 22
+        assert len(tools) == 25
 
     def test_full_profile(self, tract):
         tools = tract.as_tools(profile="full")
-        assert len(tools) == 22
+        assert len(tools) == 25
 
     def test_anthropic_format(self, tract):
         tools = tract.as_tools(format="anthropic")
@@ -533,7 +535,7 @@ class TestNewTools:
         assert "resumed" in result.output.lower()
 
     def test_new_tools_in_full_profile(self):
-        """FULL_PROFILE includes all 22 tools."""
+        """FULL_PROFILE includes all 25 tools."""
         assert "configure_model" in FULL_PROFILE.tool_configs
         assert "tag" in FULL_PROFILE.tool_configs
         assert "register_trigger" in FULL_PROFILE.tool_configs

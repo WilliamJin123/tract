@@ -30,7 +30,7 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
         tract: The Tract instance to bind tool handlers to.
 
     Returns:
-        List of 22+ ToolDefinition objects.
+        List of 25+ ToolDefinition objects.
     """
     tools = [
         # 1. commit
@@ -509,7 +509,65 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
             },
             handler=lambda tags, match="any": _handle_query_by_tags(tract, tags, match),
         ),
-        # 20. register_trigger
+        # 20. register_tag
+        ToolDefinition(
+            name="register_tag",
+            description=(
+                "Register a custom tag name in the tag registry. Required before "
+                "using the tag in strict mode (the default). Optionally provide a "
+                "description explaining what the tag means."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Tag name to register.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional description of what this tag means.",
+                    },
+                },
+                "required": ["name"],
+            },
+            handler=lambda name, description=None: _handle_register_tag(
+                tract, name, description
+            ),
+        ),
+        # 21. get_tags
+        ToolDefinition(
+            name="get_tags",
+            description=(
+                "Get all tags on a commit (both immutable auto-classified tags "
+                "and mutable annotation tags, merged and deduplicated)."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "commit_hash": {
+                        "type": "string",
+                        "description": "Hash of the commit to get tags for.",
+                    },
+                },
+                "required": ["commit_hash"],
+            },
+            handler=lambda commit_hash: _handle_get_tags(tract, commit_hash),
+        ),
+        # 22. list_tags
+        ToolDefinition(
+            name="list_tags",
+            description=(
+                "List all registered tags with descriptions and usage counts. "
+                "Shows both auto-created base tags and custom-registered tags."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {},
+            },
+            handler=lambda: _handle_list_tags(tract),
+        ),
+        # 23. register_trigger
         ToolDefinition(
             name="register_trigger",
             description=(
@@ -795,10 +853,13 @@ def _handle_get_commit(tract: Tract, commit_hash: str) -> str:
         return f"Commit {commit_hash} not found."
     meta = json.dumps(info.metadata) if info.metadata else "none"
     gen_cfg = json.dumps(info.generation_config.to_dict()) if info.generation_config else "none"
+    tags = tract.get_tags(info.commit_hash)
+    tags_str = ", ".join(tags) if tags else "none"
     return (
         f"Commit {info.commit_hash[:8]}: "
         f"type={info.content_type}, op={info.operation.value}, "
         f"tokens={info.token_count}, message={info.message or 'none'}, "
+        f"tags={tags_str}, "
         f"metadata={meta}, generation_config={gen_cfg}"
     )
 
@@ -830,6 +891,35 @@ def _handle_configure_model(
         if temperature is not None:
             parts.append(f"temperature={temperature}")
         return f"Set tract-wide default: {', '.join(parts)}"
+
+
+def _handle_register_tag(
+    tract: Tract, name: str, description: str | None
+) -> str:
+    tract.register_tag(name, description)
+    desc = f" ({description})" if description else ""
+    return f"Registered tag '{name}'{desc}"
+
+
+def _handle_get_tags(tract: Tract, commit_hash: str) -> str:
+    tags = tract.get_tags(commit_hash)
+    if not tags:
+        return f"No tags on {commit_hash[:8]}"
+    return f"Tags on {commit_hash[:8]}: {', '.join(tags)}"
+
+
+def _handle_list_tags(tract: Tract) -> str:
+    entries = tract.list_tags()
+    if not entries:
+        return "No tags registered."
+    lines = []
+    for entry in entries:
+        kind = "auto" if entry["auto_created"] else "custom"
+        desc = entry["description"] or ""
+        lines.append(
+            f"  {entry['name']:20s} count={entry['count']}  ({kind})  {desc}"
+        )
+    return f"Tags ({len(entries)} registered):\n" + "\n".join(lines)
 
 
 def _handle_tag(tract: Tract, commit_hash: str, tag: str) -> str:

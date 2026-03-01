@@ -7,6 +7,7 @@ descriptions, and query history by tag.  This cookbook covers all five facets.
 """
 
 from tract import Priority, Tract, TagNotRegisteredError
+from tract.formatting import pprint_log, pprint_tag_registry
 
 
 # =============================================================================
@@ -162,10 +163,7 @@ def part4_tag_registry():
 
     # List all tags -- shows base + custom
     print("  Registered tags (showing first 5):")
-    for entry in t.list_tags()[:5]:
-        auto = " (auto)" if entry["auto_created"] else " (custom)"
-        desc = entry["description"] or "(no description)"
-        print(f"    {entry['name']:20s} count={entry['count']}  {auto}  {desc}")
+    pprint_tag_registry(t.list_tags()[:5])
 
     t.close()
 
@@ -239,9 +237,7 @@ def part5_tag_queries():
     # --- log(tags=...) filters the commit log ---
     reasoning_log = t.log(tags=["reasoning"])
     print(f"\n  t.log(tags=['reasoning']):")
-    for entry in reasoning_log:
-        msg = (entry.message or "")[:50]
-        print(f"    {entry.commit_hash[:8]}  {msg}")
+    pprint_log(reasoning_log)
 
     # --- Tags + annotations work together ---
     print(f"\n  Combining tags with priority annotations:")
