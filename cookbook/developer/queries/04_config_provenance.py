@@ -178,48 +178,9 @@ def part2_interactive():
             print(f"    {c.commit_hash[:8]}: {', '.join(parts)}")
 
 
-# =============================================================================
-# Part 3 -- Agent: Queries Own Config Provenance
-# =============================================================================
-# Agents can audit which model produced each response, useful for
-# A/B testing provenance and debugging unexpected outputs.
-
-def part3_agent():
-    print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: QUERIES OWN CONFIG PROVENANCE")
-    print("=" * 60)
-    print()
-
-    from tract.toolkit import ToolExecutor
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a helpful assistant.")
-        executor = ToolExecutor(t)
-
-        # Make calls with different configs
-        t.chat("What is Python?", temperature=0.2)
-        t.chat("Write a poem about code.", temperature=0.9)
-
-        # Agent queries its own generation_config provenance
-        results = t.query_by_config("model", "=", MODEL_ID)
-        print(f"  {len(results)} commit(s) using model={MODEL_ID}:")
-        for c in results:
-            cfg = c.generation_config
-            print(f"    {c.commit_hash[:8]}  temp={cfg.temperature}")
-
-    # Note: Agents can audit which model produced each response.
-    # This is useful for A/B testing provenance and debugging
-    # unexpected outputs across different model configurations.
-
-
 def main():
     part1_config_provenance()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

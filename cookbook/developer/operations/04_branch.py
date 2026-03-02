@@ -1,15 +1,13 @@
 """Branch Lifecycle -- Create, Switch, List, Delete
 
-Three tiers of branch management -- manual API calls, interactive prompts,
-and agent-driven toolkit execution.
+Two tiers of branch management -- manual API calls and interactive prompts.
 
 PART 1 -- Manual           Direct branch/switch/list/delete calls
 PART 2 -- Interactive       click.confirm, click.prompt, human decides
-PART 3 -- LLM / Agent      ToolExecutor dispatches branch operations
 
 Demonstrates: branch(), switch(), list_branches(), current_branch,
               branch(switch=False), delete_branch(force=True),
-              click.confirm, click.prompt, ToolExecutor
+              click.confirm, click.prompt
 """
 
 import os
@@ -17,7 +15,7 @@ import os
 import click
 from dotenv import load_dotenv
 
-from tract import Tract, ToolExecutor
+from tract import Tract
 
 load_dotenv()
 
@@ -180,57 +178,12 @@ def part2_interactive():
 
 
 # =============================================================================
-# PART 3 -- LLM / Agent: ToolExecutor dispatches branch operations
-# =============================================================================
-
-def part3_agent():
-    print("=" * 60)
-    print("PART 3 -- Agent: ToolExecutor Branch Operations")
-    print("=" * 60)
-    print()
-    print("  An LLM agent uses ToolExecutor to manage branches")
-    print("  programmatically -- no human prompts needed.")
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a concise Python tutor.")
-        t.chat("What is a class?")
-
-        executor = ToolExecutor(t)
-
-        # Agent creates a branch
-        result = executor.execute("branch", {"name": "auto-research"})
-        print(f"\n  branch('auto-research'): {result}")
-
-        # Agent adds work on the new branch
-        t.chat("Explain inheritance in Python.")
-
-        # Agent lists branches
-        result = executor.execute("list_branches", {})
-        print(f"\n  list_branches(): {result}")
-
-        # Agent switches back to main
-        result = executor.execute("switch", {"branch": "main"})
-        print(f"\n  switch('main'): {result}")
-        print(f"  Current branch: {t.current_branch}")
-
-        # Agent cleans up
-        t.delete_branch("auto-research", force=True)
-        remaining = [b.name for b in t.list_branches()]
-        print(f"\n  After cleanup: {remaining}")
-
-
-# =============================================================================
 # main
 # =============================================================================
 
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

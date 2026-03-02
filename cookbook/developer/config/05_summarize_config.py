@@ -153,43 +153,8 @@ def part2_interactive():
                 print(f"    {entry.commit_hash[:8]} {entry.message}")
 
 
-# =============================================================================
-# Part 3 -- Agent: Observes Compression Config
-# =============================================================================
-# Agents observe compression config via status() and can influence
-# summarization behavior via the instructions= parameter on compress().
-
-def part3_agent():
-    print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: OBSERVES SUMMARIZE CONFIG")
-    print("=" * 60)
-    print()
-
-    from tract.toolkit import ToolExecutor
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-        auto_summarize=MESSAGE_MODEL_ID,
-    ) as t:
-        t.system("You are a helpful assistant.")
-        executor = ToolExecutor(t)
-
-        # Agent observes the summarization config via status
-        status = executor.execute("status", {})
-        print(f"  Agent sees auto_summarize config:\n{status}\n")
-
-        # Agents can influence compression content via instructions=
-        # but the summarization model choice is init-time config.
-        print("  Note: Agents observe compression config via status()")
-        print("  and can influence summary content via instructions=,")
-        print("  but the summarization model is set at Tract.open() time.")
-
-
 def main():
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

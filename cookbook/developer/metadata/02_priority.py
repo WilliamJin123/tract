@@ -1,31 +1,19 @@
 """Annotations — Pin, Skip, and Reset
 
-Control what the LLM sees without deleting history. Three tiers:
-manual API calls, interactive prompts, and agent-driven via triggers/toolkit.
+Control what the LLM sees without deleting history. Two tiers:
+manual API calls and interactive prompts.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
 PART 2 -- Interactive       review=True, click.edit/confirm, human decides
-PART 3 -- LLM / Agent      Orchestrator, triggers, hooks auto-manage
 
 Demonstrates: default PINNED on system(), annotate(NORMAL) to unpin,
               annotate(SKIP), annotate(NORMAL) to reset, compile()
-              reflects annotations, Priority enum values, click prompts,
-              PinTrigger, ToolExecutor
+              reflects annotations, Priority enum values, click prompts
 """
 
-import os
-
 import click
-from dotenv import load_dotenv
 
 from tract import Priority, Tract
-from tract.toolkit import ToolExecutor
-
-load_dotenv()
-
-TRACT_OPENAI_API_KEY = os.environ.get("TRACT_OPENAI_API_KEY", "")
-TRACT_OPENAI_BASE_URL = os.environ.get("TRACT_OPENAI_BASE_URL", "")
-MODEL_ID = "gpt-oss-120b"
 
 
 # =============================================================================
@@ -156,59 +144,14 @@ def part2_interactive():
 
 
 # =============================================================================
-# Part 3: Agent-Driven Priority  (PART 3 — LLM / Agent)
-# =============================================================================
-
-def part3_agent():
-    print("=" * 60)
-    print("Part 3: AGENT-DRIVEN PRIORITY  [Agent Tier]")
-    print("=" * 60)
-    print()
-    print("  PinTrigger auto-pins system prompts (instruction type).")
-    print("  ToolExecutor lets an agent annotate commits programmatically.")
-    print()
-
-    t = Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    )
-
-    sys_ci = t.system("You are a security auditor. Follow OWASP guidelines.")
-    t.user("Review the login endpoint.")
-    ast_ci = t.assistant(
-        "The login endpoint uses bcrypt for passwords but has no "
-        "rate limiting. I recommend adding a 5-attempt lockout."
-    )
-
-    # Agent uses ToolExecutor to annotate a commit as PINNED
-    executor = ToolExecutor(t)
-    result = executor.execute("annotate", {
-        "commit_hash": ast_ci.commit_hash,
-        "priority": "PINNED",
-    })
-    print(f"  executor.execute('annotate', PINNED) -> success={result.success}")
-    print(f"  The security finding is now PINNED (survives compression).")
-    print()
-
-    # Show compiled context
-    ctx = t.compile()
-    print(f"  Compiled: {ctx.commit_count} messages, {ctx.token_count} tokens")
-    print()
-
-    t.close()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
 def main():
     part1_annotations()
     part2_interactive()
-    part3_agent()
     print("=" * 60)
-    print("Done -- all 3 tiers of priority management demonstrated.")
+    print("Done -- both tiers of priority management demonstrated.")
     print("=" * 60)
 
 

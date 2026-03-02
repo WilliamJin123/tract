@@ -1,30 +1,19 @@
 """Offline Tool Management
 
-Three tiers of offline tool management: manual error handling and queries,
-interactive editing of tool results, and agent-driven compression.
+Two tiers of offline tool management: manual error handling and queries,
+and interactive editing of tool results.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
 PART 2 -- Interactive       review=True, click.edit/confirm, human decides
-PART 3 -- LLM / Agent      Orchestrator, triggers, hooks auto-manage
 
 Demonstrates: tool_result(is_error=True), drop_failed_tool_turns(),
               find_tool_turns(), find_tool_results(), tool_result(edit=),
-              pprint(), log(), click.confirm(), click.edit(), ToolExecutor
+              pprint(), log(), click.confirm(), click.edit()
 """
 
-import os
-
 import click
-from dotenv import load_dotenv
 
 from tract import Tract
-from tract.toolkit import ToolExecutor
-
-load_dotenv()
-
-TRACT_OPENAI_API_KEY = os.environ.get("TRACT_OPENAI_API_KEY", "")
-TRACT_OPENAI_BASE_URL = os.environ.get("TRACT_OPENAI_BASE_URL", "")
-MODEL_ID = "gpt-oss-120b"
 
 
 def part1_offline_management():
@@ -204,60 +193,14 @@ def part2_interactive_edit():
 
 
 # =============================================================================
-# Part 3: Agent-Driven Tool Compression  (PART 3 — LLM / Agent)
-# =============================================================================
-
-def part3_agent_compression():
-    print("=" * 60)
-    print("Part 3: AGENT-DRIVEN TOOL COMPRESSION  [Agent Tier]")
-    print("=" * 60)
-    print()
-    print("  ToolExecutor lets an agent compress tool results or manage")
-    print("  tool interactions programmatically.")
-    print()
-
-    t = Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    )
-
-    t.system("You are a deployment agent.")
-    t.user("Deploy to staging.")
-
-    t.assistant(
-        "Running health check...",
-        metadata={"tool_calls": [
-            {"id": "call_1", "name": "health_check", "arguments": {}},
-        ]},
-    )
-    t.tool_result("call_1", "health_check",
-                   "Server healthy. CPU: 23%, Memory: 45%, Disk: 67%.")
-
-    # Agent uses ToolExecutor to drop failed turns or manage tools
-    executor = ToolExecutor(t)
-    result = executor.execute("drop_failed_tool_turns", {})
-    print(f"  executor.execute('drop_failed_tool_turns') -> success={result.success}")
-    print(f"  result: {result.result}")
-    print()
-    print("  For LLM-driven compression of verbose tool results, use:")
-    print("    t.compress_tool_calls(hashes, target_tokens=100)")
-    print("  See 01_agentic_loop.py Part 3 for a full example.")
-    print()
-
-    t.close()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
 def main():
     part1_offline_management()
     part2_interactive_edit()
-    part3_agent_compression()
     print("=" * 60)
-    print("Done -- all 3 tiers of offline tool management demonstrated.")
+    print("Done -- both tiers of offline tool management demonstrated.")
     print("=" * 60)
 
 

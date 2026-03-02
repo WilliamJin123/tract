@@ -144,43 +144,9 @@ def part2_interactive():
         response.pprint()
 
 
-# =============================================================================
-# Part 3 -- Agent: Agent-Driven Operation Config
-# =============================================================================
-# Agents can observe but not modify operation configs at runtime --
-# these are set at Tract.open() time.
-
-def part3_agent():
-    print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: AGENT-DRIVEN OPERATION CONFIG")
-    print("=" * 60)
-    print()
-
-    from tract.toolkit import ToolExecutor
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        default_config=LLMConfig(model=MODEL_ID, temperature=0.5),
-    ) as t:
-        t.system("You are a helpful assistant.")
-        t.configure_operations(chat=LLMConfig(temperature=0.8))
-        executor = ToolExecutor(t)
-
-        # Agent observes operation configs via status
-        status = executor.execute("status", {})
-        print(f"  Agent sees operation configs via status():\n{status}\n")
-
-        # Agent cannot change operation configs at runtime -- by design.
-        # Operation configs are infrastructure, not agent decisions.
-        print("  Note: Agents can observe but not modify operation configs")
-        print("  at runtime. These are set at Tract.open() time.")
-
-
 def main():
     part1_defaults_and_operations()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

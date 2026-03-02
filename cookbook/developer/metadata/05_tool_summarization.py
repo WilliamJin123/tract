@@ -1,11 +1,11 @@
 """Context-Aware Auto-Summarization (Noisy Tools)
 
 Three tiers of tool result management: manual surgical edit, interactive
-review of pending summaries, and fully autonomous auto-summarization.
+review of pending summaries, and LLM-powered auto-summarization.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
 PART 2 -- Interactive       review=True, click.edit/confirm, human decides
-PART 3 -- LLM / Agent      Orchestrator, triggers, hooks auto-manage
+PART 3 -- Auto-Summarize    configure_tool_summarization(), LLM-driven
 
 Demonstrates: tool_result(edit=), configure_tool_summarization(),
               include_context=True, get_content(), pprint(), click.edit()
@@ -20,11 +20,10 @@ import click
 from dotenv import load_dotenv
 
 from tract import Tract
-from tract.protocols import ToolCall
 
 # Allow importing _helpers from the same directory when run as a script.
 sys.path.insert(0, str(Path(__file__).parent))
-from _helpers import TOOLS, execute_tool as _execute_tool, call_llm  # noqa: E402
+from _helpers import TOOLS, execute_tool as _execute_tool  # noqa: E402
 from _helpers import TRACT_OPENAI_API_KEY, TRACT_OPENAI_BASE_URL, MODEL_ID  # noqa: E402
 
 load_dotenv()
@@ -154,7 +153,7 @@ def part2_interactive_review():
 
 
 # =============================================================================
-# Part 3: Auto-Summarization  (PART 3 — LLM / Agent)
+# Part 3: Auto-Summarization  (PART 3 — LLM-Powered)
 # =============================================================================
 
 def part3_auto_summarization():
@@ -165,7 +164,7 @@ def part3_auto_summarization():
         return
 
     print("=" * 60)
-    print("Part 3: CONTEXT-AWARE AUTO-SUMMARIZATION  [Agent Tier]")
+    print("Part 3: CONTEXT-AWARE AUTO-SUMMARIZATION  [LLM-Powered]")
     print("=" * 60)
     print()
     print("  The user asks a specific question. Tools return intentionally")
@@ -262,7 +261,7 @@ def main():
     part2_interactive_review()
     part3_auto_summarization()
     print("=" * 60)
-    print("Done -- all 3 tiers of tool result management demonstrated.")
+    print("Done -- all 3 parts of tool result management demonstrated.")
     print("=" * 60)
 
 

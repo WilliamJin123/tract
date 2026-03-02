@@ -190,46 +190,9 @@ def part2_interactive():
             print("  Skipped -- no call made.")
 
 
-# =============================================================================
-# Part 3 -- Agent: Introspects Config Chain
-# =============================================================================
-# Agents see the fully-resolved config in status output. The 4-level chain
-# is transparent: the agent knows what model, temperature, etc. will be used
-# for each call without needing to know which level it came from.
-
-def part3_agent():
-    print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: INTROSPECTS CONFIG CHAIN")
-    print("=" * 60)
-    print()
-
-    from tract.toolkit import ToolExecutor
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        default_config=LLMConfig(model=MODEL_ID, temperature=0.5),
-    ) as t:
-        t.system("You are a helpful assistant.")
-        t.configure_operations(chat=LLMConfig(temperature=0.8))
-        executor = ToolExecutor(t)
-
-        # Agent introspects the resolved config via status
-        status = executor.execute("status", {})
-        print(f"  Resolved config visible to agent:\n{status}\n")
-
-        # The status output shows the effective config after all 4 levels
-        # resolve. The agent sees temperature=0.8 (from operation config)
-        # and model=gpt-oss-120b (from tract default) without needing to
-        # know the chain details.
-        print("  Note: The agent sees the effective resolved config.")
-        print("  It does not need to know which level each field came from.")
-
-
 def main():
     part4_resolution_chain()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

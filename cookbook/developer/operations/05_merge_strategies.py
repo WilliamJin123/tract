@@ -1,15 +1,15 @@
 """Merge Strategies
 
-Three tiers of merge usage — manual FF/clean/no_ff merges, interactive
-review with PendingMerge, and agent-driven auto-merge with hooks.
+Three tiers of merge usage -- manual FF/clean/no_ff merges, interactive
+review with PendingMerge, and automated hook-driven merge decisions.
 
 PART 1 -- Manual           Direct merge calls, no LLM, deterministic
 PART 2 -- Interactive       review=True, click.confirm, human decides
-PART 3 -- LLM / Agent      Hook auto-manages merge decisions
+PART 3 -- Automated         Hook auto-manages merge decisions
 
 Demonstrates: merge(), merge_type, MergeResult, no_ff, delete_branch=True,
               merge(review=True), PendingMerge, approve/reject,
-              t.on("merge", handler), ToolExecutor
+              t.on("merge", handler)
 """
 
 import os
@@ -17,7 +17,7 @@ import os
 import click
 from dotenv import load_dotenv
 
-from tract import Tract, ToolExecutor
+from tract import Tract
 from tract.hooks.merge import PendingMerge
 
 load_dotenv()
@@ -200,12 +200,12 @@ def part2_interactive():
 
 
 # =============================================================================
-# PART 3 -- LLM / Agent: Hook auto-manages merge decisions
+# PART 3 -- Automated: Hook auto-manages merge decisions
 # =============================================================================
 
-def part3_agent():
+def part3_automated():
     print("=" * 60)
-    print("PART 3 -- Agent: Auto-Merge via Hook")
+    print("PART 3 -- Automated: Auto-Merge via Hook")
     print("=" * 60)
     print()
     print("  Register a merge hook that auto-approves fast-forwards")
@@ -241,23 +241,6 @@ def part3_agent():
         print(f"  Result: {result.merge_type}")
         t.compile().pprint(style="compact")
 
-    # Toolkit approach
-    print(f"\n  --- ToolExecutor approach ---")
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a helpful assistant.")
-        t.chat("What is encapsulation?")
-        t.branch("toolkit-feature")
-        t.chat("Give an example of encapsulation.")
-        t.switch("main")
-
-        executor = ToolExecutor(t)
-        result = executor.execute("merge", {"branch": "toolkit-feature"})
-        print(f"  ToolExecutor merge result: {result}")
 
 
 # =============================================================================
@@ -267,7 +250,7 @@ def part3_agent():
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
+    part3_automated()
 
 
 if __name__ == "__main__":

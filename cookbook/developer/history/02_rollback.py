@@ -1,15 +1,14 @@
 """Rollback
 
-Three tiers of rollback -- manual reset, interactive numbered log
-with confirmation, and agent-driven toolkit execution.
+Two tiers of rollback -- manual reset, and interactive numbered log
+with confirmation.
 
 PART 1 -- Manual           reset() permanently rolls back, no interaction
 PART 2 -- Interactive       Numbered log, click.prompt, click.confirm, reset
-PART 3 -- LLM / Agent      ToolExecutor reset/checkout for agent rollback
 
 Demonstrates: reset(), compile(), compile(at_commit=), compile(at_time=),
               checkout(), status(), log(), show(),
-              click.prompt, click.confirm, ToolExecutor
+              click.prompt, click.confirm
 """
 
 import os
@@ -18,7 +17,7 @@ from datetime import datetime, timezone
 import click
 from dotenv import load_dotenv
 
-from tract import Tract, ToolExecutor
+from tract import Tract
 
 load_dotenv()
 
@@ -146,63 +145,12 @@ def part2_interactive():
 
 
 # =============================================================================
-# PART 3 -- LLM / Agent: ToolExecutor reset/checkout
-# =============================================================================
-
-def part3_agent():
-    print("=" * 60)
-    print("PART 3 -- Agent: ToolExecutor Rollback")
-    print("=" * 60)
-    print()
-    print("  An LLM agent uses ToolExecutor for rollback operations.")
-    print("  reset() is destructive; checkout() is non-destructive.")
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a concise geography tutor.")
-
-        r1 = t.chat("What are the 3 largest countries by area?")
-        early_hash = r1.commit_info.commit_hash
-
-        t.chat("Which has the highest population density?")
-        t.chat("What's the capital?")
-
-        executor = ToolExecutor(t)
-
-        # Non-destructive: checkout to inspect past state
-        print(f"\n  checkout({early_hash[:8]}) -- non-destructive inspection:")
-        result = executor.execute("checkout", {"target": early_hash})
-        print(f"  Result: {result}")
-
-        status = t.status()
-        print(f"  Detached: {status.is_detached}")
-
-        # Return to main
-        result = executor.execute("checkout", {"target": "main"})
-        print(f"\n  checkout('main'): {result}")
-
-        # Destructive: reset to roll back permanently
-        print(f"\n  reset({early_hash[:8]}) -- permanent rollback:")
-        result = executor.execute("reset", {"commit_hash": early_hash})
-        print(f"  Result: {result}")
-
-        print(f"\n  After reset:")
-        ctx = t.compile()
-        ctx.pprint(style="chat")
-        print(f"  {len(ctx.messages)} messages remaining.")
-
-
-# =============================================================================
 # main
 # =============================================================================
 
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

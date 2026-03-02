@@ -4,18 +4,18 @@ An agent that tags, pins, and checks status as part of its normal workflow.
 These are simple enough meta-decisions that the agent handles inline --
 no sidecar needed.
 
-Demonstrates: ToolExecutor for tag/annotate/status, inline agent decisions
+Demonstrates: ToolExecutor for tag/annotate/status, inline agent decisions,
+              Orchestrator for autonomous tagging and pinning
 """
 
-import json
 import os
 
 import click
-import httpx
 from dotenv import load_dotenv
 
 from tract import Tract, TractConfig, TokenBudgetConfig
 from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
+from tract.orchestrator import Orchestrator, OrchestratorConfig, AutonomyLevel
 
 load_dotenv()
 
@@ -160,11 +160,11 @@ def part2_interactive():
 
 
 # =====================================================================
-# PART 3 -- Agent: LLM autonomously tags and pins during conversation
+# PART 3 -- Agent: Orchestrator autonomously tags and pins
 # =====================================================================
 
 def part3_agent():
-    """Full agentic loop where the LLM tags and pins inline."""
+    """Orchestrator autonomously tags and pins conversation content."""
     if not TRACT_OPENAI_API_KEY:
         print(f"\n{'=' * 60}")
         print("PART 3: SKIPPED (no TRACT_OPENAI_API_KEY)")
@@ -172,25 +172,23 @@ def part3_agent():
         return
 
     print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: LLM Tags and Pins Inline")
+    print("PART 3 -- Agent: Orchestrator Tags and Pins Inline")
     print("=" * 60)
     print()
-    print("  The agent has tag, annotate, and status tools alongside")
-    print("  its normal conversation. It makes inline meta-decisions:")
-    print("  tagging important findings, pinning critical context,")
-    print("  and checking status mid-conversation.")
+    print("  The Orchestrator gets tag, annotate, and status tools.")
+    print("  It autonomously decides what to tag and pin based on")
+    print("  the conversation content.")
     print()
 
     # Profile with hint-driven descriptions for inline ops
     inline_ops_profile = ToolProfile(
         name="inline-ops",
         tool_configs={
-            "commit": ToolConfig(enabled=True),
             "status": ToolConfig(
                 enabled=True,
                 description=(
-                    "Check your context status. Call after 3+ exchanges "
-                    "to monitor token usage."
+                    "Check your context status. Call first to understand "
+                    "the current state of the conversation."
                 ),
             ),
             "tag": ToolConfig(
@@ -228,46 +226,50 @@ def part3_agent():
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        executor = ToolExecutor(t)
-        tools = t.as_tools(profile=inline_ops_profile)
-        t.set_tools(tools)
-
         t.system(
-            "You are a research assistant. Answer questions and use your "
-            "tools to organize the conversation: tag important findings, "
-            "pin critical context, and check status periodically."
+            "You are a research assistant tracking experiment results."
         )
 
-        # Seed a multi-turn conversation
-        exchanges = [
-            "What are the main approaches to neural architecture search?",
-            "Which approach is most compute-efficient for our 8-GPU budget?",
-            "Good analysis. Pin that recommendation -- we'll use it for planning.",
-        ]
+        # Seed a conversation with content worth tagging
+        t.user("What are the main approaches to neural architecture search?")
+        t.assistant(
+            "Three main approaches: (1) reinforcement learning-based NAS, "
+            "(2) differentiable NAS (DARTS), and (3) evolutionary NAS. "
+            "DARTS is fastest but prone to collapse; RL-NAS is robust but slow."
+        )
+        t.user("Which approach is most compute-efficient for our 8-GPU budget?")
+        t.assistant(
+            "For an 8-GPU budget, DARTS variants are the best fit. "
+            "Specifically, PC-DARTS or FairDARTS avoid the collapse issue "
+            "while completing search in under 1 GPU-day."
+        )
+        t.user("Good analysis. That recommendation is critical for planning.")
 
-        for user_msg in exchanges:
-            print(f"  User: {user_msg[:60]}...")
-            t.user(user_msg)
+        # Orchestrator autonomously tags and pins
+        orch_config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.AUTONOMOUS,
+            max_steps=20,
+            profile=inline_ops_profile,
+            task_context=(
+                "Review the conversation and organize it with tags and pins. "
+                "Register semantic tags (e.g. 'key_finding', 'decision', "
+                "'action_item'), then tag relevant commits. Pin any critical "
+                "recommendations that must survive compression."
+            ),
+        )
+        orch = Orchestrator(t, config=orch_config)
+        result = orch.run()
 
-            # Agentic loop: let the LLM respond and/or call tools
-            for turn in range(8):
-                response = t.generate()
-
-                if not response.tool_calls:
-                    print(f"  Assistant: {response.text[:100]}...")
-                    print()
-                    break
-
-                for tc in response.tool_calls:
-                    result = executor.execute(tc.name, tc.arguments)
-                    t.tool_result(tc.id, tc.name, str(result))
-                    args_short = str(tc.arguments)[:60]
-                    print(f"    [tool] {tc.name}({args_short})")
-                    print(f"           -> {result.output[:80]}")
+        print(f"  Orchestrator completed: {result.total_tool_calls} tool calls, "
+              f"state={result.state.value}")
+        for step in result.steps:
+            status = "OK" if step.success else "FAIL"
+            args_short = str(step.tool_call.arguments)[:60]
+            print(f"    [{status}] {step.tool_call.name}({args_short})")
 
         # Show what the agent organized
-        print(f"  {'=' * 50}")
-        print("  Tags applied by the agent:")
+        print(f"\n  {'=' * 50}")
+        print("  Tags applied by the orchestrator:")
         for entry in t.log():
             tags = t.get_tags(entry.commit_hash)
             if len(tags) > 1:  # More than just auto-classified

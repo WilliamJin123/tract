@@ -1,15 +1,15 @@
 """Rebase
 
 Three tiers of rebase usage -- manual rebase with result inspection,
-interactive review with PendingRebase, and agent-driven triggers/toolkit.
+interactive review with PendingRebase, and trigger-driven auto-rebase.
 
 PART 1 -- Manual           Direct rebase(), inspect RebaseResult
 PART 2 -- Interactive       rebase(review=True), PendingRebase, click.confirm
-PART 3 -- LLM / Agent      RebaseTrigger + ToolExecutor auto-rebase
+PART 3 -- Trigger-Driven    RebaseTrigger auto-rebase on divergence
 
 Demonstrates: rebase(), RebaseResult, replayed_commits, original_commits,
               new_head, rebase(review=True), PendingRebase, approve/reject,
-              RebaseTrigger, ToolExecutor
+              RebaseTrigger
 """
 
 import os
@@ -17,7 +17,7 @@ import os
 import click
 from dotenv import load_dotenv
 
-from tract import RebaseTrigger, Tract, ToolExecutor
+from tract import RebaseTrigger, Tract
 from tract.hooks.rebase import PendingRebase
 
 load_dotenv()
@@ -136,16 +136,15 @@ def part2_interactive():
 
 
 # =============================================================================
-# PART 3 -- LLM / Agent: RebaseTrigger + ToolExecutor auto-rebase
+# PART 3 -- Trigger-Driven: RebaseTrigger auto-rebase on divergence
 # =============================================================================
 
-def part3_agent():
+def part3_trigger_driven():
     print("=" * 60)
-    print("PART 3 -- Agent: Auto-Rebase via Trigger + Toolkit")
+    print("PART 3 -- Trigger-Driven: Auto-Rebase via RebaseTrigger")
     print("=" * 60)
     print()
     print("  RebaseTrigger fires when branch diverges beyond a threshold.")
-    print("  ToolExecutor can also rebase on demand.")
 
     # --- Trigger approach ---
     print(f"\n  --- RebaseTrigger approach ---")
@@ -178,22 +177,6 @@ def part3_agent():
             print(f"  Trigger fired: {action.action_type}")
             print(f"  Reason: {action.reason}")
 
-    # --- ToolExecutor approach ---
-    print(f"\n  --- ToolExecutor approach ---")
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        _build_diverged_branches(t)
-
-        executor = ToolExecutor(t)
-        result = executor.execute("rebase", {"target": "main"})
-        print(f"  ToolExecutor rebase result: {result}")
-
-        print(f"\n  AFTER REBASE:")
-        t.compile().pprint(style="compact")
 
 
 # =============================================================================
@@ -203,7 +186,7 @@ def part3_agent():
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
+    part3_trigger_driven()
 
 
 if __name__ == "__main__":

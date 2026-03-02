@@ -1,11 +1,11 @@
 """LLM Integration
 
 Three tiers: manual reasoning commits, interactive approval of generated
-reasoning, and fully autonomous LLM reasoning extraction.
+reasoning, and LLM-powered reasoning extraction via generate().
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
 PART 2 -- Interactive       review=True, click.edit/confirm, human decides
-PART 3 -- LLM / Agent      Orchestrator, triggers, hooks auto-manage
+PART 3 -- LLM-Powered       generate() with reasoning extraction
 
 Demonstrates: t.reasoning() manual, generate() with reasoning,
               ChatResponse.reasoning, ChatResponse.reasoning_commit,
@@ -118,7 +118,7 @@ def part2_interactive():
 
 
 # =============================================================================
-# Part 3: Autonomous LLM Reasoning  (PART 3 — LLM / Agent)
+# Part 3: LLM Reasoning via generate()
 # =============================================================================
 
 def part3_llm_integration():
@@ -129,7 +129,7 @@ def part3_llm_integration():
         return
 
     print(f"\n{'=' * 60}")
-    print("Part 3: AUTONOMOUS LLM REASONING  [Agent Tier]")
+    print("Part 3: LLM REASONING VIA GENERATE()  [LLM-Powered]")
     print("=" * 60)
     print()
 
@@ -214,7 +214,7 @@ def main():
     part2_interactive()
     part3_llm_integration()
     print("=" * 60)
-    print("Done -- all 3 tiers of LLM reasoning integration demonstrated.")
+    print("Done -- all 3 parts of LLM reasoning integration demonstrated.")
     print("=" * 60)
 
 

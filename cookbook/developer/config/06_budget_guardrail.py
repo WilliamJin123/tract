@@ -145,14 +145,14 @@ def part2_interactive():
 
 
 # =============================================================================
-# Part 3: Agent Auto-Manages Budget via Triggers
+# Part 3: Automated Budget Management via Triggers
 # =============================================================================
 # CompressTrigger auto-compresses when budget fills past threshold.
-# The agent's chat loop runs without manual intervention.
+# The chat loop runs without manual intervention.
 
-def part3_agent():
+def part3_automated():
     print(f"\n{'=' * 60}")
-    print("Part 3: AGENT AUTO-MANAGES BUDGET VIA TRIGGERS")
+    print("Part 3: AUTOMATED BUDGET MANAGEMENT VIA TRIGGERS")
     print("=" * 60)
     print()
 
@@ -201,7 +201,7 @@ def part3_agent():
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
+    part3_automated()
 
 
 if __name__ == "__main__":

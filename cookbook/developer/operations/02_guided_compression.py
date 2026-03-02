@@ -1,10 +1,9 @@
 """Guided compression with priorities and retention guarantees.
 
-Three ways to ensure critical facts survive compression:
+Two ways to ensure critical facts survive compression:
 
   PART 1 -- Manual:      annotate(IMPORTANT), compress(content=..., preserve=[h1,h2])
   PART 2 -- Interactive:  compress(review=True), inspect retain_match, click.confirm
-  PART 3 -- LLM / Agent:  compress(target_tokens=300, instructions=..., retain_match=[...], max_retries=5)
 """
 
 import os
@@ -126,85 +125,9 @@ def part2_interactive():
             print("  Rejected. Original context preserved.")
 
 
-def part3_agent():
-    print("=" * 60)
-    print("PART 3 -- LLM / Agent: retain_match= with auto-retry")
-    print("=" * 60)
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-
-        t.system("You are a contract review assistant. Be concise and precise.")
-
-        contract_text = CONTRACT_PATH.read_text(encoding="utf-8")
-        contract_msg = t.user(
-            f"Please review this contract:\n\n{contract_text}",
-            message="Full contract loaded for review",
-        )
-
-        t.chat("What are the most important financial terms?")
-        t.chat(
-            "What are the biggest risks for the client? "
-            "Focus on penalties, termination costs, and liability caps."
-        )
-
-        # Mark debug noise as SKIP
-        noise = t.user("[debug] trace_id=x9f2-k3m1 | latency=342ms | cache=miss")
-        t.annotate(noise.commit_hash, Priority.SKIP)
-
-        # Annotate with regex retention patterns and retry enforcement
-        t.annotate(
-            contract_msg.commit_hash,
-            Priority.IMPORTANT,
-            retain="Preserve all financial terms and dates",
-            retain_match=[
-                r"\$2[,.]?847[,.]?000",
-                r"[Nn]et[\s\-]*45",
-                r"1\.5\s*%",
-                r"3\.5\s*%",
-                r"[Jj]une\s*15.*2026",
-                r"99\.95\s*%",
-            ],
-            retain_match_mode="regex",
-        )
-
-        print(f"\n  Annotated {contract_msg.commit_hash[:8]} with 6 regex retention patterns")
-
-        ctx_before = t.compile()
-        print(f"  Before: {ctx_before.token_count} tokens, {len(ctx_before.messages)} messages")
-
-        # LLM compresses with instructions + max_retries for retention enforcement
-        result = t.compress(
-            target_tokens=300,
-            instructions="Preserve all financial terms and dates",
-            max_retries=5,
-        )
-
-        print(f"\n  CompressResult:")
-        print(f"    original_tokens:   {result.original_tokens}")
-        print(f"    compressed_tokens: {result.compressed_tokens}")
-        print(f"    compression_ratio: {result.compression_ratio:.1%}")
-
-        print("\n  AFTER compression:\n")
-        ctx_after = t.compile()
-        ctx_after.pprint(style="table")
-
-        # Verify key terms survived
-        print("\n  Verification: asking LLM about key facts post-compression...\n")
-        verify = t.chat(
-            "Quick: what's the total contract value, payment terms, "
-            "late penalty rate, and go-live date?"
-        )
-        verify.pprint()
-
-
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

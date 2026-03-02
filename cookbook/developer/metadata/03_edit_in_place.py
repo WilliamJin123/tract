@@ -1,11 +1,10 @@
 """Edit in Place
 
-Three tiers of editing: manual edit with chat verification, interactive
-editing via $EDITOR, and a note on agent-driven edits.
+Two tiers of editing: manual edit with chat verification and interactive
+editing via $EDITOR.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
 PART 2 -- Interactive       review=True, click.edit/confirm, human decides
-PART 3 -- LLM / Agent      Orchestrator, triggers, hooks auto-manage
 
 Demonstrates: system(edit=hash), annotate(SKIP) for stale responses,
               chat() before/after edit, compile() serves corrected
@@ -145,34 +144,14 @@ def part2_interactive_edit():
 
 
 # =============================================================================
-# Part 3: Agent-Driven Edits  (PART 3 — LLM / Agent)
-# =============================================================================
-
-def part3_agent_note():
-    print("=" * 60)
-    print("Part 3: AGENT-DRIVEN EDITS  [Agent Tier — Note]")
-    print("=" * 60)
-    print()
-    print("  Editing is inherently a manual or interactive operation —")
-    print("  an agent needs human judgment to know *what* to change.")
-    print()
-    print("  For agent-driven edits via the toolkit, see:")
-    print("    orchestrator/01_toolkit.py")
-    print("  where agents can execute edit operations using ToolExecutor:")
-    print("    executor.execute('commit', {'content': new_text, 'edit': old_hash})")
-    print()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
 def main():
     part1_edit_in_place()
     part2_interactive_edit()
-    part3_agent_note()
     print("=" * 60)
-    print("Done -- all 3 tiers of edit-in-place demonstrated.")
+    print("Done -- both tiers of edit-in-place demonstrated.")
     print("=" * 60)
 
 

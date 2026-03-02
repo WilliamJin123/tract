@@ -1,10 +1,10 @@
-"""Agent-driven compression: toolkit, hooks, and orchestrator automation.
+"""Autonomous compression: toolkit, hooks, and trigger-driven automation.
 
-Three ways to automate compression in agent pipelines:
+Three ways to automate compression in pipelines:
 
   PART 1 -- Manual:      ToolExecutor(t).execute("compress", {...}) direct tool call
   PART 2 -- Interactive:  t.on("compress", handler) with pending.pprint() + click.confirm
-  PART 3 -- LLM / Agent:  CompressTrigger(threshold=0.7) + budget auto-manages compression
+  PART 3 -- Trigger-Driven:  CompressTrigger(threshold=0.7) + budget auto-manages compression
 """
 
 import os
@@ -105,9 +105,9 @@ def part2_interactive():
         t.compile().pprint(style="compact")
 
 
-def part3_agent():
+def part3_trigger_driven():
     print("=" * 60)
-    print("PART 3 -- LLM / Agent: CompressTrigger auto-manages budget")
+    print("PART 3 -- Trigger-Driven: CompressTrigger auto-manages budget")
     print("=" * 60)
 
     # Open with a token budget so the trigger has a threshold to watch
@@ -152,7 +152,7 @@ def part3_agent():
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
+    part3_trigger_driven()
 
 
 if __name__ == "__main__":

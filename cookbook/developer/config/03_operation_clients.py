@@ -193,43 +193,9 @@ def part2_interactive():
         print("\n  Clients closed by caller.")
 
 
-# =============================================================================
-# Part 3b -- Agent: Perspective on Client Routing
-# =============================================================================
-# Client routing is init-time configuration. Agents observe which client
-# they're using via status() but cannot switch clients at runtime. This is
-# by design -- client selection is an infrastructure concern, not an agent
-# concern.
-
-def part3b_agent_client_perspective():
-    print(f"\n{'=' * 60}")
-    print("PART 3b -- Agent: PERSPECTIVE ON CLIENT ROUTING")
-    print("=" * 60)
-    print()
-
-    from tract.toolkit import ToolExecutor
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a helpful assistant.")
-        executor = ToolExecutor(t)
-
-        status = executor.execute("status", {})
-        print(f"  Agent sees its client routing via status():\n{status}\n")
-
-        # Note: Client routing is init-time configuration. Agents observe
-        # which client they're using via status() but cannot switch clients
-        # at runtime. This is by design -- client selection is an
-        # infrastructure concern, not an agent concern.
-
-
 def main():
     part3_per_operation_clients()
     part2_interactive()
-    part3b_agent_client_perspective()
 
 
 if __name__ == "__main__":

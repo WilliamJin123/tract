@@ -1,11 +1,11 @@
 """Retention Policies
 
 Three tiers of GC retention -- manual conservative/aggressive policies,
-interactive review with PendingGC, and agent-driven GCTrigger automation.
+interactive review with PendingGC, and automated GCTrigger with hooks.
 
 PART 1 -- Manual           gc() with archive_retention_days, no interaction
 PART 2 -- Interactive       gc(review=True), PendingGC, exclude(), click.confirm
-PART 3 -- LLM / Agent      GCTrigger with auto-approve hook
+PART 3 -- Automated         GCTrigger with auto-approve hook
 
 Demonstrates: gc(), archive_retention_days, compress(),
               gc(review=True), PendingGC, exclude(), approve(),
@@ -126,12 +126,12 @@ def part2_interactive():
 
 
 # =============================================================================
-# PART 3 -- LLM / Agent: GCTrigger with auto-approve hook
+# PART 3 -- Automated: GCTrigger with auto-approve hook
 # =============================================================================
 
-def part3_agent():
+def part3_automated():
     print("=" * 60)
-    print("PART 3 -- Agent: Auto-GC via Trigger + Hook")
+    print("PART 3 -- Automated: Auto-GC via Trigger + Hook")
     print("=" * 60)
     print()
     print("  GCTrigger fires when dead commits exceed a threshold.")
@@ -187,7 +187,7 @@ def part3_agent():
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
+    part3_automated()
 
 
 if __name__ == "__main__":

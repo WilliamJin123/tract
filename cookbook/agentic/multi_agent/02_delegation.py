@@ -2,7 +2,9 @@
 
   PART 1 -- Manual:      Branch, child works, compress(content=...), parent.merge()
   PART 2 -- Interactive:  Review child work, click.confirm("Accept findings?"), merge
-  PART 3 -- LLM / Agent:  Full session.deploy + compress + session.collapse
+
+Session management (deploy, collapse, merge) is a developer-side concern --
+the Orchestrator does not handle it. This file is a 2-part tutorial.
 """
 
 import click
@@ -115,67 +117,9 @@ def part2_interactive():
     session.close()
 
 
-# =====================================================================
-# PART 3 -- LLM / Agent: deploy + compress + collapse
-# =====================================================================
-
-def part3_agent():
-    print("\n" + "=" * 60)
-    print("PART 3 -- LLM / Agent: Deploy-Compress-Collapse")
-    print("=" * 60)
-
-    session = Session.open()
-    parent = session.create_tract(display_name="orchestrator")
-
-    parent.system("You are a systems design coordinator.")
-    parent.user("Design a message queue architecture.")
-
-    # Deploy child for focused research
-    child = session.deploy(
-        parent,
-        purpose="evaluate message queue options",
-        branch_name="mq-research",
-    )
-    child._seed_base_tags()
-
-    # Child does thorough research
-    child.user("Compare RabbitMQ, Kafka, and Redis Streams.")
-    child.assistant("RabbitMQ: AMQP-based, great for task queues. "
-                    "Kafka: distributed log, high throughput, exactly-once. "
-                    "Redis Streams: lightweight, good for simple pub/sub.")
-    child.user("What about ordering guarantees?")
-    child.assistant("Kafka guarantees per-partition ordering. RabbitMQ "
-                    "guarantees per-queue FIFO. Redis Streams preserve "
-                    "insertion order within a stream.")
-    child.user("Recommendation for our event-driven architecture?")
-    child.assistant("Kafka for event sourcing (ordering + replay). "
-                    "RabbitMQ for task distribution. Redis Streams for "
-                    "lightweight internal pub/sub between services.")
-
-    # Collapse entire child history into one parent commit
-    collapse_result = session.collapse(
-        child, into=parent,
-        content="Message queue evaluation: Kafka for event sourcing (ordered, "
-                "replayable), RabbitMQ for task distribution (FIFO), Redis "
-                "Streams for lightweight internal pub/sub. Recommendation: "
-                "Kafka as primary event bus, RabbitMQ for worker queues.",
-        auto_commit=True,
-    )
-
-    print(f"\n  Collapse: {collapse_result.summary_tokens} summary tokens")
-    print(f"  Source: {collapse_result.source_tokens} tokens compressed")
-    print(f"  Parent commits: {len(parent.log())}")
-
-    ctx = parent.compile()
-    print(f"  Parent context: {len(ctx.messages)} messages, {ctx.token_count} tokens")
-
-    session.close()
-
-
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

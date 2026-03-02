@@ -2,22 +2,14 @@
 
   PART 1 -- Manual:      session.spawn(), parent.children(), child.parent()
   PART 2 -- Interactive:  click.confirm("Spawn child?"), click.confirm("Import findings?")
-  PART 3 -- LLM / Agent:  Orchestrator-driven child management via toolkit
+
+Session management (spawn, deploy, collapse) is a developer-side concern --
+the Orchestrator does not handle it. This file is a 2-part tutorial.
 """
 
-import os
-
 import click
-from dotenv import load_dotenv
 
-from tract import Session, Tract
-from tract.toolkit import ToolExecutor
-
-load_dotenv()
-
-TRACT_OPENAI_API_KEY = os.environ.get("TRACT_OPENAI_API_KEY", "")
-TRACT_OPENAI_BASE_URL = os.environ.get("TRACT_OPENAI_BASE_URL", "")
-MODEL_ID = "gpt-oss-120b"
+from tract import Session
 
 
 # =====================================================================
@@ -118,57 +110,9 @@ def part2_interactive():
     session.close()
 
 
-# =====================================================================
-# PART 3 -- LLM / Agent: orchestrator-driven child management
-# =====================================================================
-
-def part3_agent():
-    print("\n" + "=" * 60)
-    print("PART 3 -- LLM / Agent: Toolkit-Driven Child Management")
-    print("=" * 60)
-
-    session = Session.open()
-    parent = session.create_tract(display_name="agent-coordinator")
-
-    parent.system("You are a multi-agent research coordinator.")
-    parent.user("Investigate neutron star mergers and their products.")
-    parent.assistant("I will spawn a sub-agent for detailed analysis.")
-
-    # Use toolkit to manage child operations
-    executor = ToolExecutor(parent)
-    print(f"\n  Available tools: {executor.available_tools()[:8]}...")
-
-    # Execute operations via toolkit
-    result = executor.execute("status", {})
-    print(f"\n  Status: {result.output[:80]}...")
-
-    result = executor.execute("log", {"limit": 3})
-    print(f"  Log: {result.output[:80]}...")
-
-    # Spawn child and work through session API
-    child = session.spawn(parent, purpose="neutron star merger analysis")
-    child.user("What heavy elements are produced in neutron star mergers?")
-    child.assistant("Neutron star mergers produce r-process elements: gold, "
-                    "platinum, uranium, and other heavy nuclei via rapid "
-                    "neutron capture.")
-
-    # Collapse with toolkit-style workflow
-    collapse_result = session.collapse(
-        child, into=parent,
-        content="Neutron star mergers: primary site of r-process nucleosynthesis, "
-                "producing gold, platinum, and uranium.",
-        auto_commit=True,
-    )
-    print(f"\n  Collapse: {collapse_result.summary_tokens} tokens")
-    print(f"  Parent final commits: {len(parent.log())}")
-
-    session.close()
-
-
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

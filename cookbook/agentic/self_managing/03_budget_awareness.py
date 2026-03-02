@@ -4,18 +4,18 @@ An agent that reads its own token budget via status() and adapts: compressing
 when running hot, continuing normally when under budget. The agent makes this
 decision inline without a separate sidecar process.
 
-Demonstrates: status() via tools, budget-driven compress decisions, self-adaptation
+Demonstrates: status() via tools, budget-driven compress decisions,
+              Orchestrator for autonomous budget-aware compression
 """
 
-import json
 import os
 
 import click
-import httpx
 from dotenv import load_dotenv
 
 from tract import Tract, TractConfig, TokenBudgetConfig
 from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
+from tract.orchestrator import Orchestrator, OrchestratorConfig, AutonomyLevel
 
 load_dotenv()
 
@@ -126,11 +126,11 @@ def part2_interactive():
 
 
 # =====================================================================
-# PART 3 -- Agent: Self-compresses when budget exceeds threshold
+# PART 3 -- Agent: Orchestrator self-compresses when budget is high
 # =====================================================================
 
 def part3_agent():
-    """Full agentic loop with budget-aware self-compression."""
+    """Orchestrator with budget-aware compression profile."""
     if not TRACT_OPENAI_API_KEY:
         print(f"\n{'=' * 60}")
         print("PART 3: SKIPPED (no TRACT_OPENAI_API_KEY)")
@@ -138,33 +138,30 @@ def part3_agent():
         return
 
     print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: Budget-Aware Self-Compression")
+    print("PART 3 -- Agent: Orchestrator Budget-Aware Compression")
     print("=" * 60)
     print()
-    print("  The agent checks status after each turn and self-compresses")
-    print("  when budget exceeds 70%. No external sidecar or trigger --")
-    print("  the agent reads the budget via tools and decides inline.")
+    print("  The Orchestrator checks status, pins critical content,")
+    print("  and compresses when budget is high. It decides what to")
+    print("  do based on the context assessment -- no manual loop.")
     print()
 
     # Profile with budget-aware hints
     budget_profile = ToolProfile(
         name="budget-aware",
         tool_configs={
-            "commit": ToolConfig(enabled=True),
             "status": ToolConfig(
                 enabled=True,
                 description=(
-                    "Check your token budget. Call this AFTER each response. "
-                    "If budget usage exceeds 70%, you MUST compress before "
-                    "continuing. Report the budget percentage to the user."
+                    "Check the token budget. If usage exceeds 70%, "
+                    "compression is needed."
                 ),
             ),
             "compress": ToolConfig(
                 enabled=True,
                 description=(
-                    "Compress your context to free up token budget. Call this "
-                    "when status() shows budget over 70%. Provide a concise "
-                    "summary of the conversation so far as the content."
+                    "Compress context to free up token budget. Provide a "
+                    "concise summary of the conversation so far as content."
                 ),
             ),
             "log": ToolConfig(
@@ -190,69 +187,60 @@ def part3_agent():
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        executor = ToolExecutor(t)
-        tools = t.as_tools(profile=budget_profile)
-        t.set_tools(tools)
-
         t.system(
-            "You are a research assistant. Answer questions and manage "
-            "your own context budget. Check status after each response "
-            "and compress if needed."
+            "You are a research assistant helping with ML questions."
         )
 
-        # Run a multi-turn conversation that will push budget limits
-        questions = [
-            "Explain the three main types of machine learning.",
-            "What are the key differences between CNNs and transformers?",
-            "How does attention work in transformers? Be detailed.",
-            "Compare BERT and GPT architectures.",
-            "What are the latest advances in efficient transformers?",
+        # Fill context with enough content to push budget limits
+        exchanges = [
+            ("Explain the three main types of machine learning.",
+             "The three types are supervised, unsupervised, and reinforcement learning."),
+            ("What are the key differences between CNNs and transformers?",
+             "CNNs use local convolutions; transformers use global self-attention."),
+            ("How does attention work in transformers?",
+             "Attention computes query-key-value dot products to weight token relevance."),
+            ("Compare BERT and GPT architectures.",
+             "BERT is bidirectional encoder; GPT is autoregressive decoder."),
         ]
+        for q, a in exchanges:
+            t.user(q)
+            t.assistant(a)
 
-        compressions = 0
-        for q_idx, question in enumerate(questions):
-            print(f"  [{q_idx + 1}/{len(questions)}] User: {question[:50]}...")
-            t.user(question)
+        status_before = t.status()
+        budget_max = status_before.token_budget_max or 1
+        fill_pct = status_before.token_count / budget_max * 100
+        print(f"  Before: {status_before.token_count}/{budget_max} tokens ({fill_pct:.0f}%)")
 
-            # Agentic loop: respond, then check status, maybe compress
-            for turn in range(10):
-                response = t.generate()
+        # Orchestrator assesses context and takes action
+        orch_config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.AUTONOMOUS,
+            max_steps=15,
+            profile=budget_profile,
+            task_context=(
+                "Check the context budget. If usage exceeds 70%, pin any "
+                "critical findings and then compress to free up space. "
+                "Provide a concise summary when compressing."
+            ),
+        )
+        orch = Orchestrator(t, config=orch_config)
+        result = orch.run()
 
-                if not response.tool_calls:
-                    print(f"  Assistant: {response.text[:80]}...")
-
-                    # Check if the agent naturally decided to check status
-                    # (some models will call status as a tool before responding)
-                    status = t.status()
-                    budget_max = status.token_budget_max or 1
-                    fill_pct = status.token_count / budget_max * 100
-                    print(f"  [budget: {fill_pct:.0f}%]")
-                    print()
-                    break
-
-                for tc in response.tool_calls:
-                    result = executor.execute(tc.name, tc.arguments)
-                    t.tool_result(tc.id, tc.name, str(result))
-
-                    if tc.name == "compress":
-                        compressions += 1
-                        print(f"    [COMPRESS #{compressions}] {result.output}")
-                    elif tc.name == "status":
-                        print(f"    [STATUS] {result.output}")
-                    else:
-                        print(f"    [{tc.name}] {result.output[:60]}")
+        print(f"\n  Orchestrator completed: {result.total_tool_calls} tool calls, "
+              f"state={result.state.value}")
+        for step in result.steps:
+            status_label = "OK" if step.success else "FAIL"
+            args_short = str(step.tool_call.arguments)[:60]
+            print(f"    [{status_label}] {step.tool_call.name}({args_short})")
 
         # Final report
         final_status = t.status()
         budget_max = final_status.token_budget_max or 1
         fill_pct = final_status.token_count / budget_max * 100
 
-        print(f"  {'=' * 50}")
-        print(f"  Session complete:")
-        print(f"    Questions asked:    {len(questions)}")
-        print(f"    Self-compressions:  {compressions}")
-        print(f"    Final tokens:       {final_status.token_count}/{budget_max} ({fill_pct:.0f}%)")
-        print(f"    Commits:            {final_status.commit_count}")
+        print(f"\n  {'=' * 50}")
+        print(f"  After orchestrator:")
+        print(f"    Final tokens: {final_status.token_count}/{budget_max} ({fill_pct:.0f}%)")
+        print(f"    Commits:      {final_status.commit_count}")
 
 
 def main():

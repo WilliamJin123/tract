@@ -1,14 +1,13 @@
 """Message Reordering
 
-Three tiers of message reordering -- manual compile(order=), interactive
-hash selection, and agent-driven toolkit execution.
+Two tiers of message reordering -- manual compile(order=) and interactive
+hash selection.
 
 PART 1 -- Manual           compile(order=), ReorderWarning, deterministic
 PART 2 -- Interactive       Show order, click.prompt for new order
-PART 3 -- LLM / Agent      ToolExecutor compiles with custom order
 
 Demonstrates: compile(order=), ReorderWarning, commit_hashes,
-              click.prompt, ToolExecutor, pprint(style="chat")
+              click.prompt, pprint(style="chat")
 """
 
 import os
@@ -16,7 +15,7 @@ import os
 import click
 from dotenv import load_dotenv
 
-from tract import Tract, ToolExecutor
+from tract import Tract
 
 load_dotenv()
 
@@ -139,56 +138,12 @@ def part2_interactive():
 
 
 # =============================================================================
-# PART 3 -- LLM / Agent: ToolExecutor compiles with custom order
-# =============================================================================
-
-def part3_agent():
-    print("=" * 60)
-    print("PART 3 -- Agent: ToolExecutor Reordering")
-    print("=" * 60)
-    print()
-    print("  An LLM agent uses ToolExecutor to compile with a custom")
-    print("  message order -- optimizing flow without human input.")
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-
-        ctx, hashes = _build_conversation(t)
-
-        executor = ToolExecutor(t)
-
-        # Agent decides to put gut bacteria first for topical relevance
-        agent_order = [
-            hashes[0],              # system stays first
-            hashes[5], hashes[6],   # gut bacteria
-            hashes[1], hashes[2],   # macronutrients
-            hashes[3], hashes[4],   # fasting
-        ]
-
-        print(f"\n  Agent-chosen order: system -> gut bacteria -> macros -> fasting")
-        result = executor.execute("compile", {"order": agent_order})
-        print(f"  ToolExecutor compile result: {result}")
-
-        # Also compile directly to show the context
-        reordered, warnings = t.compile(order=agent_order)
-        print(f"\n  Reordered context:\n")
-        reordered.pprint(style="chat")
-
-        print(f"\n  Agent can optimize message ordering for better LLM")
-        print(f"  performance based on topic relevance or recency.")
-
-
-# =============================================================================
 # main
 # =============================================================================
 
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

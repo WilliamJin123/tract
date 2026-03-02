@@ -162,71 +162,12 @@ def part2b_interactive():
             print(f"    {entry}")
 
 
-# =============================================================================
-# Part 3 -- Agent: Validation via Toolkit + retry_with_steering
-# =============================================================================
-# Agents use retry_with_steering as the engine behind chat(validator=, max_retries=).
-# The toolkit exposes this as a single-call pipeline: the agent sends a prompt,
-# a validator function checks the output, and the loop auto-steers on failure.
-
-def part3_agent():
-    print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: VALIDATION VIA TOOLKIT + RETRY")
-    print("=" * 60)
-    print()
-
-    from tract.toolkit import ToolExecutor
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        t.system(
-            "You are a data generator. When asked to produce JSON, respond "
-            "with ONLY the JSON object — no markdown fences, no explanation."
-        )
-        executor = ToolExecutor(t)
-
-        # Agent uses retry_with_steering directly — the same primitive
-        # that powers chat(validator=, max_retries=).
-        t.user("Generate a JSON object with keys: name (str), age (int), hobbies (list).")
-
-        def validate(text: str) -> tuple[bool, str | None]:
-            try:
-                data = json.loads(text)
-            except json.JSONDecodeError as e:
-                return (False, f"Invalid JSON: {e}")
-            missing = [k for k in ("name", "age", "hobbies") if k not in data]
-            if missing:
-                return (False, f"Missing keys: {missing}")
-            return (True, None)
-
-        from tract.retry import retry_with_steering
-
-        result = retry_with_steering(
-            attempt=lambda: t.generate().text,
-            validate=validate,
-            steer=lambda diag: t.user(f"Fix: {diag}. Return raw JSON only."),
-            head_fn=lambda: t.head or "",
-            reset_fn=lambda h: t.reset(h) if h else None,
-            max_retries=3,
-        )
-        print(f"  Agent got valid JSON in {result.attempts} attempt(s)")
-        print(f"  Result: {result.value[:80]}...")
-
-    # Note: The agent-friendly API is chat(validator=fn, max_retries=3),
-    # which wraps retry_with_steering internally. Use retry_with_steering
-    # directly when you need custom attempt/steer/reset logic.
-
-
 def main():
     print("=== Part 1 -- Manual: retry_with_steering + live LLM ===\n")
     part1_retry_with_llm()
     print(f"\n=== Part 2 -- Manual: RetryExhaustedError ===\n")
     part2_exhaustion()
     part2b_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

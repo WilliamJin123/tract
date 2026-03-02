@@ -1,15 +1,15 @@
 """Merge Conflict Resolution
 
-Three tiers of conflict resolution — programmatic resolution, interactive
-editor-based resolution, and LLM-driven auto-resolution.
+Three tiers of conflict resolution -- programmatic resolution, interactive
+editor-based resolution, and automated LLM-driven resolution.
 
 PART 1 -- Manual           Detect conflicts, set_resolution(), commit_merge()
 PART 2 -- Interactive       review=True, edit_interactive(), click.confirm
-PART 3 -- LLM / Agent      resolver="llm" for automatic conflict resolution
+PART 3 -- Automated         resolver="llm" for automatic conflict resolution
 
 Demonstrates: merge(), MergeResult, conflicts, set_resolution(),
               merge(review=True), PendingMerge, edit_interactive(),
-              approve(), merge(resolver="llm"), ToolExecutor
+              approve(), merge(resolver="llm")
 """
 
 import os
@@ -18,7 +18,7 @@ import sys
 import click
 from dotenv import load_dotenv
 
-from tract import CommitOperation, InstructionContent, Tract, ToolExecutor
+from tract import CommitOperation, InstructionContent, Tract
 from tract.hooks.merge import PendingMerge
 
 load_dotenv()
@@ -203,16 +203,16 @@ def part2_interactive():
 
 
 # =============================================================================
-# PART 3 -- LLM / Agent: LLM-driven conflict resolution
+# PART 3 -- Automated: LLM-driven conflict resolution
 # =============================================================================
 
-def part3_agent():
+def part3_automated():
     print("=" * 60)
-    print("PART 3 -- Agent: LLM-Driven Conflict Resolution")
+    print("PART 3 -- Automated: LLM-Driven Conflict Resolution")
     print("=" * 60)
     print()
-    print("  Use resolver='llm' to let the LLM auto-resolve conflicts,")
-    print("  or use ToolExecutor for agent-driven merges.")
+    print("  Use resolver='llm' to let the LLM auto-resolve conflicts.")
+    print("  No human input needed -- the LLM generates resolutions.")
 
     with Tract.open(
         api_key=TRACT_OPENAI_API_KEY,
@@ -243,20 +243,6 @@ def part3_agent():
         print(f"\n  AFTER LLM-RESOLVED MERGE")
         t.compile().pprint(style="compact")
 
-    # ToolExecutor approach
-    print(f"\n  --- ToolExecutor approach ---")
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        _build_diverged_branches(t)
-        t.switch("main")
-
-        executor = ToolExecutor(t)
-        result = executor.execute("merge", {"branch": "formal", "resolver": "llm"})
-        print(f"  ToolExecutor merge result: {result}")
 
 
 # =============================================================================
@@ -266,7 +252,7 @@ def part3_agent():
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
+    part3_automated()
 
 
 if __name__ == "__main__":

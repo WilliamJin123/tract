@@ -178,47 +178,9 @@ def part2_interactive():
     t.close()
 
 
-# =============================================================================
-# Part 3 -- Agent: Self-Audits via Toolkit
-# =============================================================================
-# An agent can inspect its own tool usage history programmatically
-# using the toolkit's query capabilities.
-
-def part3_agent():
-    print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: SELF-AUDITS VIA TOOLKIT")
-    print("=" * 60)
-    print()
-
-    from tract.toolkit import ToolExecutor
-
-    t = Tract.open()
-    build_agent_session(t)
-    executor = ToolExecutor(t)
-
-    # Agent inspects its own tool usage via find_tool_turns
-    turns = t.find_tool_turns()
-    print(f"  Agent self-audit: {len(turns)} tool turn(s)")
-    for i, turn in enumerate(turns):
-        names = ", ".join(turn.tool_names)
-        print(f"    Turn {i+1}: {names} ({turn.total_tokens} tokens)")
-
-    # Agent checks status to see overall context size
-    status = executor.execute("status", {})
-    print(f"\n  Agent sees its own status:\n{status}")
-
-    # Note: Agents can self-audit their tool usage history via
-    # find_tool_turns() and find_tool_results(). This enables
-    # agents to reason about which tools consumed the most tokens
-    # and make informed decisions about compression.
-
-    t.close()
-
-
 def main():
     part1_query_api()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

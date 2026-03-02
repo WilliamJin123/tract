@@ -1,11 +1,10 @@
 """Manual Reasoning Commits
 
-Three tiers of reasoning management: manual commits, interactive
-confirmation, and agent-driven reasoning via generate().
+Two tiers of reasoning management: manual commits and interactive
+confirmation.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
 PART 2 -- Interactive       review=True, click.edit/confirm, human decides
-PART 3 -- LLM / Agent      Orchestrator, triggers, hooks auto-manage
 
 Demonstrates: t.reasoning(), log(), compile(), get_content(), get_metadata(),
               click.confirm(), compile(include_reasoning=True)
@@ -113,35 +112,14 @@ def part2_interactive():
 
 
 # =============================================================================
-# Part 3: Agent Reasoning  (PART 3 — LLM / Agent)
-# =============================================================================
-
-def part3_agent_note():
-    print("=" * 60)
-    print("Part 3: AGENT REASONING  [Agent Tier — Note]")
-    print("=" * 60)
-    print()
-    print("  See 04_llm_integration.py for generate() auto-extracting")
-    print("  reasoning from LLM responses. The agent generates reasoning")
-    print("  automatically via generate(reasoning_effort='high').")
-    print()
-    print("  Key patterns:")
-    print("    resp = t.generate(reasoning_effort='high')")
-    print("    resp.reasoning         # extracted text")
-    print("    resp.reasoning_commit  # auto-committed CommitInfo")
-    print()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
 def main():
     part1_manual_reasoning()
     part2_interactive()
-    part3_agent_note()
     print("=" * 60)
-    print("Done -- all 3 tiers of reasoning management demonstrated.")
+    print("Done -- both tiers of reasoning management demonstrated.")
     print("=" * 60)
 
 

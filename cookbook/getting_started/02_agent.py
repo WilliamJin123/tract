@@ -1,19 +1,16 @@
-"""Hello Agent -- A ReAct Loop with Tract Tools (Sidecar Pattern)
+"""Hello Agent -- Orchestrator with Tract Tools (Sidecar Pattern)
 
-An agent that manages its own context window using a sidecar branch.
-The LLM receives tract operations as callable tools (via as_tools()),
-decides when to use them, and ToolExecutor dispatches the calls.
+An agent that manages its own context window using the Orchestrator
+on a sidecar branch. The Orchestrator receives tract operations as
+callable tools, decides when to use them, and executes them in a loop.
 
 Key insight: the tool interaction runs on a scratch branch so the
 agent's own reasoning/tool turns don't pollute the main conversation.
 Annotations (like pinning) are branch-independent, so they persist
 when we switch back to main.
 
-This is the minimal ReAct pattern: compile context + tools -> LLM ->
-parse tool_calls -> execute -> feed results back -> repeat.
-
-Demonstrates: as_tools(), ToolExecutor, t.generate(), t.tool_result(),
-              sidecar branch pattern, agent-driven annotate/status/log
+Demonstrates: Orchestrator, OrchestratorConfig, AutonomyLevel,
+              sidecar branch pattern, custom ToolProfile
 """
 
 import os
@@ -21,7 +18,8 @@ import os
 from dotenv import load_dotenv
 
 from tract import Tract, TractConfig, TokenBudgetConfig
-from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
+from tract.toolkit import ToolConfig, ToolProfile
+from tract.orchestrator import Orchestrator, OrchestratorConfig, AutonomyLevel
 
 load_dotenv()
 
@@ -62,37 +60,6 @@ CONTEXT_MGMT_PROFILE = ToolProfile(
     },
 )
 
-MAX_TOOL_TURNS = 6
-
-
-def react_loop(t: Tract, executor: ToolExecutor) -> str:
-    """Run a ReAct loop: generate -> tool calls -> execute -> repeat.
-
-    Returns the final text response from the agent.
-    """
-    for _ in range(MAX_TOOL_TURNS):
-        try:
-            response = t.generate()
-        except Exception as exc:
-            print(f"  [generate error: {exc}]\n")
-            return "(agent stopped due to LLM error)"
-
-        if not response.tool_calls:
-            # Text response -- the agent is done
-            return response.text
-
-        # Execute each tool call the LLM requested
-        for tc in response.tool_calls:
-            result = executor.execute(tc.name, tc.arguments)
-            t.tool_result(tc.id, tc.name, str(result))
-
-            args_short = ", ".join(f"{k}={v!r}" for k, v in tc.arguments.items())
-            status = "ok" if result.success else "ERR"
-            print(f"  [{tc.name}] {args_short}")
-            print(f"    -> [{status}] {result}\n")
-
-    return "(max tool turns reached)"
-
 
 def main():
     db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "getting_started_agent.db")
@@ -109,16 +76,6 @@ def main():
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        # --- Give the agent its tools ---
-
-        tools = t.as_tools(format="openai", profile=CONTEXT_MGMT_PROFILE)
-        t.set_tools(tools)
-        tool_names = [tool["function"]["name"] for tool in tools]
-        print(f"Agent tools: {', '.join(tool_names)}\n")
-
-        executor = ToolExecutor(t)
-        executor.set_profile(CONTEXT_MGMT_PROFILE)
-
         # --- Seed the conversation with enough history to make
         #     context management interesting ---
 
@@ -162,14 +119,26 @@ def main():
         print("=== Agent managing context (sidecar branch) ===\n")
         t.branch("_context-mgmt", switch=True)
 
-        t.user(
-            "Review your context window. Check the status, pin any important "
-            "definitions worth preserving, and skip anything that is not "
-            "essential. Do not compress -- just annotate."
+        # Orchestrator handles the assess -> LLM -> tool calls -> repeat loop
+        orch_config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.AUTONOMOUS,
+            max_steps=10,
+            profile=CONTEXT_MGMT_PROFILE,
+            task_context=(
+                "Review the context window. Check the status, pin any important "
+                "definitions worth preserving, and skip anything that is not "
+                "essential. Do not compress -- just annotate."
+            ),
         )
+        orch = Orchestrator(t, config=orch_config)
+        result = orch.run()
 
-        reply = react_loop(t, executor)
-        print(f"Agent: {reply}\n")
+        print(f"Orchestrator: {result.total_tool_calls} tool calls, "
+              f"state={result.state.value}\n")
+        for step in result.steps:
+            status = "OK" if step.success else "FAIL"
+            args_short = str(step.tool_call.arguments)[:60]
+            print(f"  [{status}] {step.tool_call.name}({args_short})")
 
         # --- Switch back to main -- tool turns stay on scratch branch ---
 
@@ -179,7 +148,7 @@ def main():
         # Main branch is unchanged, but annotations (pinning/skipping) now
         # affect the compiled output. Compare priorities before vs after.
 
-        print("=== Conversation (after agent ops) ===\n")
+        print("\n=== Conversation (after agent ops) ===\n")
         t.compile().pprint(style="chat")
         print()
         t.status().pprint()

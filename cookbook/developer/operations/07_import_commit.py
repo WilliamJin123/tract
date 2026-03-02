@@ -1,14 +1,13 @@
 """Import Commit (Cherry-Pick Across Branches)
 
-Three tiers of import_commit usage -- manual cherry-pick, interactive
-confirmation with commit preview, and agent-driven toolkit execution.
+Two tiers of import_commit usage -- manual cherry-pick and interactive
+confirmation with commit preview.
 
 PART 1 -- Manual           Direct import_commit(), inspect ImportResult
 PART 2 -- Interactive       show() preview, click.confirm before import
-PART 3 -- LLM / Agent      ToolExecutor dispatches import_commit
 
 Demonstrates: import_commit(), ImportResult, branch(), switch(),
-              show(), click.confirm, ToolExecutor,
+              show(), click.confirm,
               pprint(style="compact"), pprint(style="chat")
 """
 
@@ -17,7 +16,7 @@ import os
 import click
 from dotenv import load_dotenv
 
-from tract import Tract, ToolExecutor
+from tract import Tract
 
 load_dotenv()
 
@@ -133,47 +132,12 @@ def part2_interactive():
 
 
 # =============================================================================
-# PART 3 -- LLM / Agent: ToolExecutor dispatches import_commit
-# =============================================================================
-
-def part3_agent():
-    print("=" * 60)
-    print("PART 3 -- Agent: ToolExecutor Import Commit")
-    print("=" * 60)
-    print()
-    print("  An LLM agent uses ToolExecutor to cherry-pick commits")
-    print("  across branches without human interaction.")
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-
-        deep_user_hash, deep_asst_hash = _build_cherry_pick_scenario(t)
-
-        executor = ToolExecutor(t)
-
-        print(f"\n  Importing user question via ToolExecutor:")
-        result = executor.execute("import_commit", {"commit_hash": deep_user_hash})
-        print(f"  Result: {result}")
-
-        print(f"\n  Importing assistant answer via ToolExecutor:")
-        result = executor.execute("import_commit", {"commit_hash": deep_asst_hash})
-        print(f"  Result: {result}")
-
-        print(f"\n  AFTER IMPORT:")
-        t.compile().pprint(style="chat")
-
-
-# =============================================================================
 # main
 # =============================================================================
 
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
 
 
 if __name__ == "__main__":

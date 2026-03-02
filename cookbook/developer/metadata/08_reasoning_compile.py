@@ -1,29 +1,18 @@
 """Compile Control
 
-Three tiers of compile control for reasoning: manual flag toggling,
-interactive priority management, and agent-driven annotation.
+Two tiers of compile control for reasoning: manual flag toggling and
+interactive priority management.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
 PART 2 -- Interactive       review=True, click.edit/confirm, human decides
-PART 3 -- LLM / Agent      Orchestrator, triggers, hooks auto-manage
 
 Demonstrates: compile(include_reasoning=True), annotate() overrides,
-              Priority.PINNED, Priority.SKIP, click.prompt(), ToolExecutor
+              Priority.PINNED, Priority.SKIP, click.prompt()
 """
 
-import os
-
 import click
-from dotenv import load_dotenv
 
 from tract import Priority, Tract
-from tract.toolkit import ToolExecutor
-
-load_dotenv()
-
-TRACT_OPENAI_API_KEY = os.environ.get("TRACT_OPENAI_API_KEY", "")
-TRACT_OPENAI_BASE_URL = os.environ.get("TRACT_OPENAI_BASE_URL", "")
-MODEL_ID = "gpt-oss-120b"
 
 
 def part1_compile_control():
@@ -153,51 +142,14 @@ def part2_interactive():
 
 
 # =============================================================================
-# Part 3: Agent-Driven Reasoning Annotation  (PART 3 — LLM / Agent)
-# =============================================================================
-
-def part3_agent():
-    print("=" * 60)
-    print("Part 3: AGENT-DRIVEN REASONING ANNOTATION  [Agent Tier]")
-    print("=" * 60)
-    print()
-    print("  An agent manages reasoning visibility via ToolExecutor.")
-    print()
-
-    t = Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    )
-
-    t.system("You are a helpful assistant.")
-    t.user("What causes tides?")
-    r_info = t.reasoning("Tides are caused by gravitational pull of the moon and sun.")
-    t.assistant("Tides are primarily caused by the moon's gravitational pull.")
-
-    # Agent uses ToolExecutor to mark reasoning as SKIP
-    executor = ToolExecutor(t)
-    result = executor.execute("annotate", {
-        "commit_hash": r_info.commit_hash,
-        "priority": "SKIP",
-    })
-    print(f"  executor.execute('annotate', SKIP) -> success={result.success}")
-    print(f"  Reasoning commit {r_info.commit_hash[:8]} is now hidden from compile().")
-    print()
-
-    t.close()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
 def main():
     part1_compile_control()
     part2_interactive()
-    part3_agent()
     print("=" * 60)
-    print("Done -- all 3 tiers of compile control demonstrated.")
+    print("Done -- both tiers of compile control demonstrated.")
     print("=" * 60)
 
 

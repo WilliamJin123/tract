@@ -2,18 +2,17 @@
 
   PART 1 -- Manual:      as_tools(profile="self"), 3 profiles, ToolExecutor.execute()
   PART 2 -- Interactive:  Human-gated tool execution with click.confirm per call
-  PART 3 -- LLM / Agent:  Full LLM-driven tool loop: compile + tools -> LLM -> execute
+  PART 3 -- LLM / Agent:  Orchestrator with custom ToolProfile for autonomous tool use
 """
 
-import json
 import os
 
 import click
-import httpx
 from dotenv import load_dotenv
 
 from tract import Tract, TractConfig, TokenBudgetConfig
-from tract.toolkit import ToolExecutor
+from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
+from tract.orchestrator import Orchestrator, OrchestratorConfig, AutonomyLevel
 
 load_dotenv()
 
@@ -92,7 +91,7 @@ def part2_interactive():
 
 
 # =====================================================================
-# PART 3 -- LLM / Agent: full LLM-driven tool loop
+# PART 3 -- LLM / Agent: Orchestrator with custom profile
 # =====================================================================
 
 def part3_agent():
@@ -103,8 +102,37 @@ def part3_agent():
         return
 
     print("\n" + "=" * 60)
-    print("PART 3 -- LLM / Agent: LLM-Driven Tool Loop")
+    print("PART 3 -- LLM / Agent: Orchestrator-Driven Tool Loop")
     print("=" * 60)
+
+    # Custom profile: only expose inspection + maintenance tools
+    maintenance_profile = ToolProfile(
+        name="maintenance",
+        tool_configs={
+            "status": ToolConfig(
+                enabled=True,
+                description="Check context health: token count, budget, commits.",
+            ),
+            "log": ToolConfig(
+                enabled=True,
+                description="View recent commit history with hashes and types.",
+            ),
+            "annotate": ToolConfig(
+                enabled=True,
+                description=(
+                    "Pin important commits (priority='pinned') or skip "
+                    "irrelevant ones (priority='skip')."
+                ),
+            ),
+            "compress": ToolConfig(
+                enabled=True,
+                description=(
+                    "Compress context when budget usage is high. Provide "
+                    "a concise summary of the conversation so far."
+                ),
+            ),
+        },
+    )
 
     config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=2000))
     with Tract.open(
@@ -119,42 +147,27 @@ def part3_agent():
             t.user(f"Research note {i}: stellar nucleosynthesis produces "
                    f"elements heavier than hydrogen in star cores.")
 
-        tools = t.as_tools(profile="self", format="openai")
-        executor = ToolExecutor(t)
-        print(f"\n  {len(tools)} tools available for LLM")
-
-        # Use the tract's own context as the message history
-        ctx = t.compile()
-        messages = ctx.to_dicts()
-        messages.append({
-            "role": "user",
-            "content": "Check the current context status and log. "
-                       "Take any maintenance action if needed.",
-        })
-
-        # Call LLM with toolkit tools via HTTP (no private API access)
-        llm_response = httpx.post(
-            f"{TRACT_OPENAI_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {TRACT_OPENAI_API_KEY}"},
-            json={"model": MODEL_ID, "messages": messages, "tools": tools},
-            timeout=120,
+        # Autonomous orchestrator with our custom profile
+        orch_config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.AUTONOMOUS,
+            max_steps=15,
+            profile=maintenance_profile,
+            task_context="Inspect the conversation context. Check status and log, "
+                         "then take any maintenance actions needed (pin important "
+                         "content, compress if budget is high).",
         )
-        llm_response.raise_for_status()
-        raw = llm_response.json()
-        tool_calls = raw["choices"][0]["message"].get("tool_calls", [])
+        orch = Orchestrator(t, config=orch_config)
+        result = orch.run()
 
-        if tool_calls:
-            print(f"\n  LLM requested {len(tool_calls)} tool call(s):")
-            for tc in tool_calls:
-                name = tc["function"]["name"]
-                args = json.loads(tc["function"].get("arguments", "{}"))
-                result = executor.execute(name, args)
-                status = "OK" if result.success else "FAIL"
-                print(f"    {name}({args}) -> [{status}]")
-                print(f"      {(result.output or result.error or '')[:100]}")
-        else:
-            content = raw["choices"][0]["message"].get("content", "")
-            print(f"\n  LLM responded without tools: {content[:120]}...")
+        print(f"\n  Orchestrator completed: {result.total_tool_calls} tool calls, "
+              f"state={result.state.value}")
+        for step in result.steps:
+            status = "OK" if step.success else "FAIL"
+            args_short = str(step.tool_call.arguments)[:60]
+            print(f"    [{status}] {step.tool_call.name}({args_short})")
+
+        final = t.status()
+        print(f"\n  Final: {final.token_count} tokens, {final.commit_count} commits")
 
 
 def main():

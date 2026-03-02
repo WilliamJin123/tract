@@ -5,19 +5,19 @@ Three built-in profiles control what tract operations an agent can access:
 - supervisor: Read + high-level ops -- oversight without micro-management
 - observer: Read-only -- monitoring without modification
 
-Demonstrates: as_tools(profile=), ToolExecutor profiles, capability scoping
+Demonstrates: as_tools(profile=), ToolExecutor profiles, capability scoping,
+              Orchestrator with observer profile
 """
 
-import json
 import os
 
 import click
-import httpx
 from dotenv import load_dotenv
 
 from tract import Tract, TractConfig, TokenBudgetConfig
 from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
 from tract.toolkit.profiles import SELF_PROFILE, SUPERVISOR_PROFILE, FULL_PROFILE
+from tract.orchestrator import Orchestrator, OrchestratorConfig, AutonomyLevel
 
 load_dotenv()
 
@@ -227,11 +227,11 @@ def part2_interactive():
 
 
 # =====================================================================
-# PART 3 -- Agent: Observer profile (read-only inspection)
+# PART 3 -- Agent: Orchestrator with observer profile (read-only)
 # =====================================================================
 
 def part3_agent():
-    """Agent with observer profile can inspect but not modify context."""
+    """Orchestrator with observer profile inspects but cannot modify."""
     if not TRACT_OPENAI_API_KEY:
         print(f"\n{'=' * 60}")
         print("PART 3: SKIPPED (no TRACT_OPENAI_API_KEY)")
@@ -239,10 +239,10 @@ def part3_agent():
         return
 
     print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: Observer Profile (Read-Only)")
+    print("PART 3 -- Agent: Orchestrator with Observer Profile")
     print("=" * 60)
     print()
-    print("  An observer agent can inspect context but cannot modify it.")
+    print("  An observer orchestrator can inspect context but cannot modify it.")
     print("  Useful for monitoring, auditing, or analysis agents that")
     print("  should not alter the conversation state.")
     print()
@@ -276,76 +276,32 @@ def part3_agent():
             "the monolith. This makes future extraction straightforward."
         )
 
-        # Now give an observer agent read-only access
-        executor = ToolExecutor(t)
-        tools = t.as_tools(profile=OBSERVER_PROFILE)
-        t.set_tools(tools)
+        status_before = t.status()
+        print(f"  Before: {status_before.commit_count} commits, "
+              f"{status_before.token_count} tokens")
 
-        # Temporarily give the observer its own system context
-        # by building its request manually (the observer should
-        # not modify the tract's actual context)
-        ctx = t.compile()
-        messages = ctx.to_dicts()
-
-        # Add observer instructions
-        messages.append({
-            "role": "user",
-            "content": (
-                "You are an observer agent. Use the available tools to "
-                "inspect this conversation and provide a brief analysis: "
+        # Orchestrator with observer profile: read-only inspection
+        orch_config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.AUTONOMOUS,
+            max_steps=10,
+            profile=OBSERVER_PROFILE,
+            task_context=(
+                "You are an observer agent. Inspect this conversation using "
+                "the available read-only tools. Determine: "
                 "1) How many commits and tokens are used? "
                 "2) What was the key decision made? "
-                "3) Summarize the conversation in one sentence. "
-                "Use status, log, and get_commit tools to gather information."
+                "3) Summarize the conversation in one sentence."
             ),
-        })
-
-        # Call LLM with observer tools
-        llm_response = httpx.post(
-            f"{TRACT_OPENAI_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {TRACT_OPENAI_API_KEY}"},
-            json={"model": MODEL_ID, "messages": messages, "tools": tools},
-            timeout=120,
         )
-        llm_response.raise_for_status()
-        raw = llm_response.json()
-        choice = raw["choices"][0]["message"]
+        orch = Orchestrator(t, config=orch_config)
+        result = orch.run()
 
-        # Process tool calls
-        tool_calls = choice.get("tool_calls", [])
-        if tool_calls:
-            print(f"  Observer made {len(tool_calls)} inspection call(s):\n")
-            tool_results = []
-            for tc in tool_calls:
-                name = tc["function"]["name"]
-                args = json.loads(tc["function"].get("arguments", "{}"))
-                result = executor.execute(name, args)
-                status = "OK" if result.success else "FAIL"
-                output = (result.output or result.error or "")[:80]
-                print(f"    [{status}] {name}({args}) -> {output}")
-                tool_results.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": str(result),
-                })
-
-            # Get the observer's final analysis
-            messages.append(choice)
-            messages.extend(tool_results)
-
-            analysis_response = httpx.post(
-                f"{TRACT_OPENAI_BASE_URL}/chat/completions",
-                headers={"Authorization": f"Bearer {TRACT_OPENAI_API_KEY}"},
-                json={"model": MODEL_ID, "messages": messages},
-                timeout=120,
-            )
-            analysis_response.raise_for_status()
-            analysis = analysis_response.json()["choices"][0]["message"]["content"]
-            print(f"\n  Observer analysis:")
-            print(f"    {analysis[:300]}")
-        else:
-            content = choice.get("content", "")
-            print(f"  Observer responded directly: {content[:200]}")
+        print(f"\n  Orchestrator completed: {result.total_tool_calls} tool calls, "
+              f"state={result.state.value}")
+        for step in result.steps:
+            status_label = "OK" if step.success else "FAIL"
+            args_short = str(step.tool_call.arguments)[:60]
+            print(f"    [{status_label}] {step.tool_call.name}({args_short})")
 
         # Verify the observer did not modify anything
         status_after = t.status()

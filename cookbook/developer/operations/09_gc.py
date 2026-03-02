@@ -1,11 +1,11 @@
 """GC After Compression
 
 Three tiers of garbage collection -- manual compress+gc, interactive
-review with editor, and agent-driven triggers for auto-maintenance.
+review with editor, and trigger-driven auto-maintenance.
 
 PART 1 -- Manual           compress(content=) + gc(), inspect GCResult
 PART 2 -- Interactive       compress(review=True), edit summaries, gc()
-PART 3 -- LLM / Agent      CompressTrigger + GCTrigger compound auto-maintenance
+PART 3 -- Trigger-Driven    CompressTrigger + GCTrigger compound auto-maintenance
 
 Demonstrates: gc(), GCResult, compress(content=), compress(review=True),
               PendingCompress, edit_summary(), approve(),
@@ -163,12 +163,12 @@ def part2_interactive():
 
 
 # =============================================================================
-# PART 3 -- LLM / Agent: CompressTrigger + GCTrigger compound auto-maintenance
+# PART 3 -- Trigger-Driven: CompressTrigger + GCTrigger compound auto-maintenance
 # =============================================================================
 
-def part3_agent():
+def part3_trigger_driven():
     print("=" * 60)
-    print("PART 3 -- Agent: Auto-Maintenance via Triggers")
+    print("PART 3 -- Trigger-Driven: Auto-Maintenance via Triggers")
     print("=" * 60)
     print()
     print("  CompressTrigger fires when budget fills up. GCTrigger fires")
@@ -223,7 +223,7 @@ def part3_agent():
 def main():
     part1_manual()
     part2_interactive()
-    part3_agent()
+    part3_trigger_driven()
 
 
 if __name__ == "__main__":

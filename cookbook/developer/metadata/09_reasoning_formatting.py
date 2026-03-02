@@ -1,11 +1,11 @@
 """Formatting
 
-Three tiers: manual pprint styles, interactive toggle, and format output
+Three parts: pprint styles, interactive toggle, and format output
 for API consumption.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
-PART 2 -- Interactive       review=True, click.edit/confirm, human decides
-PART 3 -- LLM / Agent      Orchestrator, triggers, hooks auto-manage
+PART 2 -- Interactive       click.confirm(), human decides
+PART 3 -- API Formats       to_dicts(), to_openai() serialization
 
 Demonstrates: pprint() reasoning style (table, chat, compact),
               compile(include_reasoning=True), click.confirm(),
@@ -78,12 +78,12 @@ def part2_interactive():
 
 
 # =============================================================================
-# Part 3: Format Output for APIs  (PART 3 — LLM / Agent)
+# Part 3: Format Output for APIs
 # =============================================================================
 
 def part3_format_output():
     print("=" * 60)
-    print("Part 3: FORMAT OUTPUT FOR APIS  [Agent Tier]")
+    print("Part 3: FORMAT OUTPUT FOR APIS")
     print("=" * 60)
     print()
     print("  to_dicts() and to_openai() include reasoning when compiled")
@@ -122,7 +122,7 @@ def main():
     part2_interactive()
     part3_format_output()
     print("=" * 60)
-    print("Done -- all 3 tiers of formatting demonstrated.")
+    print("Done -- all 3 parts of formatting demonstrated.")
     print("=" * 60)
 
 
