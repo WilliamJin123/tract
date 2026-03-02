@@ -13,7 +13,8 @@ The 4-level chain resolves each field independently:
 Every resolved config is auto-captured on assistant commits for provenance.
 
 Demonstrates: LLMConfig, sugar params, generate() two-step,
-              generation_config provenance, response.pprint()
+              generation_config provenance, response.pprint(),
+              ToolConfig description overrides for reliable tool selection
 """
 
 import os
@@ -109,6 +110,12 @@ def part1_per_call_config():
 # The LLM receives only configure_model + status tools (custom ToolProfile)
 # and autonomously decides to call configure_model to set its own temperature.
 # We use generate() for the agentic loop — no custom LLM calls needed.
+#
+# The trick: ToolConfig description overrides tell the model *when* to call
+# each tool. Without explicit trigger conditions in the description, models
+# won't reliably self-select tools — they know what configure_model *does*
+# but not that they should call it *before* answering creative vs. factual
+# tasks. This scales to 20+ tools: each tool carries its own trigger signal.
 
 def part2_agent():
     print(f"\n{'=' * 60}")
@@ -120,10 +127,23 @@ def part2_agent():
 
     # Custom profile: only expose config + status tools — the LLM can
     # change its own temperature but we handle the actual chat calls.
+    #
+    # Key insight: description overrides tell the LLM *when* to use a tool,
+    # not just *what* it does. Without this, models won't reliably self-select
+    # tools — especially in profiles with many tools. This scales to 20+ tools
+    # because each tool carries its own trigger signal in the description,
+    # no centralized system prompt needed.
     config_profile = ToolProfile(
         name="config-only",
         tool_configs={
-            "configure_model": ToolConfig(enabled=True),
+            "configure_model": ToolConfig(
+                enabled=True,
+                description=(
+                    "Set temperature BEFORE answering. Call this when the task "
+                    "is creative (temperature 0.7-1.0) or requires precision "
+                    "(temperature 0.0-0.3)."
+                ),
+            ),
             "status": ToolConfig(enabled=True),
         },
     )
@@ -144,13 +164,12 @@ def part2_agent():
         # interleaved — so bundling both tasks would produce one response
         # at whatever the last configured temperature was.
         tasks = [
-            "Write a surreal one-sentence poem about a clock that melts.",
+            "Write a surreal, creative, one-sentence poem about a clock that melts.",
             "What is the speed of light in meters per second?",
         ]
 
         for task in tasks:
-            t.user(f"Set an appropriate temperature, then: {task}")
-
+            t.user(task)
             for turn in range(5):
                 response = t.generate()
 
