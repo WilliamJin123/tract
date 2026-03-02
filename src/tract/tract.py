@@ -806,6 +806,7 @@ class Tract:
             token_source=result.token_source,
             generation_configs=result.generation_configs,
             commit_hashes=result.commit_hashes,
+            priorities=result.priorities,
             tools=tools,
         )
 

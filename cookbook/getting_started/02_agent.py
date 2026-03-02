@@ -1,15 +1,19 @@
-"""Hello Agent -- A ReAct Loop with Tract Tools
+"""Hello Agent -- A ReAct Loop with Tract Tools (Sidecar Pattern)
 
-An agent that manages its own context window. The LLM receives tract
-operations as callable tools (via as_tools()), decides when to use them,
-and ToolExecutor dispatches the calls. The loop repeats until the LLM
-responds with text instead of tool calls.
+An agent that manages its own context window using a sidecar branch.
+The LLM receives tract operations as callable tools (via as_tools()),
+decides when to use them, and ToolExecutor dispatches the calls.
+
+Key insight: the tool interaction runs on a scratch branch so the
+agent's own reasoning/tool turns don't pollute the main conversation.
+Annotations (like pinning) are branch-independent, so they persist
+when we switch back to main.
 
 This is the minimal ReAct pattern: compile context + tools -> LLM ->
 parse tool_calls -> execute -> feed results back -> repeat.
 
 Demonstrates: as_tools(), ToolExecutor, t.generate(), t.tool_result(),
-              agent-driven status/annotate/compress
+              sidecar branch pattern, agent-driven annotate/status/log
 """
 
 import os
@@ -26,7 +30,7 @@ TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
 # --- Tool profile: only expose the context-management tools ---
-# The agent gets status, annotate, and compress -- enough to monitor
+# The agent gets status, annotate, and log -- enough to monitor
 # and maintain its own context window. We use description overrides
 # to hint WHEN to use each tool, not just what it does.
 
@@ -37,7 +41,7 @@ CONTEXT_MGMT_PROFILE = ToolProfile(
             enabled=True,
             description=(
                 "Check context health: branch, HEAD, token count, and budget "
-                "usage. Call this BEFORE deciding whether to compress or pin."
+                "usage. Call this BEFORE deciding whether to pin or skip."
             ),
         ),
         "log": ToolConfig(
@@ -55,19 +59,10 @@ CONTEXT_MGMT_PROFILE = ToolProfile(
                 "exclude irrelevant content. Requires a commit hash from log."
             ),
         ),
-        "compress": ToolConfig(
-            enabled=True,
-            description=(
-                "Compress older messages into a summary to free token budget. "
-                "Pinned commits are preserved verbatim. Call with just "
-                "target_tokens (no from/to range needed). Call when budget "
-                "usage exceeds 60%."
-            ),
-        ),
     },
 )
 
-MAX_TOOL_TURNS = 10
+MAX_TOOL_TURNS = 6
 
 
 def react_loop(t: Tract, executor: ToolExecutor) -> str:
@@ -76,7 +71,11 @@ def react_loop(t: Tract, executor: ToolExecutor) -> str:
     Returns the final text response from the agent.
     """
     for _ in range(MAX_TOOL_TURNS):
-        response = t.generate()
+        try:
+            response = t.generate()
+        except Exception as exc:
+            print(f"  [generate error: {exc}]\n")
+            return "(agent stopped due to LLM error)"
 
         if not response.tool_calls:
             # Text response -- the agent is done
@@ -96,7 +95,7 @@ def react_loop(t: Tract, executor: ToolExecutor) -> str:
 
 
 def main():
-    db_path = os.path.join(os.path.curdir, "getting_started_agent.db")
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "getting_started_agent.db")
     if os.path.exists(db_path):
         os.unlink(db_path)
 
@@ -155,20 +154,30 @@ def main():
         print("=== Conversation (before agent ops) ===\n")
         t.compile().pprint(style="chat")
 
-        # --- Ask the agent to manage its own context ---
-        # The LLM will receive the tools and decide what to do.
+        # --- Sidecar branch: run context management on a scratch branch ---
+        # Annotations (pinning) are commit-level, not branch-level, so they
+        # persist when we switch back to main. The tool interaction turns
+        # (reasoning traces, tool results) stay on the scratch branch.
 
-        print("\n=== Agent managing context ===\n")
+        print("=== Agent managing context (sidecar branch) ===\n")
+        t.branch("_context-mgmt", switch=True)
+
         t.user(
             "Review your context window. Check the status, pin any important "
-            "definitions worth preserving, and compress if needed to stay "
-            "under budget."
+            "definitions worth preserving, and skip anything that is not "
+            "essential. Do not compress -- just annotate."
         )
 
         reply = react_loop(t, executor)
         print(f"Agent: {reply}\n")
 
+        # --- Switch back to main -- tool turns stay on scratch branch ---
+
+        t.switch("main")
+
         # --- Show the conversation after agent ops ---
+        # Main branch is unchanged, but annotations (pinning/skipping) now
+        # affect the compiled output. Compare priorities before vs after.
 
         print("=== Conversation (after agent ops) ===\n")
         t.compile().pprint(style="chat")
