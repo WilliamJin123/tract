@@ -7,6 +7,10 @@ token deltas, and generation config changes.
 from __future__ import annotations
 
 import difflib
+import os
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -73,11 +77,61 @@ class DiffResult:
     stat: DiffStat = field(default_factory=DiffStat)
     generation_config_changes: dict[str, tuple[Any, Any]] = field(default_factory=dict)
     # field_name -> (old_value, new_value)
+    _text_a: str = ""  # serialized messages from side A
+    _text_b: str = ""  # serialized messages from side B
 
     def pprint(self, *, stat_only: bool = False) -> None:
         """Pretty-print this diff with colored unified diff output."""
         from tract.formatting import pprint_diff_result
         pprint_diff_result(self, stat_only=stat_only)
+
+    def open(self, *, editor: str | None = None) -> None:
+        """Open this diff in an external editor's diff view.
+
+        Writes both sides of the diff to temporary files and launches an
+        editor diff command.  Supports VS Code (``code --diff``), any
+        editor that accepts two file arguments (``$EDITOR``), and falls
+        back to printing a message if no editor is found.
+
+        Args:
+            editor: Editor command to use.  Detected automatically when
+                *None*: tries ``$TRACT_DIFF_EDITOR``, ``$EDITOR``, then
+                auto-detects ``code`` on ``$PATH``.
+        """
+        editor = editor or os.environ.get("TRACT_DIFF_EDITOR") or os.environ.get("EDITOR")
+
+        # Auto-detect VS Code if no editor configured
+        if not editor and shutil.which("code"):
+            editor = "code"
+
+        if not editor:
+            raise EnvironmentError(
+                "No editor found.  Set $EDITOR or $TRACT_DIFF_EDITOR, "
+                "or install VS Code ('code' on PATH)."
+            )
+
+        # Write temp files
+        tmpdir = tempfile.mkdtemp(prefix="tract-diff-")
+        label_a = self.commit_a[:8] if self.commit_a != "(empty)" else "empty"
+        label_b = self.commit_b[:8]
+        path_a = os.path.join(tmpdir, f"{label_a}.md")
+        path_b = os.path.join(tmpdir, f"{label_b}.md")
+
+        with open(path_a, "w", encoding="utf-8") as f:
+            f.write(self._text_a)
+        with open(path_b, "w", encoding="utf-8") as f:
+            f.write(self._text_b)
+
+        # Launch editor
+        cmd_base = editor.split()
+        prog = cmd_base[0].lower()
+
+        if prog == "code" or prog.endswith("code.cmd"):
+            cmd = [*cmd_base, "--diff", path_a, path_b]
+        else:
+            cmd = [*cmd_base, path_a, path_b]
+
+        subprocess.Popen(cmd)  # noqa: S603
 
 
 def _serialize_message(msg: Message) -> str:
@@ -145,6 +199,19 @@ def _compute_generation_config_changes(
             changes[key] = (val_a, val_b)
 
     return changes
+
+
+def _render_messages(messages: list[Message]) -> str:
+    """Render a message list to readable markdown-ish text for editor diffs."""
+    parts: list[str] = []
+    for i, msg in enumerate(messages):
+        parts.append(f"[{i}] {msg.role}")
+        if msg.name:
+            parts.append(f"    name: {msg.name}")
+        parts.append("---")
+        parts.append(msg.content)
+        parts.append("")  # blank separator
+    return "\n".join(parts)
 
 
 def compute_diff(
@@ -312,4 +379,6 @@ def compute_diff(
         message_diffs=message_diffs,
         stat=stat,
         generation_config_changes=gen_config_changes,
+        _text_a=_render_messages(messages_a),
+        _text_b=_render_messages(messages_b),
     )

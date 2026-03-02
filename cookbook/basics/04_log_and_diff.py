@@ -4,7 +4,8 @@ Chat with an LLM over several turns, then inspect the commit history,
 diff two points in the conversation, and view individual commits.
 
 Demonstrates: log(), show(), diff(), DiffResult.pprint(), stat_only mode,
-              CommitInfo str/pprint, reversed() for chronological order
+              DiffResult.open() (VS Code diff), CommitInfo str/pprint,
+              reversed() for chronological order
 """
 
 import os
@@ -106,6 +107,21 @@ def part1_log_and_diff():
         print(f"\n=== Diff: first user message ({first_q_hash[:8]}) → HEAD ===\n")
         full_diff = t.diff(first_q_hash)
         full_diff.pprint(stat_only=True)
+
+        # --- Open diff in external editor (e.g. VS Code) ---
+        # result.open() writes both sides to temp files and launches
+        # your editor's diff view.  Detection order:
+        #   1. $TRACT_DIFF_EDITOR  (e.g. "code", "vimdiff")
+        #   2. $EDITOR
+        #   3. auto-detect "code" on PATH
+        #
+        # Try it:  result.open()            # auto-detect
+        #          result.open(editor="code")  # explicit VS Code
+
+        print("\n=== Open diff in VS Code ===\n")
+        print("  Uncomment the line below to open the diff in your editor:")
+        print('  # result.open()')
+        # result.open()
 
 
 if __name__ == "__main__":

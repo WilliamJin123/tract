@@ -343,3 +343,87 @@ class TestDiff:
         assert len(removed) == 2
         assert result.stat.messages_removed == 2
         assert result.stat.messages_unchanged == 1  # the first message is common
+
+    def test_diff_text_a_and_b_populated(self):
+        """DiffResult stores serialized text for both sides."""
+        t = make_tract()
+        h1 = t.commit(DialogueContent(role="user", text="Hello")).commit_hash
+        h2 = t.commit(DialogueContent(role="assistant", text="World")).commit_hash
+        result = t.diff(h1, h2)
+        assert "Hello" in result._text_a
+        assert "user" in result._text_a
+        assert "Hello" in result._text_b
+        assert "World" in result._text_b
+        assert "assistant" in result._text_b
+
+    def test_diff_open_writes_temp_files(self, tmp_path, monkeypatch):
+        """open() writes both sides to temp files and launches editor."""
+        t = make_tract()
+        h1 = t.commit(DialogueContent(role="user", text="Hello")).commit_hash
+        h2 = t.commit(DialogueContent(role="assistant", text="World")).commit_hash
+        result = t.diff(h1, h2)
+
+        launched: list[list[str]] = []
+
+        def fake_popen(cmd, **_kw):
+            launched.append(cmd)
+
+        import subprocess
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        monkeypatch.setenv("EDITOR", "myeditor")
+
+        result.open()
+
+        assert len(launched) == 1
+        cmd = launched[0]
+        assert cmd[0] == "myeditor"
+        # Two file paths as arguments
+        assert len(cmd) == 3
+        import os
+        assert os.path.exists(cmd[1])
+        assert os.path.exists(cmd[2])
+        # Files contain the right content
+        with open(cmd[1]) as f:
+            assert "Hello" in f.read()
+        with open(cmd[2]) as f:
+            content = f.read()
+            assert "Hello" in content
+            assert "World" in content
+
+    def test_diff_open_vscode_uses_dash_dash_diff(self, monkeypatch):
+        """open() uses --diff flag when editor is 'code'."""
+        t = make_tract()
+        h1 = t.commit(DialogueContent(role="user", text="A")).commit_hash
+        h2 = t.commit(DialogueContent(role="assistant", text="B")).commit_hash
+        result = t.diff(h1, h2)
+
+        launched: list[list[str]] = []
+
+        def fake_popen(cmd, **_kw):
+            launched.append(cmd)
+
+        import subprocess
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+        result.open(editor="code")
+
+        assert len(launched) == 1
+        cmd = launched[0]
+        assert cmd[0] == "code"
+        assert cmd[1] == "--diff"
+
+    def test_diff_open_no_editor_raises(self, monkeypatch):
+        """open() raises EnvironmentError when no editor found."""
+        t = make_tract()
+        h1 = t.commit(DialogueContent(role="user", text="A")).commit_hash
+        h2 = t.commit(DialogueContent(role="assistant", text="B")).commit_hash
+        result = t.diff(h1, h2)
+
+        monkeypatch.delenv("EDITOR", raising=False)
+        monkeypatch.delenv("TRACT_DIFF_EDITOR", raising=False)
+
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda _: None)
+
+        with pytest.raises(EnvironmentError, match="No editor found"):
+            result.open()
