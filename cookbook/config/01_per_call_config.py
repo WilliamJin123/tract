@@ -18,6 +18,7 @@ Demonstrates: LLMConfig, sugar params, generate() two-step,
 
 import os
 
+import click
 from dotenv import load_dotenv
 
 from tract import LLMConfig, Tract
@@ -104,6 +105,41 @@ def part1_per_call_config():
 
 
 # =============================================================================
+# Part 2 -- Interactive: Prompt user for config before each call
+# =============================================================================
+# Show the user what config will be used, let them tweak temperature and
+# max_tokens via click prompts, and confirm before sending.
+
+def part2_interactive():
+    """Part 2: Interactive -- prompt for temperature/max_tokens before chat."""
+    print("=" * 60)
+    print("PART 2 -- Interactive: Prompt for Config Before Each Call")
+    print("=" * 60)
+
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    ) as t:
+        t.system("You are a helpful assistant. Be concise.")
+
+        question = click.prompt("\n  Your question", default="What is Python?")
+        temp = click.prompt("  Temperature", type=float, default=0.7)
+        max_tok = click.prompt("  Max tokens", type=int, default=300)
+
+        config = LLMConfig(temperature=temp, max_tokens=max_tok)
+        print(f"\n  Resolved config: temperature={temp}, max_tokens={max_tok}")
+
+        if click.confirm("  Use this config?", default=True):
+            response = t.chat(question, llm_config=config)
+            gc = response.generation_config
+            print(f"\n  Captured: temp={gc.temperature}, max_tokens={gc.max_tokens}")
+            response.pprint()
+        else:
+            print("  Skipped -- no call made.")
+
+
+# =============================================================================
 # Part 3 -- Agent: Self-Configuring via Toolkit
 # =============================================================================
 # Agents introspect their own generation_config via status() and adjust
@@ -145,6 +181,7 @@ def part3_agent():
 
 def main():
     part1_per_call_config()
+    part2_interactive()
     part3_agent()
 
 

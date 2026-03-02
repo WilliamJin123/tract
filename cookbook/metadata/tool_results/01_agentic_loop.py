@@ -13,19 +13,22 @@ Demonstrates: set_tools(), generate() with tool_calls, tool_result(),
 """
 
 import os
+import sys
+from functools import partial
+from pathlib import Path
 
 import click
-import httpx
 from dotenv import load_dotenv
 
 from tract import Tract
 from tract.protocols import ToolCall
 
-load_dotenv()
+# Allow importing _helpers from the same directory when run as a script.
+sys.path.insert(0, str(Path(__file__).parent))
+from _helpers import TOOLS, execute_tool as _execute_tool, call_llm  # noqa: E402
+from _helpers import TRACT_OPENAI_API_KEY, TRACT_OPENAI_BASE_URL, MODEL_ID  # noqa: E402
 
-TRACT_OPENAI_API_KEY = os.environ.get("TRACT_OPENAI_API_KEY", "")
-TRACT_OPENAI_BASE_URL = os.environ.get("TRACT_OPENAI_BASE_URL", "")
-MODEL_ID = "gpt-oss-120b"
+load_dotenv()
 
 # The directory this file lives in — tools will search here.
 COOKBOOK_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -33,134 +36,9 @@ COOKBOOK_DIR = os.path.dirname(os.path.abspath(__file__))
 # The marker to search for — split to avoid matching THIS file in search.
 _MARKER = "DIS" + "COVERY"
 
-
-# --- Tool definitions (OpenAI function-calling format) ---
-
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "list_directory",
-            "description": "List files in a directory. Returns one filename per line.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Directory path relative to the 08_tool_calling/ root.",
-                    },
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read a file and return its contents as text.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Filename (not full path) inside the 08_tool_calling/ directory.",
-                    },
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_files",
-            "description": "Search for a text pattern across all .py files in the 08_tool_calling/ directory. Returns matching lines with filenames.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "Text pattern to search for (case-sensitive substring match).",
-                    },
-                },
-                "required": ["pattern"],
-            },
-        },
-    },
-]
-
-
-# --- Tool implementations ---
-
-_SELF = os.path.basename(__file__)  # Exclude this file from search results.
-
-
-def execute_tool(name: str, arguments: dict) -> str:
-    """Execute a tool by name. All paths are sandboxed to COOKBOOK_DIR."""
-    if name == "list_directory":
-        rel = arguments.get("path", ".")
-        target = os.path.normpath(os.path.join(COOKBOOK_DIR, rel))
-        if not target.startswith(COOKBOOK_DIR):
-            return "Error: path outside sandbox"
-        try:
-            entries = sorted(os.listdir(target))
-            return "\n".join(entries)
-        except OSError as e:
-            return f"Error: {e}"
-
-    elif name == "read_file":
-        filename = arguments["path"]
-        target = os.path.normpath(os.path.join(COOKBOOK_DIR, filename))
-        if not target.startswith(COOKBOOK_DIR):
-            return "Error: path outside sandbox"
-        try:
-            with open(target) as f:
-                return f.read()
-        except OSError as e:
-            return f"Error: {e}"
-
-    elif name == "search_files":
-        pattern = arguments["pattern"]
-        matches = []
-        for fname in sorted(os.listdir(COOKBOOK_DIR)):
-            if not fname.endswith(".py") or fname == _SELF:
-                continue
-            fpath = os.path.join(COOKBOOK_DIR, fname)
-            try:
-                with open(fpath) as f:
-                    for i, line in enumerate(f, 1):
-                        if pattern in line:
-                            matches.append(f"{fname}:{i}: {line.rstrip()}")
-            except OSError:
-                continue
-        return "\n".join(matches) if matches else f"No matches for '{pattern}'"
-
-    return f"Unknown tool: {name}"
-
-
-# --- LLM caller (bypasses generate() for tool-calling turns) ---
-
-def call_llm(messages: list[dict], tools: list[dict]) -> dict:
-    """Call OpenAI-compatible API with tool definitions.
-
-    We call the API directly (via httpx) rather than using t.generate()
-    because tool-calling responses often have null content, which the
-    current generate() path doesn't handle. Tract manages the context;
-    we manage the LLM call.
-    """
-    response = httpx.post(
-        f"{TRACT_OPENAI_BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {TRACT_OPENAI_API_KEY}"},
-        json={
-            "model": MODEL_ID,
-            "messages": messages,
-            "tools": tools,
-        },
-        timeout=120,
-    )
-    response.raise_for_status()
-    return response.json()
+# Bind execute_tool to this file's sandbox directory.
+_SELF = os.path.basename(__file__)
+execute_tool = partial(_execute_tool, cookbook_dir=COOKBOOK_DIR, exclude_file=_SELF)
 
 
 # =============================================================================

@@ -17,6 +17,7 @@ Demonstrates: LLMConfig, default_config=, configure_operations(),
 
 import os
 
+import click
 from dotenv import load_dotenv
 
 from tract import LLMConfig, Tract
@@ -100,6 +101,50 @@ def part2_defaults_and_operations():
 
 
 # =============================================================================
+# Part 2 -- Interactive: Experiment with operation vs per-call precedence
+# =============================================================================
+# Let the user override the chat operation temperature on a per-call basis
+# and see how the resolution chain works in practice.
+
+def part2_interactive():
+    """Part 2: Interactive -- experiment with operation vs per-call config."""
+    print("=" * 60)
+    print("PART 2 -- Interactive: Operation vs Per-Call Precedence")
+    print("=" * 60)
+
+    tract_default = LLMConfig(model=MODEL_ID, temperature=0.5, top_p=0.95)
+
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        default_config=tract_default,
+    ) as t:
+        t.system("You are a helpful assistant.")
+        t.configure_operations(chat=LLMConfig(temperature=0.8))
+
+        print(f"\n  Tract default temperature:     0.5")
+        print(f"  Chat operation temperature:    0.8")
+
+        override = click.prompt(
+            "  Override temperature for this call? (enter value or 'no')",
+            default="no",
+        )
+
+        if override.lower() != "no":
+            temp = float(override)
+            print(f"\n  Calling chat with per-call temperature={temp}")
+            print(f"  Resolution: per-call ({temp}) > operation (0.8) > default (0.5)")
+            response = t.chat("What makes Python readable?", temperature=temp)
+        else:
+            print(f"\n  Using operation config: temperature=0.8")
+            response = t.chat("What makes Python readable?")
+
+        gc = response.generation_config
+        print(f"\n  Effective temperature: {gc.temperature}")
+        response.pprint()
+
+
+# =============================================================================
 # Part 3 -- Agent: Agent-Driven Operation Config
 # =============================================================================
 # Agents can observe but not modify operation configs at runtime --
@@ -134,6 +179,7 @@ def part3_agent():
 
 def main():
     part2_defaults_and_operations()
+    part2_interactive()
     part3_agent()
 
 

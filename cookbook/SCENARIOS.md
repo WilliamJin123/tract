@@ -60,8 +60,7 @@ cookbook/
 │   ├── tool_results/
 │   │   ├── 01_agentic_loop.py          # set_tools, tool_result, compress_tool_calls
 │   │   ├── 02_auto_summarization.py    # configure_tool_summarization, auto-summarize
-│   │   ├── 03_offline_tool_management.py # tool management without LLM calls
-│   │   └── dummy_file.py              # Search target for agentic loop demo
+│   │   └── 03_offline_tool_management.py # tool management without LLM calls
 │   └── reasoning/
 │       ├── 01_manual_reasoning.py      # t.reasoning(), ReasoningContent, SKIP default
 │       ├── 02_compile_control.py       # compile(include_reasoning=True), annotate overrides

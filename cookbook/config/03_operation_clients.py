@@ -14,6 +14,7 @@ Demonstrates: OpenAIClient, configure_clients(), OperationClients,
 
 import os
 
+import click
 from dotenv import load_dotenv
 
 from tract import LLMConfig, OperationClients, Tract
@@ -139,6 +140,60 @@ def part3_per_operation_clients():
 
 
 # =============================================================================
+# Part 2 -- Interactive: Confirm client routing before proceeding
+# =============================================================================
+# Show the user which clients are routed to which operations, let them
+# confirm or change the routing for compress before running a chat call.
+
+def part2_interactive():
+    """Part 2: Interactive -- confirm client routing table before proceeding."""
+    print("=" * 60)
+    print("PART 2 -- Interactive: Confirm Client Routing")
+    print("=" * 60)
+
+    primary_client = OpenAIClient(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+    )
+    secondary_client = OpenAIClient(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+    )
+
+    try:
+        t = Tract.open(default_config=LLMConfig(model=MODEL_ID))
+        t.configure_clients(chat=primary_client)
+
+        # Show current routing
+        print("\n  Current client routing:")
+        print(f"    chat:     primary (configured)")
+        print(f"    compress: (not configured)")
+
+        if click.confirm("  Route compress to secondary client?", default=True):
+            t.configure_clients(compress=secondary_client)
+            print("  -> compress now routes to secondary client")
+        else:
+            print("  -> compress left unconfigured (will use default)")
+
+        # Show updated routing
+        clients = t.operation_clients
+        print(f"\n  Final routing:")
+        print(f"    chat:     {'configured' if clients.chat else 'default'}")
+        print(f"    compress: {'configured' if clients.compress else 'default'}")
+
+        if click.confirm("\n  Proceed with a chat call?", default=True):
+            t.system("You are a helpful assistant.")
+            response = t.chat("What are Python decorators?")
+            response.pprint()
+
+        t.close()
+    finally:
+        primary_client.close()
+        secondary_client.close()
+        print("\n  Clients closed by caller.")
+
+
+# =============================================================================
 # Part 3b -- Agent: Perspective on Client Routing
 # =============================================================================
 # Client routing is init-time configuration. Agents observe which client
@@ -173,6 +228,7 @@ def part3b_agent_client_perspective():
 
 def main():
     part3_per_operation_clients()
+    part2_interactive()
     part3b_agent_client_perspective()
 
 

@@ -12,6 +12,7 @@ Demonstrates: generation_config, query_by_config() patterns (single-field,
 
 import os
 
+import click
 from dotenv import load_dotenv
 
 from tract import Priority, Tract, ToolCall
@@ -129,6 +130,54 @@ def part1_config_provenance():
                 print(f"  {entry.commit_hash[:8]}: {', '.join(parts)}")
 
 
+def part2_interactive():
+    """Part 2: Interactive -- human picks temperature and queries config."""
+    print(f"\n{'=' * 60}")
+    print("PART 2 -- Interactive: CONFIG PROVENANCE")
+    print("=" * 60)
+    print()
+
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    ) as t:
+        t.system("You are a creative writing assistant. Keep responses under 2 sentences.")
+
+        # Let the user pick temperature for each call
+        for i in range(2):
+            temp = click.prompt(
+                f"  Temperature for call {i+1}?", type=float, default=0.7,
+            )
+            prompt = click.prompt(f"  Prompt for call {i+1}?",
+                                  default="Write a one-sentence story.")
+            r = t.chat(prompt, temperature=temp)
+            r.pprint()
+            print()
+
+        # Interactive query builder
+        print("  --- Interactive query builder ---\n")
+        field = click.prompt("  Query field",
+                             type=click.Choice(["temperature", "max_tokens", "model"]))
+        operator = click.prompt("  Operator",
+                                type=click.Choice(["=", ">", "<"]))
+        value_str = click.prompt("  Value")
+
+        # Coerce value to the right type
+        try:
+            value = float(value_str)
+        except ValueError:
+            value = value_str
+
+        results = t.query_by_config(field, operator, value)
+        print(f"\n  {len(results)} commit(s) match {field} {operator} {value}:")
+        for c in results:
+            cfg = c.generation_config
+            fields = cfg.non_none_fields()
+            parts = [f"{k}={v}" for k, v in fields.items()]
+            print(f"    {c.commit_hash[:8]}: {', '.join(parts)}")
+
+
 # =============================================================================
 # Part 3 -- Agent: Queries Own Config Provenance
 # =============================================================================
@@ -169,6 +218,7 @@ def part3_agent():
 
 def main():
     part1_config_provenance()
+    part2_interactive()
     part3_agent()
 
 

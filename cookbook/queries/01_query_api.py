@@ -18,6 +18,7 @@ Demonstrates: find_tool_results(name=, after=), find_tool_calls(name=),
 
 import os
 
+import click
 from dotenv import load_dotenv
 
 from tract import Tract
@@ -284,6 +285,49 @@ def part1_query_api():
     t.close()
 
 
+def part2_interactive():
+    """Part 2: Interactive -- human picks tool filter and records usage."""
+    print(f"\n{'=' * 60}")
+    print("PART 2 -- Interactive: QUERY API")
+    print("=" * 60)
+    print()
+
+    t = Tract.open()
+    _build_agent_session(t)
+
+    # Discover all distinct tool names in the session
+    all_turns = t.find_tool_turns()
+    tool_names = sorted({n for turn in all_turns for n in turn.tool_names})
+    print(f"  Tools used in this session: {', '.join(tool_names)}\n")
+
+    # Let the user pick which tool to filter by
+    chosen = click.prompt(
+        "  Filter tool turns by name",
+        type=click.Choice(tool_names),
+    )
+
+    filtered = t.find_tool_turns(name=chosen)
+    print(f"\n  {len(filtered)} turn(s) for '{chosen}':\n")
+    for i, turn in enumerate(filtered):
+        print(f"    Turn {i+1}: {turn.total_tokens} tokens, "
+              f"{len(turn.results)} result(s)")
+        for result in turn.results:
+            content = t.get_content(result)
+            lines = (content or "").split("\n")
+            print(f"      [{result.metadata.get('name', '?')}] "
+                  f"{result.token_count} tokens, {len(lines)} lines")
+
+    # Offer to record a usage checkpoint
+    ctx = t.compile()
+    print(f"\n  Current context: {ctx.token_count} tokens")
+    if click.confirm("  Record usage checkpoint?", default=True):
+        t.record_usage({"prompt_tokens": ctx.token_count, "completion_tokens": 0})
+        cps = t.token_checkpoints()
+        print(f"  Checkpoint recorded ({len(cps)} total checkpoint(s))")
+
+    t.close()
+
+
 # =============================================================================
 # Part 3 -- Agent: Self-Audits via Toolkit
 # =============================================================================
@@ -323,6 +367,7 @@ def part3_agent():
 
 def main():
     part1_query_api()
+    part2_interactive()
     part3_agent()
 
 

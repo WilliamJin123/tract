@@ -12,6 +12,7 @@ Demonstrates: t.assistant(edit=), edit_history(), restore(),
 
 import os
 
+import click
 from dotenv import load_dotenv
 
 from tract import Priority, Tract, ToolCall
@@ -139,6 +140,73 @@ def part3_edit_history():
         print(f"  Only the black hole definition was rolled back to v1.")
 
 
+def part2_interactive():
+    """Part 2: Interactive -- human picks a response to edit and can restore."""
+    print(f"\n{'=' * 60}")
+    print("PART 2 -- Interactive: EDIT HISTORY")
+    print("=" * 60)
+    print()
+
+    with Tract.open(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID_SMALL,
+    ) as t:
+        t.system("You are a concise writing assistant. Keep answers under 2 sentences.")
+
+        # Build a few assistant responses
+        r1 = t.chat("Explain what a black hole is.")
+        r2 = t.chat("Explain what dark matter is.")
+        r3 = t.chat("Explain what a neutron star is.")
+
+        responses = [r1, r2, r3]
+        prompts = ["black hole", "dark matter", "neutron star"]
+
+        # Show numbered list of assistant responses
+        print("  Assistant responses:\n")
+        for i, r in enumerate(responses):
+            print(f"    {i+1}. [{prompts[i]}] {r.text[:80]}...")
+        print()
+
+        # Let user pick which to edit
+        choice = click.prompt(
+            "  Edit which response? (number)", type=int, default=1,
+        )
+        idx = max(1, min(choice, len(responses))) - 1
+        target = responses[idx]
+        original_hash = target.commit_info.commit_hash
+
+        # Open in editor
+        edited = click.edit(target.text)
+        if edited and edited.strip() != target.text:
+            ci = t.assistant(
+                edited.strip(),
+                edit=original_hash,
+                message=f"Interactive edit of '{prompts[idx]}' response",
+            )
+            print(f"  Edit committed: {ci.commit_hash[:8]}")
+        else:
+            print("  (no changes)")
+
+        # Offer to view edit history
+        if click.confirm("\n  View edit history?", default=True):
+            history = t.edit_history(original_hash)
+            print(f"\n  {len(history)} version(s) for {original_hash[:8]}:\n")
+            for i, version in enumerate(history):
+                label = "ORIGINAL" if i == 0 else f"EDIT {i}"
+                content = t.get_content(version)
+                print(f"    v{i} ({label}) [{version.commit_hash[:8]}]")
+                print(f"       {str(content)[:80]}")
+                print()
+
+            # Offer restore if there are edits
+            if len(history) > 1:
+                if click.confirm(f"  Restore to version 0 (original)?", default=False):
+                    restored = t.restore(original_hash, version=0)
+                    print(f"  Restored: {restored.commit_hash[:8]}")
+                    print(f"  Content: {t.get_content(restored)[:80]}...")
+
+
 # =============================================================================
 # Part 3b -- Agent: Traces Own Edit History
 # =============================================================================
@@ -184,6 +252,7 @@ def part3b_agent():
 
 def main():
     part3_edit_history()
+    part2_interactive()
     part3b_agent()
 
 

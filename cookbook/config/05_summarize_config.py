@@ -14,7 +14,10 @@ This example shows all four modes.
 """
 
 import os
+
+import click
 from dotenv import load_dotenv
+
 from tract import LLMConfig, Tract
 
 
@@ -100,6 +103,57 @@ with Tract.open(
 
 
 # =============================================================================
+# Part 2 -- Interactive: Pick summarize mode interactively
+# =============================================================================
+# Let the user choose between cheap (small model), full (main model), or off
+# (no auto-summarize) before opening the tract.
+
+def part2_interactive():
+    """Part 2: Interactive -- pick auto_summarize mode via click prompt."""
+    print("=" * 60)
+    print("PART 2 -- Interactive: Pick Summarize Mode")
+    print("=" * 60)
+
+    mode = click.prompt(
+        "\n  Summarize mode",
+        type=click.Choice(["cheap", "full", "off"]),
+        default="cheap",
+    )
+
+    if mode == "cheap":
+        auto_summarize = MESSAGE_MODEL_ID
+        print(f"  -> Using cheap model ({MESSAGE_MODEL_ID}) for summaries")
+    elif mode == "full":
+        auto_summarize = True
+        print(f"  -> Using main model ({MODEL_ID}) for summaries")
+    else:
+        auto_summarize = False
+        print(f"  -> Auto-summarize disabled (raw text previews)")
+
+    open_kwargs = dict(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL,
+        model=MODEL_ID,
+    )
+    if auto_summarize is not False:
+        open_kwargs["auto_summarize"] = auto_summarize
+
+    with Tract.open(**open_kwargs) as t:
+        t.system("You are a helpful coding assistant.")
+        t.user("How do I sort a list in Python?")
+
+        print(f"\n  Log after commits:")
+        for entry in t.log():
+            print(f"    {entry.commit_hash[:8]} {entry.message}")
+
+        if click.confirm("\n  Send a chat call to see an assistant commit?", default=True):
+            t.chat("Show me an example with sorted().")
+            print(f"\n  Updated log:")
+            for entry in t.log():
+                print(f"    {entry.commit_hash[:8]} {entry.message}")
+
+
+# =============================================================================
 # Part 3 -- Agent: Observes Compression Config
 # =============================================================================
 # Agents observe compression config via status() and can influence
@@ -133,5 +187,10 @@ def part3_agent():
         print("  but the summarization model is set at Tract.open() time.")
 
 
-if __name__ == "__main__":
+def main():
+    part2_interactive()
     part3_agent()
+
+
+if __name__ == "__main__":
+    main()
