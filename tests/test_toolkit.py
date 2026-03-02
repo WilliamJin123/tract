@@ -588,3 +588,100 @@ class TestNewTools:
         assert "configure_model" in SUPERVISOR_PROFILE.tool_configs
         assert "register_trigger" in SUPERVISOR_PROFILE.tool_configs
         assert "toggle_triggers" in SUPERVISOR_PROFILE.tool_configs
+
+
+# ---------------------------------------------------------------------------
+# as_callable_tools() tests
+# ---------------------------------------------------------------------------
+
+
+class TestAsCallableTools:
+    """Tests for Tract.as_callable_tools() framework integration."""
+
+    def test_returns_callables(self, tract):
+        """as_callable_tools() returns a list of callables."""
+        tools = tract.as_callable_tools()
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        for tool in tools:
+            assert callable(tool)
+
+    def test_callable_has_name(self, tract):
+        """Each callable has __name__ matching the tool name."""
+        tools = tract.as_callable_tools()
+        names = {t.__name__ for t in tools}
+        assert "status" in names
+        assert "compile" in names
+        assert "log" in names
+
+    def test_callable_has_docstring(self, tract):
+        """Each callable has __doc__ from the tool description."""
+        tools = tract.as_callable_tools()
+        status_tool = next(t for t in tools if t.__name__ == "status")
+        assert status_tool.__doc__ is not None
+        assert len(status_tool.__doc__) > 10
+
+    def test_callable_has_signature(self, tract):
+        """Each callable has a proper inspect.Signature with typed params."""
+        import inspect
+
+        tools = tract.as_callable_tools()
+        annotate_tool = next(t for t in tools if t.__name__ == "annotate")
+
+        sig = inspect.signature(annotate_tool)
+        assert "target_hash" in sig.parameters
+        assert "priority" in sig.parameters
+
+        # Check type annotations
+        assert sig.parameters["target_hash"].annotation is str
+        assert sig.parameters["priority"].annotation is str
+
+    def test_callable_has_return_annotation(self, tract):
+        """Each callable's signature has str return annotation."""
+        import inspect
+
+        tools = tract.as_callable_tools()
+        status_tool = next(t for t in tools if t.__name__ == "status")
+        sig = inspect.signature(status_tool)
+        assert sig.return_annotation is str
+
+    def test_callable_executes(self, tract_with_commits):
+        """Calling a callable actually executes the tool handler."""
+        tools = tract_with_commits.as_callable_tools()
+        status_tool = next(t for t in tools if t.__name__ == "status")
+        result = status_tool()
+        assert isinstance(result, str)
+        assert "main" in result  # branch name in status output
+
+    def test_callable_with_args(self, tract_with_commits):
+        """Callables with parameters accept kwargs correctly."""
+        tools = tract_with_commits.as_callable_tools()
+        log_tool = next(t for t in tools if t.__name__ == "log")
+        result = log_tool(limit=2)
+        assert isinstance(result, str)
+
+    def test_profile_filtering(self, tract):
+        """as_callable_tools() respects profile filtering."""
+        self_tools = tract.as_callable_tools(profile="self")
+        full_tools = tract.as_callable_tools(profile="full")
+        self_names = {t.__name__ for t in self_tools}
+        full_names = {t.__name__ for t in full_tools}
+        # Full profile has more tools than self
+        assert len(full_names) >= len(self_names)
+
+    def test_description_overrides(self, tract):
+        """as_callable_tools() applies description overrides."""
+        tools = tract.as_callable_tools(overrides={"status": "Custom description"})
+        status_tool = next(t for t in tools if t.__name__ == "status")
+        assert status_tool.__doc__ == "Custom description"
+
+    def test_optional_params_have_defaults(self, tract):
+        """Optional JSON Schema params become kwargs with defaults."""
+        import inspect
+
+        tools = tract.as_callable_tools()
+        log_tool = next(t for t in tools if t.__name__ == "log")
+        sig = inspect.signature(log_tool)
+        # 'limit' is optional in the log tool
+        if "limit" in sig.parameters:
+            assert sig.parameters["limit"].default is not inspect.Parameter.empty

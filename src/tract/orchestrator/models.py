@@ -70,6 +70,8 @@ class StepResult:
     result_error: str = ""
     success: bool = True
     review_decision: str = ""
+    generation_config: dict | None = None
+    usage: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,8 @@ class OrchestratorResult:
     state: OrchestratorState = field(default=None)  # type: ignore[assignment]
     assessment: str = ""
     total_tool_calls: int = 0
+    total_usage: dict | None = None
+    model: str | None = None
 
     def __post_init__(self) -> None:
         # Lazy import to avoid circular dependency at module level
@@ -95,3 +99,26 @@ class OrchestratorResult:
     def succeeded(self) -> list[StepResult]:
         """Return all steps that completed successfully."""
         return [s for s in self.steps if s.success]
+
+
+@dataclass(frozen=True)
+class AgentLoopResult:
+    """Result from any AgentLoop implementation.
+
+    Minimal common result type for the AgentLoop protocol.
+    The built-in Orchestrator returns the richer OrchestratorResult;
+    external adapters return this.
+
+    Attributes:
+        steps: Tool-call step records with optional per-step provenance.
+        completed: Whether the loop finished naturally (vs stopped/errored).
+        total_usage: Aggregate token usage across all LLM calls in the loop.
+        model: Primary model used by the loop (informational).
+        metadata: Framework-specific data (Agno metrics, LangChain callbacks, etc.).
+    """
+
+    steps: list[StepResult] = field(default_factory=list)
+    completed: bool = True
+    total_usage: dict | None = None
+    model: str | None = None
+    metadata: dict = field(default_factory=dict)

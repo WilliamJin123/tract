@@ -223,6 +223,7 @@ class Tract:
         self._trigger_repo: SqliteTriggerRepository | None = None
         self._orchestrating: bool = False
         self._orchestrator: Orchestrator | None = None  # type: ignore[assignment]
+        self._agent_loop: object | None = None  # AgentLoop protocol
         self._trigger_commit_count: int = 0
         self._token_trigger_fired: bool = False
         self._owns_llm_client: bool = False
@@ -271,6 +272,7 @@ class Tract:
         tokenizer_encoding: str | None = None,
         commit_reasoning: bool = True,
         auto_summarize: bool | str | LLMConfig = False,
+        agent_loop: object | None = None,
     ) -> Tract:
         """Open (or create) a Trace repository.
 
@@ -323,6 +325,10 @@ class Tract:
                 - ``True``: use the tract-level default LLM client/model.
                 - ``"model-name"``: use a specific model (e.g. ``"llama3.1-8b"``).
                 - :class:`LLMConfig`: full control over summarization config.
+            agent_loop: A custom agent loop conforming to the
+                :class:`~tract.llm.protocols.AgentLoop` protocol.  When set,
+                :meth:`orchestrate` delegates to this loop instead of the
+                built-in :class:`~tract.orchestrator.loop.Orchestrator`.
 
         Returns:
             A ready-to-use ``Tract`` instance.
@@ -535,6 +541,10 @@ class Tract:
                     tract._operation_configs, summarize=auto_summarize,
                 )
             # auto_summarize=True: no operation config needed, uses default
+
+        # Plug-in agent loop
+        if agent_loop is not None:
+            tract._agent_loop = agent_loop
 
         return tract
 
@@ -5192,6 +5202,66 @@ class Tract:
                 f"Unknown format '{format}'. Supported: 'openai', 'anthropic'."
             )
 
+    def as_callable_tools(
+        self,
+        *,
+        profile: str | object = "self",
+        overrides: dict[str, str] | None = None,
+    ) -> list:
+        """Get tools as typed Python callables for framework integration.
+
+        Returns tract tools as functions with proper ``__name__``, ``__doc__``,
+        ``__signature__``, and type annotations.  Works with any framework
+        that introspects callables: Agno, LangChain, CrewAI, LangGraph, etc.
+
+        Args:
+            profile: A profile name (``"self"``, ``"supervisor"``, ``"full"``)
+                or a :class:`~tract.toolkit.models.ToolProfile` instance.
+            overrides: Optional dict mapping tool names to replacement
+                descriptions.  Applied on top of the profile's descriptions.
+
+        Returns:
+            List of typed Python callables, one per tool.
+        """
+        from tract.toolkit.callables import tools_to_callables
+        from tract.toolkit.definitions import get_all_tools
+        from tract.toolkit.models import ToolProfile as _ToolProfile
+        from tract.toolkit.profiles import get_profile
+
+        all_tools = get_all_tools(self)
+
+        # Resolve profile
+        if isinstance(profile, str):
+            resolved_profile = get_profile(profile)
+        elif isinstance(profile, _ToolProfile):
+            resolved_profile = profile
+        else:
+            raise TypeError(
+                f"profile must be a string or ToolProfile, got {type(profile).__name__}"
+            )
+
+        # Apply profile filtering
+        filtered = resolved_profile.filter_tools(all_tools)
+
+        # Include dynamic operation tools (same as as_tools)
+        filtered_names = {t.name for t in filtered}
+        for tool in all_tools:
+            if tool.name.startswith("fire_") and tool.name not in filtered_names:
+                filtered.append(tool)
+
+        # Apply description overrides
+        if overrides:
+            from dataclasses import replace as _replace
+
+            new_filtered = []
+            for tool in filtered:
+                if tool.name in overrides:
+                    tool = _replace(tool, description=overrides[tool.name])
+                new_filtered.append(tool)
+            filtered = new_filtered
+
+        return tools_to_callables(filtered)
+
     def switch_profile(self, profile: str | object) -> None:
         """Switch the active tool profile.
 
@@ -5341,27 +5411,49 @@ class Tract:
                 "Call configure_llm() or provide llm_callable."
             )
 
+    def configure_agent_loop(self, loop: object) -> None:
+        """Set a custom agent loop for :meth:`orchestrate`.
+
+        When set, :meth:`orchestrate` delegates to this loop instead of the
+        built-in :class:`~tract.orchestrator.loop.Orchestrator`.  The loop
+        must conform to the :class:`~tract.llm.protocols.AgentLoop` protocol.
+
+        Args:
+            loop: An object implementing ``run()`` and ``stop()``.
+        """
+        self._agent_loop = loop
+
     def orchestrate(
         self,
         *,
         config: OrchestratorConfig | None = None,
         llm_callable: Callable | None = None,
         trigger_autonomy: AutonomyLevel | None = None,
+        agent_loop: object | None = None,
     ) -> OrchestratorResult:
         """Run the orchestrator agent loop.
 
         Convenience method that creates or reuses an Orchestrator
-        and runs it.
+        and runs it.  When an :class:`~tract.llm.protocols.AgentLoop` is
+        configured (via *agent_loop=*, :meth:`configure_agent_loop`, or
+        ``Tract.open(agent_loop=...)``), delegates to that loop instead.
 
         Args:
             config: Optional OrchestratorConfig override.
             llm_callable: Optional LLM callable override.
             trigger_autonomy: Optional autonomy override from a trigger.
                 When set, effective autonomy is min(ceiling, trigger_autonomy).
+            agent_loop: Optional AgentLoop override for this call only.
+                Takes precedence over :meth:`configure_agent_loop`.
 
         Returns:
             OrchestratorResult from the orchestrator run.
         """
+        # Dispatch to external agent loop if configured
+        loop = agent_loop or self._agent_loop
+        if loop is not None:
+            return self._run_agent_loop(loop)
+
         from tract.orchestrator import Orchestrator as _Orchestrator
 
         # Step 1: Resolve per-operation config BEFORE the three-way branch
@@ -5416,11 +5508,91 @@ class Tract:
         orch = _Orchestrator(self)
         return orch.run(trigger_autonomy=trigger_autonomy)
 
-    def stop_orchestrator(self) -> None:
-        """Stop the running orchestrator immediately.
+    def _run_agent_loop(self, loop: object) -> OrchestratorResult:
+        """Dispatch orchestration to an external AgentLoop.
 
-        No-op if no orchestrator is configured.
+        Builds assessment and tools, hands off to the loop, wraps the
+        result into an OrchestratorResult, and records provenance.
+
+        Args:
+            loop: An object conforming to the AgentLoop protocol.
+
+        Returns:
+            OrchestratorResult wrapping the loop's result.
         """
+        from tract.orchestrator.assessment import build_context_assessment
+        from tract.orchestrator.config import OrchestratorState as _OrchestratorState
+        from tract.orchestrator.models import AgentLoopResult as _AgentLoopResult
+        from tract.orchestrator.models import OrchestratorResult as _OrchestratorResult
+        from tract.toolkit.executor import ToolExecutor as _ToolExecutor
+
+        # Build assessment
+        assessment = build_context_assessment(self)
+
+        # Get tools
+        tools = self.as_tools(profile="self")
+
+        # Build execute_tool callable
+        executor = _ToolExecutor(self)
+
+        def execute_tool(tool_name: str, arguments: dict) -> object:
+            return executor.execute(tool_name, arguments)
+
+        # Build messages
+        from tract.prompts.orchestrator import ORCHESTRATOR_SYSTEM_PROMPT
+
+        messages = [
+            {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT},
+            {"role": "user", "content": assessment},
+        ]
+
+        # Dispatch to external loop
+        self._orchestrating = True
+        try:
+            result = loop.run(  # type: ignore[union-attr]
+                messages=messages,
+                tools=tools,
+                execute_tool=execute_tool,
+            )
+        finally:
+            self._orchestrating = False
+
+        # Normalize result
+        if isinstance(result, _AgentLoopResult):
+            steps = result.steps
+            completed = result.completed
+            total_usage = result.total_usage
+            model = result.model
+        else:
+            # Duck-type: try to extract fields
+            steps = getattr(result, "steps", [])
+            completed = getattr(result, "completed", True)
+            total_usage = getattr(result, "total_usage", None)
+            model = getattr(result, "model", None)
+
+        # Record provenance: aggregate usage
+        if total_usage is not None:
+            try:
+                self.record_usage(total_usage)
+            except Exception:
+                pass  # Best-effort provenance
+
+        return _OrchestratorResult(
+            steps=steps,
+            state=_OrchestratorState.IDLE,
+            assessment=assessment,
+            total_tool_calls=len(steps),
+            total_usage=total_usage,
+            model=model,
+        )
+
+    def stop_orchestrator(self) -> None:
+        """Stop the running orchestrator or agent loop immediately.
+
+        No-op if no orchestrator or agent loop is configured.
+        """
+        if self._agent_loop is not None and hasattr(self._agent_loop, "stop"):
+            self._agent_loop.stop()  # type: ignore[union-attr]
         if self._orchestrator is not None:
             from tract.orchestrator.loop import Orchestrator as _Orchestrator
 

@@ -95,7 +95,7 @@ from tract.operations.history import StatusInfo
 from tract.operations.diff import DiffResult, MessageDiff, DiffStat
 
 # LLM protocol
-from tract.llm.protocols import LLMClient
+from tract.llm.protocols import LLMClient, AgentLoop
 
 # Agent toolkit
 from tract.toolkit.models import ToolDefinition, ToolProfile, ToolConfig, ToolResult
@@ -103,6 +103,7 @@ from tract.toolkit.executor import ToolExecutor
 
 # Orchestrator
 from tract.orchestrator import (
+    AgentLoopResult,
     Orchestrator,
     OrchestratorConfig,
     AutonomyLevel,
@@ -290,6 +291,7 @@ __all__ = [
     "CollapseResult",
     # LLM protocol
     "LLMClient",
+    "AgentLoop",
     # Agent toolkit
     "ToolDefinition",
     "ToolProfile",
@@ -306,6 +308,7 @@ __all__ = [
     "ToolCallReview",
     "StepResult",
     "OrchestratorResult",
+    "AgentLoopResult",
     "auto_approve",
     "log_and_approve",
     "cli_prompt",

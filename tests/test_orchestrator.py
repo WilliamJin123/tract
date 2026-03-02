@@ -906,3 +906,244 @@ class TestTopLevelExports:
 
         tc = TC(id="test", name="status", arguments={})
         assert tc.name == "status"
+
+    def test_agent_loop_result_importable(self):
+        """AgentLoopResult is importable from tract."""
+        from tract import AgentLoopResult
+
+        result = AgentLoopResult(completed=True)
+        assert result.completed is True
+        assert result.steps == []
+        assert result.total_usage is None
+
+    def test_agent_loop_importable(self):
+        """AgentLoop protocol is importable from tract."""
+        from tract import AgentLoop
+
+        assert AgentLoop is not None
+
+
+# ---------------------------------------------------------------------------
+# AgentLoop protocol tests
+# ---------------------------------------------------------------------------
+
+
+class TestAgentLoopProtocol:
+    """Tests for the AgentLoop protocol and agent_loop dispatch."""
+
+    def test_protocol_isinstance_check(self):
+        """A class with run() and stop() conforms to AgentLoop protocol."""
+        from tract.llm.protocols import AgentLoop
+        from tract.orchestrator.models import AgentLoopResult, StepResult, ToolCall
+
+        class MyLoop:
+            def run(self, *, messages, tools, execute_tool):
+                return AgentLoopResult(completed=True)
+
+            def stop(self):
+                pass
+
+        loop = MyLoop()
+        assert isinstance(loop, AgentLoop)
+
+    def test_agent_loop_result_with_provenance(self):
+        """AgentLoopResult carries provenance fields."""
+        from tract.orchestrator.models import AgentLoopResult, StepResult, ToolCall
+
+        step = StepResult(
+            step=1,
+            tool_call=ToolCall(id="c1", name="status", arguments={}),
+            result_output="ok",
+            success=True,
+            generation_config={"model": "gpt-4o", "temperature": 0.5},
+            usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+        )
+        result = AgentLoopResult(
+            steps=[step],
+            completed=True,
+            total_usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+            model="gpt-4o",
+            metadata={"framework": "agno"},
+        )
+        assert result.steps[0].generation_config["model"] == "gpt-4o"
+        assert result.steps[0].usage["total_tokens"] == 120
+        assert result.total_usage["total_tokens"] == 120
+        assert result.model == "gpt-4o"
+        assert result.metadata["framework"] == "agno"
+
+    def test_step_result_provenance_optional(self):
+        """StepResult provenance fields default to None."""
+        from tract.orchestrator.models import StepResult, ToolCall
+
+        step = StepResult(
+            step=1,
+            tool_call=ToolCall(id="c1", name="status"),
+            success=True,
+        )
+        assert step.generation_config is None
+        assert step.usage is None
+
+    def test_orchestrator_result_provenance_fields(self):
+        """OrchestratorResult has total_usage and model fields."""
+        from tract.orchestrator.models import OrchestratorResult
+
+        result = OrchestratorResult(total_usage={"prompt_tokens": 50}, model="gpt-4o")
+        assert result.total_usage == {"prompt_tokens": 50}
+        assert result.model == "gpt-4o"
+
+    def test_orchestrate_dispatches_to_agent_loop(self, tract_with_commits):
+        """t.orchestrate(agent_loop=...) dispatches to the loop."""
+        from tract.orchestrator.models import AgentLoopResult, StepResult, ToolCall
+
+        calls = []
+
+        class MockLoop:
+            def run(self, *, messages, tools, execute_tool):
+                calls.append({
+                    "messages": messages,
+                    "tools": tools,
+                    "execute_tool": execute_tool,
+                })
+                return AgentLoopResult(
+                    steps=[
+                        StepResult(
+                            step=1,
+                            tool_call=ToolCall(id="c1", name="status"),
+                            result_output="ok",
+                            success=True,
+                        ),
+                    ],
+                    completed=True,
+                    model="test-model",
+                )
+
+            def stop(self):
+                pass
+
+        result = tract_with_commits.orchestrate(agent_loop=MockLoop())
+
+        assert len(calls) == 1
+        assert len(calls[0]["messages"]) == 2  # system + assessment
+        assert len(calls[0]["tools"]) > 0
+        assert callable(calls[0]["execute_tool"])
+        assert result.total_tool_calls == 1
+        assert result.model == "test-model"
+
+    def test_configure_agent_loop(self, tract_with_commits):
+        """configure_agent_loop() sets the default loop for orchestrate()."""
+        from tract.orchestrator.models import AgentLoopResult
+
+        class MockLoop:
+            def __init__(self):
+                self.ran = False
+
+            def run(self, *, messages, tools, execute_tool):
+                self.ran = True
+                return AgentLoopResult(completed=True)
+
+            def stop(self):
+                pass
+
+        loop = MockLoop()
+        tract_with_commits.configure_agent_loop(loop)
+        tract_with_commits.orchestrate()
+        assert loop.ran
+
+    def test_agent_loop_param_overrides_configured(self, tract_with_commits):
+        """agent_loop= param on orchestrate() overrides configured loop."""
+        from tract.orchestrator.models import AgentLoopResult
+
+        class Loop1:
+            ran = False
+            def run(self, *, messages, tools, execute_tool):
+                Loop1.ran = True
+                return AgentLoopResult()
+            def stop(self): pass
+
+        class Loop2:
+            ran = False
+            def run(self, *, messages, tools, execute_tool):
+                Loop2.ran = True
+                return AgentLoopResult()
+            def stop(self): pass
+
+        tract_with_commits.configure_agent_loop(Loop1())
+        tract_with_commits.orchestrate(agent_loop=Loop2())
+        assert not Loop1.ran
+        assert Loop2.ran
+
+    def test_agent_loop_execute_tool_works(self, tract_with_commits):
+        """execute_tool callable dispatches to tract's ToolExecutor."""
+        from tract.orchestrator.models import AgentLoopResult
+
+        tool_results = []
+
+        class MockLoop:
+            def run(self, *, messages, tools, execute_tool):
+                # Call a real tract tool through execute_tool
+                result = execute_tool("status", {})
+                tool_results.append(result)
+                return AgentLoopResult(completed=True)
+
+            def stop(self):
+                pass
+
+        tract_with_commits.orchestrate(agent_loop=MockLoop())
+        assert len(tool_results) == 1
+        assert tool_results[0].success
+        assert "main" in tool_results[0].output
+
+    def test_agent_loop_on_open(self, tmp_path):
+        """Tract.open(agent_loop=...) configures the loop."""
+        from tract.orchestrator.models import AgentLoopResult
+        from tract import InstructionContent
+
+        class MockLoop:
+            ran = False
+            def run(self, *, messages, tools, execute_tool):
+                MockLoop.ran = True
+                return AgentLoopResult(completed=True)
+            def stop(self): pass
+
+        t = Tract.open(str(tmp_path / "test.db"), agent_loop=MockLoop())
+        t.commit(InstructionContent(text="test"))
+        t.orchestrate()
+        t.close()
+        assert MockLoop.ran
+
+    def test_stop_orchestrator_calls_agent_loop_stop(self, tract_with_commits):
+        """stop_orchestrator() calls stop() on the agent loop."""
+        stopped = []
+
+        class MockLoop:
+            def run(self, *, messages, tools, execute_tool):
+                from tract.orchestrator.models import AgentLoopResult
+                return AgentLoopResult()
+            def stop(self):
+                stopped.append(True)
+
+        tract_with_commits.configure_agent_loop(MockLoop())
+        tract_with_commits.stop_orchestrator()
+        assert len(stopped) == 1
+
+    def test_agent_loop_provenance_recording(self, tract_with_commits):
+        """Provenance from AgentLoopResult is recorded via record_usage."""
+        from tract.orchestrator.models import AgentLoopResult
+
+        class MockLoop:
+            def run(self, *, messages, tools, execute_tool):
+                return AgentLoopResult(
+                    completed=True,
+                    total_usage={
+                        "prompt_tokens": 100,
+                        "completion_tokens": 20,
+                        "total_tokens": 120,
+                    },
+                    model="gpt-4o",
+                )
+            def stop(self): pass
+
+        result = tract_with_commits.orchestrate(agent_loop=MockLoop())
+        assert result.total_usage is not None
+        assert result.total_usage["total_tokens"] == 120
+        assert result.model == "gpt-4o"

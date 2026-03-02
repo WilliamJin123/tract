@@ -88,3 +88,47 @@ class ResolverCallable(Protocol):
     def __call__(self, issue: object) -> Resolution:
         """Resolve an issue and return a Resolution."""
         ...
+
+
+@runtime_checkable
+class AgentLoop(Protocol):
+    """Protocol for pluggable agent loops.
+
+    Any object implementing ``run()`` and ``stop()`` can serve as tract's
+    orchestrator.  The built-in :class:`~tract.orchestrator.loop.Orchestrator`
+    is the default; external adapters (Agno, LangGraph, CrewAI) implement
+    this protocol to plug into ``t.orchestrate(agent_loop=...)``.
+
+    The protocol parallels :class:`LLMClient`: LLMClient swaps the LLM
+    transport layer, AgentLoop swaps the orchestration layer.
+
+    Tract prepares everything (assessment, tools, executor) and hands off
+    to the loop.  The loop runs however it wants (its own LLM, its own
+    tool dispatch) and returns a structured result with optional provenance.
+    """
+
+    def run(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict],
+        execute_tool: Any,
+    ) -> Any:
+        """Execute the agent loop.
+
+        Args:
+            messages: Initial conversation messages (typically a system prompt
+                and a user message containing the context assessment).
+            tools: Tool definitions in OpenAI function-calling format.
+            execute_tool: Callable ``(tool_name: str, arguments: dict) -> ToolResult``
+                that dispatches to tract's tool executor.
+
+        Returns:
+            An :class:`~tract.orchestrator.models.AgentLoopResult` with steps
+            taken and optional provenance data.
+        """
+        ...
+
+    def stop(self) -> None:
+        """Signal the loop to stop at the next safe point."""
+        ...

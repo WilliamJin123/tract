@@ -24,6 +24,7 @@ from tract.orchestrator.config import (
 )
 from tract.orchestrator.loop import Orchestrator
 from tract.orchestrator.models import (
+    AgentLoopResult,
     OrchestratorResult,
     StepResult,
     ToolCall,
@@ -45,6 +46,7 @@ __all__ = [
     "ToolCallReview",
     "StepResult",
     "OrchestratorResult",
+    "AgentLoopResult",
     # Hook handler templates
     "auto_approve",
     "log_and_approve",
