@@ -1,16 +1,15 @@
-"""Hello Agent -- The Agent On-Ramp
+"""Hello Agent -- A ReAct Loop with Tract Tools
 
-An agent that manages its own context window using tract tools. Instead of
-you calling compress() or annotate() directly, the agent gets these as
-callable tools and decides when to use them.
+An agent that manages its own context window. The LLM receives tract
+operations as callable tools (via as_tools()), decides when to use them,
+and ToolExecutor dispatches the calls. The loop repeats until the LLM
+responds with text instead of tool calls.
 
-This file shows the building blocks: as_tools() exposes tract operations
-as LLM-callable tool schemas, and ToolExecutor dispatches the calls. For
-the full self-managing pattern (description-driven tool hints, no system
-prompt crutches), see agentic/self_managing/. For the sidecar pattern
-(companion agent handles context), see agentic/sidecar/.
+This is the minimal ReAct pattern: compile context + tools -> LLM ->
+parse tool_calls -> execute -> feed results back -> repeat.
 
-Demonstrates: as_tools(), ToolExecutor, agent-driven status/annotate/compress
+Demonstrates: as_tools(), ToolExecutor, t.generate(), t.tool_result(),
+              agent-driven status/annotate/compress
 """
 
 import os
@@ -18,7 +17,7 @@ import os
 from dotenv import load_dotenv
 
 from tract import Tract, TractConfig, TokenBudgetConfig
-from tract.toolkit import ToolExecutor
+from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
 
 load_dotenv()
 
@@ -26,13 +25,80 @@ TRACT_OPENAI_API_KEY = os.environ["TRACT_OPENAI_API_KEY"]
 TRACT_OPENAI_BASE_URL = os.environ["TRACT_OPENAI_BASE_URL"]
 MODEL_ID = "gpt-oss-120b"
 
+# --- Tool profile: only expose the context-management tools ---
+# The agent gets status, annotate, and compress -- enough to monitor
+# and maintain its own context window. We use description overrides
+# to hint WHEN to use each tool, not just what it does.
+
+CONTEXT_MGMT_PROFILE = ToolProfile(
+    name="context-mgmt",
+    tool_configs={
+        "status": ToolConfig(
+            enabled=True,
+            description=(
+                "Check context health: branch, HEAD, token count, and budget "
+                "usage. Call this BEFORE deciding whether to compress or pin."
+            ),
+        ),
+        "log": ToolConfig(
+            enabled=True,
+            description=(
+                "View recent commit history with hashes, types, and token "
+                "counts. Call this to find commit hashes for annotate."
+            ),
+        ),
+        "annotate": ToolConfig(
+            enabled=True,
+            description=(
+                "Pin or skip a commit. Use priority='pinned' to protect "
+                "important context from compression. Use priority='skip' to "
+                "exclude irrelevant content. Requires a commit hash from log."
+            ),
+        ),
+        "compress": ToolConfig(
+            enabled=True,
+            description=(
+                "Compress older messages into a summary to free token budget. "
+                "Pinned commits are preserved verbatim. Call with just "
+                "target_tokens (no from/to range needed). Call when budget "
+                "usage exceeds 60%."
+            ),
+        ),
+    },
+)
+
+MAX_TOOL_TURNS = 10
+
+
+def react_loop(t: Tract, executor: ToolExecutor) -> str:
+    """Run a ReAct loop: generate -> tool calls -> execute -> repeat.
+
+    Returns the final text response from the agent.
+    """
+    for _ in range(MAX_TOOL_TURNS):
+        response = t.generate()
+
+        if not response.tool_calls:
+            # Text response -- the agent is done
+            return response.text
+
+        # Execute each tool call the LLM requested
+        for tc in response.tool_calls:
+            result = executor.execute(tc.name, tc.arguments)
+            t.tool_result(tc.id, tc.name, str(result))
+
+            args_short = ", ".join(f"{k}={v!r}" for k, v in tc.arguments.items())
+            status = "ok" if result.success else "ERR"
+            print(f"  [{tc.name}] {args_short}")
+            print(f"    -> [{status}] {result}\n")
+
+    return "(max tool turns reached)"
+
 
 def main():
     db_path = os.path.join(os.path.curdir, "getting_started_agent.db")
     if os.path.exists(db_path):
         os.unlink(db_path)
-
-    # --- Open a tract with LLM config and a token budget ---
 
     config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=4000))
 
@@ -44,9 +110,24 @@ def main():
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        # --- Build up some conversation history ---
+        # --- Give the agent its tools ---
 
-        t.system("You are an AI research assistant with context management tools.")
+        tools = t.as_tools(format="openai", profile=CONTEXT_MGMT_PROFILE)
+        t.set_tools(tools)
+        tool_names = [tool["function"]["name"] for tool in tools]
+        print(f"Agent tools: {', '.join(tool_names)}\n")
+
+        executor = ToolExecutor(t)
+        executor.set_profile(CONTEXT_MGMT_PROFILE)
+
+        # --- Seed the conversation with enough history to make
+        #     context management interesting ---
+
+        t.system(
+            "You are an AI research assistant with context management tools. "
+            "Use your tools to monitor and maintain your context window: "
+            "check status, pin important findings, and compress when needed."
+        )
 
         t.user("What is chain-of-thought prompting?")
         t.assistant(
@@ -69,55 +150,30 @@ def main():
             "reasoning in external observations."
         )
 
-        # --- Get tract tools in OpenAI format (self profile) ---
+        # --- Show the conversation before agent ops ---
 
-        tools = t.as_tools(format="openai", profile="self")
-        tool_names = [tool["function"]["name"] for tool in tools]
-        print(f"Agent has {len(tools)} tools: {', '.join(tool_names)}\n")
+        print("=== Conversation (before agent ops) ===\n")
+        t.compile().pprint(style="chat")
 
-        # --- ToolExecutor: the dispatch layer agents use ---
+        # --- Ask the agent to manage its own context ---
+        # The LLM will receive the tools and decide what to do.
 
-        executor = ToolExecutor(t)
-        executor.set_profile("self")
+        print("\n=== Agent managing context ===\n")
+        t.user(
+            "Review your context window. Check the status, pin any important "
+            "definitions worth preserving, and compress if needed to stay "
+            "under budget."
+        )
 
-        # Agent checks its context health
-        result = executor.execute("status", {})
-        print(f"[status] {result}\n")
+        reply = react_loop(t, executor)
+        print(f"Agent: {reply}\n")
 
-        # Agent pins an important message it wants to protect from compression.
-        # Grab the chain-of-thought commit hash from the log.
-        log_entries = t.log(limit=10)
-        cot_hash = None
-        for entry in log_entries:
-            if entry.message and "chain-of-thought" in entry.message.lower():
-                cot_hash = entry.commit_hash
-                break
+        # --- Show the conversation after agent ops ---
 
-        # Fall back to the first assistant response if auto-message didn't match
-        if cot_hash is None:
-            assistant_entries = [e for e in log_entries if "dialogue" in e.content_type]
-            if len(assistant_entries) >= 2:
-                cot_hash = assistant_entries[-2].commit_hash  # second-oldest dialogue
-
-        if cot_hash:
-            result = executor.execute("annotate", {
-                "target_hash": cot_hash,
-                "priority": "pinned",
-                "reason": "Key definition -- protect from compression",
-            })
-            print(f"[annotate] {result}\n")
-
-        # Agent compresses when context budget is getting high
-        result = executor.execute("compress", {"target_tokens": 200})
-        print(f"[compress] {result}\n")
-
-        # --- After agent operations, check the result ---
-
-        result = executor.execute("status", {})
-        print(f"[status after ops] {result}\n")
-
-        result = executor.execute("log", {"limit": 10})
-        print(f"[log]\n{result}")
+        print("=== Conversation (after agent ops) ===\n")
+        t.compile().pprint(style="chat")
+        print()
+        t.status().pprint()
 
 
 if __name__ == "__main__":

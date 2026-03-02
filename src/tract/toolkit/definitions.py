@@ -723,9 +723,10 @@ def _handle_annotate(
 ) -> str:
     from tract.models.annotations import Priority
 
+    resolved = tract.resolve_commit(target_hash)
     prio = Priority(priority)
-    annotation = tract.annotate(target_hash, prio, reason=reason)
-    return f"Annotated {target_hash[:8]} as {annotation.priority.value}"
+    annotation = tract.annotate(resolved, prio, reason=reason)
+    return f"Annotated {resolved[:8]} as {annotation.priority.value}"
 
 
 def _handle_status(tract: Tract) -> str:
@@ -760,6 +761,10 @@ def _handle_log(tract: Tract, limit: int, op_filter: str | None) -> str:
 
 
 def _handle_diff(tract: Tract, commit_a: str | None, commit_b: str | None) -> str:
+    if commit_a is not None:
+        commit_a = tract.resolve_commit(commit_a)
+    if commit_b is not None:
+        commit_b = tract.resolve_commit(commit_b)
     result = tract.diff(commit_a=commit_a, commit_b=commit_b)
     return (
         f"Diff: {result.stat.messages_added} added, "
@@ -776,6 +781,10 @@ def _handle_compress(
     to_commit: str | None,
     instructions: str | None,
 ) -> str:
+    if from_commit is not None:
+        from_commit = tract.resolve_commit(from_commit)
+    if to_commit is not None:
+        to_commit = tract.resolve_commit(to_commit)
     result = tract.compress(
         target_tokens=target_tokens,
         from_commit=from_commit,
@@ -848,6 +857,7 @@ def _handle_list_branches(tract: Tract) -> str:
 
 
 def _handle_get_commit(tract: Tract, commit_hash: str) -> str:
+    commit_hash = tract.resolve_commit(commit_hash)
     info = tract.get_commit(commit_hash)
     if info is None:
         return f"Commit {commit_hash} not found."
@@ -902,6 +912,7 @@ def _handle_register_tag(
 
 
 def _handle_get_tags(tract: Tract, commit_hash: str) -> str:
+    commit_hash = tract.resolve_commit(commit_hash)
     tags = tract.get_tags(commit_hash)
     if not tags:
         return f"No tags on {commit_hash[:8]}"
@@ -923,11 +934,13 @@ def _handle_list_tags(tract: Tract) -> str:
 
 
 def _handle_tag(tract: Tract, commit_hash: str, tag: str) -> str:
+    commit_hash = tract.resolve_commit(commit_hash)
     tract.tag(commit_hash, tag)
     return f"Tagged {commit_hash[:8]} with '{tag}'"
 
 
 def _handle_untag(tract: Tract, commit_hash: str, tag: str) -> str:
+    commit_hash = tract.resolve_commit(commit_hash)
     removed = tract.untag(commit_hash, tag)
     if removed:
         return f"Removed tag '{tag}' from {commit_hash[:8]}"

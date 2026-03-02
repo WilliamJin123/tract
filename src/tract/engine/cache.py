@@ -126,6 +126,7 @@ class CacheManager:
             token_source=snapshot.token_source,
             generation_configs=[LLMConfig.from_dict(c) if c else None for c in snapshot.generation_configs],
             commit_hashes=list(snapshot.commit_hashes),
+            priorities=list(snapshot.priorities),
         )
 
     def build_snapshot(
@@ -150,6 +151,7 @@ class CacheManager:
             token_source=result.token_source,
             generation_configs=tuple(c.to_dict() if c is not None else {} for c in result.generation_configs),
             commit_hashes=tuple(result.commit_hashes),
+            priorities=tuple(result.priorities),
             message_token_counts=per_msg,
         )
 
@@ -234,6 +236,7 @@ class CacheManager:
                     token_source=parent_snapshot.token_source,
                     generation_configs=parent_snapshot.generation_configs,
                     commit_hashes=parent_snapshot.commit_hashes,
+                    priorities=parent_snapshot.priorities,
                     message_token_counts=parent_snapshot.message_token_counts,
                 ),
             )
@@ -267,6 +270,7 @@ class CacheManager:
                 token_source=parent_snapshot.token_source,
                 generation_configs=parent_snapshot.generation_configs + (new_config,),
                 commit_hashes=new_commit_hashes,
+                priorities=parent_snapshot.priorities + (default_priority.value,),
                 message_token_counts=new_msg_counts,
             ),
         )
@@ -334,6 +338,7 @@ class CacheManager:
             token_source=parent_snapshot.token_source,
             generation_configs=tuple(new_configs),
             commit_hashes=parent_snapshot.commit_hashes,  # Same positions
+            priorities=parent_snapshot.priorities,  # Same positions
             message_token_counts=new_msg_counts_tuple,
         )
 
@@ -363,14 +368,17 @@ class CacheManager:
             if target_idx is None:
                 return snapshot  # Already not in snapshot
 
-            # Remove message, config, hash, and token count at target position
+            # Remove message, config, hash, priority, and token count at target position
             new_messages = list(snapshot.messages)
             new_configs = list(snapshot.generation_configs)
             new_hashes = list(snapshot.commit_hashes)
+            new_priorities = list(snapshot.priorities)
             new_msg_counts = list(snapshot.message_token_counts) if snapshot.message_token_counts else []
             del new_messages[target_idx]
             del new_configs[target_idx]
             del new_hashes[target_idx]
+            if new_priorities:
+                del new_priorities[target_idx]
 
             # O(1) token delta
             if new_msg_counts and len(new_msg_counts) > target_idx:
@@ -389,11 +397,31 @@ class CacheManager:
                 token_source=snapshot.token_source,
                 generation_configs=tuple(new_configs),
                 commit_hashes=tuple(new_hashes),
+                priorities=tuple(new_priorities),
                 message_token_counts=tuple(new_msg_counts),
             )
         else:
             # NORMAL or PINNED
             if target_idx is not None:
-                return snapshot  # Already included, no change
+                # Update priority in the snapshot if it actually changed
+                if (
+                    snapshot.priorities
+                    and target_idx < len(snapshot.priorities)
+                    and snapshot.priorities[target_idx] != new_priority.value
+                ):
+                    new_priorities = list(snapshot.priorities)
+                    new_priorities[target_idx] = new_priority.value
+                    return CompileSnapshot(
+                        head_hash=snapshot.head_hash,
+                        messages=snapshot.messages,
+                        commit_count=snapshot.commit_count,
+                        token_count=snapshot.token_count,
+                        token_source=snapshot.token_source,
+                        generation_configs=snapshot.generation_configs,
+                        commit_hashes=snapshot.commit_hashes,
+                        priorities=tuple(new_priorities),
+                        message_token_counts=snapshot.message_token_counts,
+                    )
+                return snapshot  # Already same priority, no change
             else:
                 return None  # Was skipped, need full recompile (don't have message content)

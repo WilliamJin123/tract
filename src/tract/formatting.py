@@ -182,6 +182,7 @@ def pprint_compiled_context(
     table = Table(title="Compiled Context", show_lines=False)
     table.add_column("#", style="dim", width=4, justify="right")
     table.add_column("Hash", style="dim", width=8)
+    table.add_column("", width=1)
     table.add_column("Role", width=10)
     table.add_column("Content", no_wrap=False)
     table.add_column("Tokens", justify="right", width=8)
@@ -190,6 +191,7 @@ def pprint_compiled_context(
     # Per-message token counts are always tiktoken estimates
     estimate = _is_estimate(ctx.token_source)
     hashes = ctx.commit_hashes if ctx.commit_hashes else []
+    priorities = ctx.priorities if ctx.priorities else []
     configs = ctx.generation_configs if ctx.generation_configs else []
 
     for i, msg in enumerate(ctx.messages):
@@ -231,10 +233,12 @@ def pprint_compiled_context(
         else:
             tokens_str = ""
         commit_hash = hashes[i][:8] if i < len(hashes) else ""
+        priority = priorities[i] if i < len(priorities) else ""
+        pin_marker = "*" if priority == "pinned" else ""
         gen_config = configs[i] if i < len(configs) else None
         config_fields = gen_config.non_none_fields() if gen_config else {}
         config_str = ", ".join(f"{k}={v}" for k, v in config_fields.items()) if config_fields else ""
-        table.add_row(str(i + 1), commit_hash, role_label, cell, tokens_str, config_str)
+        table.add_row(str(i + 1), commit_hash, pin_marker, role_label, cell, tokens_str, config_str)
 
     console.print(table)
 
@@ -309,10 +313,11 @@ def _pprint_compiled_compact(ctx: CompiledContext, *, max_chars: int | None = No
 
     console = _make_console(file)
     hashes = ctx.commit_hashes if ctx.commit_hashes else []
+    priorities = ctx.priorities if ctx.priorities else []
     configs = ctx.generation_configs if ctx.generation_configs else []
 
-    # Prefix: "  {hash:8s}  {role:10s} | " = 24 chars; wrap to remaining width
-    _PREFIX_WIDTH = 24
+    # Prefix: "  {hash:8s} {pin:1s} {role:10s} | " = 26 chars; wrap to remaining width
+    _PREFIX_WIDTH = 26
     content_width = max((console.width or 100) - _PREFIX_WIDTH, 20)
 
     for idx, msg in enumerate(ctx.messages):
@@ -354,15 +359,17 @@ def _pprint_compiled_compact(ctx: CompiledContext, *, max_chars: int | None = No
 
         # Role prefix for first line
         commit_hash = hashes[idx][:8] if idx < len(hashes) else "        "
+        priority = priorities[idx] if idx < len(priorities) else ""
+        pin_marker = "*" if priority == "pinned" else " "
         role_prefix = Text()
         role_prefix.append(f"  {commit_hash:8s}", style="dim")
-        role_prefix.append("  ")
+        role_prefix.append(f" {pin_marker} ")
         role_prefix.append(f"{role_label:10s}", style=f"bold {color}")
         role_prefix.append(" | ", style="dim")
 
         # Continuation prefix — aligns "|" with the first line's "|"
         cont_prefix = Text()
-        cont_prefix.append(" " * 22)
+        cont_prefix.append(" " * 24)
         cont_prefix.append("| ", style="dim")
 
         is_reasoning = _style_key(msg) == "reasoning"
@@ -403,6 +410,7 @@ def _pprint_compiled_chat(ctx: CompiledContext, *, max_chars: int | None = None,
     """Render a CompiledContext as a chat transcript with panels per message."""
     console = _make_console(file)
     hashes = ctx.commit_hashes if ctx.commit_hashes else []
+    priorities = ctx.priorities if ctx.priorities else []
     configs = ctx.generation_configs if ctx.generation_configs else []
 
     for i, msg in enumerate(ctx.messages):
@@ -413,6 +421,8 @@ def _pprint_compiled_chat(ctx: CompiledContext, *, max_chars: int | None = None,
         sk = _style_key(msg)
         title, border = _ROLE_STYLES.get(sk, (msg.role.title(), "white"))
         commit_hash = hashes[i][:8] if i < len(hashes) else ""
+        priority = priorities[i] if i < len(priorities) else ""
+        is_pinned = priority == "pinned"
 
         # Tool-calling assistant messages: show calls instead of "(empty)"
         if msg.role == "assistant" and msg.tool_calls:
@@ -449,9 +459,10 @@ def _pprint_compiled_chat(ctx: CompiledContext, *, max_chars: int | None = None,
 
         # Subtitle: commit hash
         subtitle = f"[dim]{commit_hash}[/dim]" if commit_hash else None
+        pin_suffix = " · pinned" if is_pinned else ""
         console.print(Panel(
             body,
-            title=f"[bold]{title}[/bold]",
+            title=f"[bold]{title}[/bold]{pin_suffix}",
             subtitle=subtitle,
             subtitle_align="right",
             border_style=border,

@@ -141,6 +141,7 @@ class CompiledContext:
     token_source: str = ""
     generation_configs: list[LLMConfig | None] = field(default_factory=list)
     commit_hashes: list[str] = field(default_factory=list)
+    priorities: list[str] = field(default_factory=list)
     tools: list[dict] = field(default_factory=list)
 
     def to_dicts(self) -> list[dict]:
@@ -282,6 +283,7 @@ class CompileSnapshot:
     token_source: str
     generation_configs: tuple[dict, ...] = ()
     commit_hashes: tuple[str, ...] = ()
+    priorities: tuple[str, ...] = ()
     message_token_counts: tuple[int, ...] = ()
     tool_hashes: tuple[str, ...] = ()
 

@@ -114,7 +114,13 @@ class DefaultContextCompiler:
         # Step 4b: Extract commit hashes for effective commits (parallel to messages)
         effective_commit_hashes = [c.commit_hash for c in effective_commits]
 
-        # Step 4c: Collect generation configs for effective commits
+        # Step 4c: Collect priorities for effective commits (parallel to messages)
+        effective_priorities = [
+            priority_map.get(c.commit_hash, Priority.NORMAL).value
+            for c in effective_commits
+        ]
+
+        # Step 4d: Collect generation configs for effective commits
         generation_configs: list[LLMConfig | None] = []
         for c in effective_commits:
             # If this commit was edited, prefer the edit's config;
@@ -148,6 +154,7 @@ class DefaultContextCompiler:
             token_source=token_source,
             generation_configs=generation_configs,
             commit_hashes=effective_commit_hashes,
+            priorities=effective_priorities,
         )
 
     def _walk_chain(
