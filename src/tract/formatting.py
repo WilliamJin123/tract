@@ -11,6 +11,8 @@ from __future__ import annotations
 from io import StringIO
 from typing import Any, Literal
 
+from tract.protocols import CompiledContext
+
 _COMPACT_DEFAULT_MAX_CHARS = 1000
 """Default max_chars for compact style when None is passed."""
 
@@ -148,7 +150,7 @@ def pprint_chat_response(response: Any, *, max_chars: int | None = None, file: A
 
 
 def pprint_compiled_context(
-    ctx: Any,
+    ctx: CompiledContext,
     *,
     max_chars: int | None = None,
     style: Literal["table", "chat", "compact"] = "table",
@@ -179,12 +181,16 @@ def pprint_compiled_context(
 
     table = Table(title="Compiled Context", show_lines=False)
     table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("Hash", style="dim", width=8)
     table.add_column("Role", width=10)
     table.add_column("Content", no_wrap=False)
     table.add_column("Tokens", justify="right", width=8)
+    table.add_column("Config", style="dim", no_wrap=False)
 
     # Per-message token counts are always tiktoken estimates
     estimate = _is_estimate(ctx.token_source)
+    hashes = ctx.commit_hashes if ctx.commit_hashes else []
+    configs = ctx.generation_configs if ctx.generation_configs else []
 
     for i, msg in enumerate(ctx.messages):
         # Tool-calling assistant messages: show function calls
@@ -224,7 +230,11 @@ def pprint_compiled_context(
             tokens_str = f"\u2248{msg.token_count}" if estimate else str(msg.token_count)
         else:
             tokens_str = ""
-        table.add_row(str(i + 1), role_label, cell, tokens_str)
+        commit_hash = hashes[i][:8] if i < len(hashes) else ""
+        gen_config = configs[i] if i < len(configs) else None
+        config_fields = gen_config.non_none_fields() if gen_config else {}
+        config_str = ", ".join(f"{k}={v}" for k, v in config_fields.items()) if config_fields else ""
+        table.add_row(str(i + 1), commit_hash, role_label, cell, tokens_str, config_str)
 
     console.print(table)
 
@@ -293,17 +303,19 @@ def _style_key(msg: Any) -> str:
     return msg.role
 
 
-def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: Any = None) -> None:
+def _pprint_compiled_compact(ctx: CompiledContext, *, max_chars: int | None = None, file: Any = None) -> None:
     """Render a CompiledContext as a compact one-line-per-message summary."""
     import textwrap
 
     console = _make_console(file)
+    hashes = ctx.commit_hashes if ctx.commit_hashes else []
+    configs = ctx.generation_configs if ctx.generation_configs else []
 
-    # Prefix: "  {role:10s} | " = 15 chars; wrap content to remaining width
-    _PREFIX_WIDTH = 15
+    # Prefix: "  {hash:8s}  {role:10s} | " = 24 chars; wrap to remaining width
+    _PREFIX_WIDTH = 24
     content_width = max((console.width or 100) - _PREFIX_WIDTH, 20)
 
-    for msg in ctx.messages:
+    for idx, msg in enumerate(ctx.messages):
         content = (msg.content or "").strip()
         # Filter internal merge commit metadata
         if content.startswith("{") and "message" in content:
@@ -341,13 +353,16 @@ def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: An
             wrapped_lines = [""]
 
         # Role prefix for first line
+        commit_hash = hashes[idx][:8] if idx < len(hashes) else "        "
         role_prefix = Text()
-        role_prefix.append(f"  {role_label:10s}", style=f"bold {color}")
+        role_prefix.append(f"  {commit_hash:8s}", style="dim")
+        role_prefix.append("  ")
+        role_prefix.append(f"{role_label:10s}", style=f"bold {color}")
         role_prefix.append(" | ", style="dim")
 
         # Continuation prefix — aligns "|" with the first line's "|"
         cont_prefix = Text()
-        cont_prefix.append(" " * 13)
+        cont_prefix.append(" " * 22)
         cont_prefix.append("| ", style="dim")
 
         is_reasoning = _style_key(msg) == "reasoning"
@@ -366,6 +381,15 @@ def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: An
 
             console.print(line, soft_wrap=True)
 
+        # Generation config on its own line (dim, indented under the message)
+        gen_config = configs[idx] if idx < len(configs) else None
+        config_fields = gen_config.non_none_fields() if gen_config else {}
+        if config_fields:
+            config_line = cont_prefix.copy()
+            config_str = ", ".join(f"{k}={v}" for k, v in config_fields.items())
+            config_line.append(config_str, style="dim")
+            console.print(config_line, soft_wrap=True)
+
     # Footer
     estimate = _is_estimate(ctx.token_source)
     prefix = "\u2248" if estimate else ""
@@ -375,17 +399,20 @@ def _pprint_compiled_compact(ctx: Any, *, max_chars: int | None = None, file: An
     console.print(footer)
 
 
-def _pprint_compiled_chat(ctx: Any, *, max_chars: int | None = None, file: Any = None) -> None:
+def _pprint_compiled_chat(ctx: CompiledContext, *, max_chars: int | None = None, file: Any = None) -> None:
     """Render a CompiledContext as a chat transcript with panels per message."""
     console = _make_console(file)
+    hashes = ctx.commit_hashes if ctx.commit_hashes else []
+    configs = ctx.generation_configs if ctx.generation_configs else []
 
-    for msg in ctx.messages:
+    for i, msg in enumerate(ctx.messages):
         content = msg.content
         if max_chars is not None and len(content) > max_chars:
             content = content[:max_chars - 3] + "..."
 
         sk = _style_key(msg)
         title, border = _ROLE_STYLES.get(sk, (msg.role.title(), "white"))
+        commit_hash = hashes[i][:8] if i < len(hashes) else ""
 
         # Tool-calling assistant messages: show calls instead of "(empty)"
         if msg.role == "assistant" and msg.tool_calls:
@@ -412,7 +439,23 @@ def _pprint_compiled_chat(ctx: Any, *, max_chars: int | None = None, file: Any =
         else:
             body = content
 
-        console.print(Panel(body, title=f"[bold]{title}[/bold]", border_style=border))
+        # Generation config metadata (when available for this message)
+        gen_config = configs[i] if i < len(configs) else None
+        config_fields = gen_config.non_none_fields() if gen_config else {}
+        if config_fields:
+            config_str = ", ".join(f"{k}={v}" for k, v in config_fields.items())
+            footer = Text.from_markup(f"[dim]config: {config_str}[/dim]")
+            body = Group(body, Text(""), footer)
+
+        # Subtitle: commit hash
+        subtitle = f"[dim]{commit_hash}[/dim]" if commit_hash else None
+        console.print(Panel(
+            body,
+            title=f"[bold]{title}[/bold]",
+            subtitle=subtitle,
+            subtitle_align="right",
+            border_style=border,
+        ))
 
     # Footer
     estimate = _is_estimate(ctx.token_source)

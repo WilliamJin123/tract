@@ -98,9 +98,9 @@ def part1_per_call_config():
 
         t.user("What is the GIL?")
         response = t.generate(temperature=0.1, max_tokens=100)
-        print(f"  temperature={response.generation_config.temperature}")
-        print(f"  Response: {response.text[:100]}...")
-        # Note: response.pprint() would show the same info as a rich panel
+        gc = response.generation_config
+        print(f"  temperature={gc.temperature}, max_tokens={gc.max_tokens}")
+        response.pprint()
 
 
 # =============================================================================
@@ -138,27 +138,33 @@ def part2_agent():
         t.set_tools(tools)
 
         t.system("You are a helpful assistant.")
-        t.user(
-            "Two tasks:\n"
-            "1. Write a surreal one-sentence poem about a clock that melts.\n"
-            "2. What is the speed of light in meters per second?\n"
-            "For each, set an appropriate temperature first, then answer."
-        )
 
-        # Agentic loop: generate() compiles, calls LLM, commits, and
-        # parses tool_calls automatically. Loop until the LLM responds
-        # with text instead of tool calls.
-        for turn in range(10):
-            response = t.generate()
+        # Ask tasks one at a time so each gets its own temperature.
+        # The LLM can only return tool_calls OR text per turn — not
+        # interleaved — so bundling both tasks would produce one response
+        # at whatever the last configured temperature was.
+        tasks = [
+            "Write a surreal one-sentence poem about a clock that melts.",
+            "What is the speed of light in meters per second?",
+        ]
 
-            if not response.tool_calls:
-                break
+        for task in tasks:
+            t.user(f"Set an appropriate temperature, then: {task}")
 
-            for tc in response.tool_calls:
-                result = executor.execute(tc.name, tc.arguments)
-                t.tool_result(tc.id, tc.name, str(result))
-                print(f"  LLM called: {tc.name}({tc.arguments})")
-                print(f"    -> {result.output[:100]}")
+            for turn in range(5):
+                response = t.generate()
+
+                if not response.tool_calls:
+                    # Text response — print and move to next task
+                    gc = response.generation_config
+                    print(f"  [{gc.temperature or 'default'}] {response.text[:120]}...")
+                    break
+
+                for tc in response.tool_calls:
+                    result = executor.execute(tc.name, tc.arguments)
+                    t.tool_result(tc.id, tc.name, str(result))
+                    print(f"  LLM called: {tc.name}({tc.arguments})")
+                    print(f"    -> {result.output[:100]}")
 
         # --- Inspect the full conversation the agent built ---
         print(f"\n{'=' * 60}")
