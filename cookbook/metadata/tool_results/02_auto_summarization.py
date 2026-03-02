@@ -29,8 +29,8 @@ from _helpers import TRACT_OPENAI_API_KEY, TRACT_OPENAI_BASE_URL, MODEL_ID  # no
 
 load_dotenv()
 
-# The directory this file lives in — tools will search here (one level up).
-COOKBOOK_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# The directory this file lives in — tools will search here.
+COOKBOOK_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Bind execute_tool to this file's sandbox directory.
 _SELF = os.path.basename(__file__)
@@ -180,8 +180,8 @@ def part3_auto_summarization():
     ) as t2:
 
         t2.set_tools(TOOLS)
-        t2.system("You are a configuration auditor. Answer precisely.")
-        t2.user("What is the database connection string in the project config?")
+        t2.system("You are a code auditor. Answer precisely.")
+        t2.user("Which function in this directory makes HTTP calls to the LLM API?")
 
         # Enable context-aware auto-summarization — the hook fires on every
         # tool_result() commit and the LLM sees the conversation above.
@@ -191,99 +191,60 @@ def part3_auto_summarization():
             include_context=True,
         )
 
-        # --- Noisy tool result 1: large directory listing ---
-        # The user asked about a DB connection string. A 35-entry listing
-        # has one relevant file (config.yaml) buried in noise.
+        # --- Noisy tool result 1: directory listing ---
+        # The user asked about HTTP/LLM calls. A full directory listing
+        # has many files; the LLM should focus on _helpers.py.
 
-        fake_listing = "\n".join(
-            ["README.md", "setup.py", "config.yaml", "requirements.txt",
-             "Makefile", "Dockerfile", ".gitignore", ".env.example",
-             "pyproject.toml", "LICENSE"]
-            + [f"module_{i:02d}.py" for i in range(20)]
-            + ["tests/", "docs/", "migrations/", "scripts/", "static/"]
-        )
+        real_listing = execute_tool("list_directory", {"path": "."})
         t2.assistant(
-            "Let me list the project files to find the config.",
+            "Let me list the files to find the relevant module.",
             metadata={"tool_calls": [
                 {"id": "n1", "name": "list_directory",
                  "arguments": {"path": "."}},
             ]},
         )
-        ci1 = t2.tool_result("n1", "list_directory", fake_listing)
+        ci1 = t2.tool_result("n1", "list_directory", real_listing)
 
         print(f"  Tool 1: list_directory")
-        print(f"    Original: {len(fake_listing)} chars, "
-              f"{len(fake_listing.splitlines())} lines")
+        print(f"    Original: {len(real_listing)} chars, "
+              f"{len(real_listing.splitlines())} entries")
         print(f"    Summarized: {t2.get_content(ci1)}\n")
 
-        # --- Noisy tool result 2: verbose config with one relevant line ---
-        # 20 settings, only DB_CONNECTION matters for the question.
+        # --- Noisy tool result 2: full file read ---
+        # _helpers.py has ~160 lines; only call_llm() is relevant.
 
-        fake_config = "\n".join([
-            "# Application Configuration",
-            "APP_NAME=my-service",
-            "APP_VERSION=2.4.1",
-            "LOG_LEVEL=INFO",
-            "LOG_FORMAT=json",
-            "CACHE_TTL=3600",
-            "CACHE_BACKEND=redis",
-            "REDIS_HOST=cache.internal",
-            "REDIS_PORT=6379",
-            "",
-            "# Database settings",
-            "DB_CONNECTION=postgresql://admin:s3cret@db.prod.internal:5432/myapp",
-            "DB_POOL_SIZE=20",
-            "DB_TIMEOUT=30",
-            "",
-            "# Feature flags",
-            "ENABLE_DARK_MODE=true",
-            "ENABLE_BETA=false",
-            "MAX_UPLOAD_SIZE=10485760",
-            "ALLOWED_ORIGINS=*.example.com",
-            "SMTP_HOST=mail.example.com",
-            "SMTP_PORT=587",
-        ])
+        real_file = execute_tool("read_file", {"path": "_helpers.py"})
         t2.assistant(
-            "Found config.yaml. Let me read it.",
+            "Found _helpers.py. Let me read it.",
             metadata={"tool_calls": [
                 {"id": "n2", "name": "read_file",
-                 "arguments": {"path": "config.yaml"}},
+                 "arguments": {"path": "_helpers.py"}},
             ]},
         )
-        ci2 = t2.tool_result("n2", "read_file", fake_config)
+        ci2 = t2.tool_result("n2", "read_file", real_file)
 
-        print(f"  Tool 2: read_file (config.yaml)")
-        print(f"    Original: {len(fake_config)} chars, "
-              f"{len(fake_config.splitlines())} lines")
+        print(f"  Tool 2: read_file (_helpers.py)")
+        print(f"    Original: {len(real_file)} chars, "
+              f"{len(real_file.splitlines())} lines")
         print(f"    Summarized: {t2.get_content(ci2)}\n")
 
-        # --- Noisy tool result 3: search with many irrelevant matches ---
-        # Search for "connection" returns hits in logs, docs, and code.
-        # Only the config line matters.
+        # --- Noisy tool result 3: search across all files ---
+        # Search for "httpx" finds matches in multiple files; only
+        # the call_llm() function is relevant to the question.
 
-        fake_search = "\n".join([
-            "module_03.py:12: # TODO: handle connection timeout",
-            "module_03.py:45:     self.connection_pool = create_pool()",
-            "module_07.py:8: class ConnectionManager:",
-            "module_07.py:19:     def close_connection(self):",
-            "module_07.py:33:     # connection retry logic",
-            "module_11.py:2: import connection_utils",
-            "module_15.py:88: # stale connections are cleaned up by GC",
-            "config.yaml:12: DB_CONNECTION=postgresql://admin:s3cret"
-            "@db.prod.internal:5432/myapp",
-        ])
+        real_search = execute_tool("search_files", {"pattern": "httpx"})
         t2.assistant(
-            "Let me search for 'connection' across all files.",
+            "Let me search for 'httpx' across all files.",
             metadata={"tool_calls": [
                 {"id": "n3", "name": "search_files",
-                 "arguments": {"pattern": "connection"}},
+                 "arguments": {"pattern": "httpx"}},
             ]},
         )
-        ci3 = t2.tool_result("n3", "search_files", fake_search)
+        ci3 = t2.tool_result("n3", "search_files", real_search)
 
-        print(f"  Tool 3: search_files ('connection')")
-        print(f"    Original: {len(fake_search)} chars, "
-              f"{fake_search.count(chr(10)) + 1} matches")
+        print(f"  Tool 3: search_files ('httpx')")
+        print(f"    Original: {len(real_search)} chars, "
+              f"{real_search.count(chr(10)) + 1} matches")
         print(f"    Summarized: {t2.get_content(ci3)}\n")
 
         # --- Final context: see how the LLM window looks ---

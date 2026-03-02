@@ -7,6 +7,7 @@ apply_decision() executes it.
 import json
 import os
 
+import httpx
 from dotenv import load_dotenv
 
 from typing import Any
@@ -55,16 +56,40 @@ def dispatch_demo() -> None:
         print(f"    Excluded {first_hash[:12]}")
         print(f"    Remaining: {len(pending.commits_to_remove)} commits")
 
-        # --- apply_decision(): structured LLM output ---
-        print(f"\n  apply_decision() — simulating LLM response:")
+        # --- apply_decision(): real LLM decision ---
+        print(f"\n  apply_decision() — LLM decides via to_tools():")
 
-        # Simulate what an LLM would return after seeing to_tools()
-        llm_decision: dict[str, Any] = {
-            "action": "approve",
-            "args": {},
-        }
+        # Send pending state + tool schemas to LLM for a real decision
+        tools = pending.to_tools()
+        ctx_info = pending.to_dict()
+        decision_messages = [
+            {"role": "system", "content": "You are a context management agent. "
+             "A GC operation is pending. Use the provided tools to approve or reject."},
+            {"role": "user", "content": f"Pending GC will remove "
+             f"{len(pending.commits_to_remove)} orphan commits. "
+             f"Please approve this cleanup.\n\nState: {json.dumps(ctx_info)}"},
+        ]
+        llm_resp = httpx.post(
+            f"{TRACT_OPENAI_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {TRACT_OPENAI_API_KEY}"},
+            json={"model": MODEL_ID, "messages": decision_messages, "tools": tools},
+            timeout=120,
+        )
+        llm_resp.raise_for_status()
+        raw_decision = llm_resp.json()
+        tc_list = raw_decision["choices"][0]["message"].get("tool_calls", [])
+
+        if tc_list:
+            tc = tc_list[0]
+            llm_decision: dict[str, Any] = {
+                "action": tc["function"]["name"],
+                "args": json.loads(tc["function"].get("arguments", "{}")),
+            }
+        else:
+            # Fallback if LLM responds without tool call
+            llm_decision = {"action": "approve", "args": {}}
+
         print(f"    LLM decision: {json.dumps(llm_decision)}")
-
         result: GCResult = pending.apply_decision(llm_decision)
         print(f"    Dispatched! status={pending.status}")
 

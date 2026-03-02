@@ -54,18 +54,25 @@ def hook_basics() -> None:
 
         t.on("tool_result", log_tool_results, name="logger")
 
-        # Simulate tool calls with fake results
+        # Real tool results from the local filesystem
+        _dir = os.path.dirname(os.path.abspath(__file__))
+        py_files = "\n".join(
+            f for f in sorted(os.listdir(_dir)) if f.endswith(".py")
+        )
         t.assistant("Let me search for Python files.", metadata={
             "tool_calls": [{"id": "tc1", "name": "find_files",
                             "arguments": {"pattern": "*.py"}}],
         })
-        t.tool_result("tc1", "find_files", "src/main.py\nsrc/utils.py\ntests/test_main.py")
+        t.tool_result("tc1", "find_files", py_files)
 
-        t.assistant("Let me also check the config.", metadata={
+        # Read the first 8 lines of this script as a realistic file snippet
+        with open(os.path.abspath(__file__)) as _f:
+            snippet = "\n".join(_f.read().splitlines()[:8])
+        t.assistant("Let me also check a file.", metadata={
             "tool_calls": [{"id": "tc2", "name": "read_file",
-                            "arguments": {"path": "config.yaml"}}],
+                            "arguments": {"path": os.path.basename(__file__)}}],
         })
-        t.tool_result("tc2", "read_file", "debug: true\nlog_level: INFO\nport: 8080")
+        t.tool_result("tc2", "read_file", snippet)
 
         print(f"\n  Tool log: {len(tool_log)} results intercepted")
         for entry in tool_log:

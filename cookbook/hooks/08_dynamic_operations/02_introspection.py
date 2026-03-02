@@ -13,8 +13,20 @@ Demonstrates: to_dict(), to_tools(), describe_api(), apply_decision(),
               execute_tool(), type annotations on compiled actions
 """
 
+import json
+import os
+
+import httpx
+from dotenv import load_dotenv
+
 from tract import Tract
 from tract.hooks.dynamic import ActionDef, OperationSpec
+
+load_dotenv()
+
+TRACT_OPENAI_API_KEY = os.environ.get("TRACT_OPENAI_API_KEY", "")
+TRACT_OPENAI_BASE_URL = os.environ.get("TRACT_OPENAI_BASE_URL", "")
+MODEL_ID = "gpt-oss-120b"
 
 
 def _make_quality_spec() -> OperationSpec:
@@ -131,23 +143,89 @@ def introspection_demo() -> None:
         print("PART 4 -- apply_decision() dispatch")
         print("=" * 60)
         print()
-        print("  LLM returns a decision dict; apply_decision() routes it.")
 
-        # Simulate LLM choosing the "check" action
-        pending2 = t.fire("quality_check", review=True)
-        decision = {"action": "check", "args": {"threshold": 10, "strict": False}}
-        print(f"\n  Decision: {decision}")
-        pending2.apply_decision(decision)
-        print(f"  Status after: {pending2.status}")
-        print(f"  Passed: {pending2.fields['passed']}")
+        if TRACT_OPENAI_API_KEY:
+            print("  LLM returns a decision dict; apply_decision() routes it.\n")
 
-        # Simulate LLM choosing "override"
-        pending3 = t.fire("quality_check", review=True)
-        decision2 = {"action": "override", "args": {"reason": "Admin bypass"}}
-        print(f"\n  Decision: {decision2}")
-        pending3.apply_decision(decision2)
-        print(f"  Status after: {pending3.status}")
-        print(f"  Passed: {pending3.fields['passed']}")
+            # First decision: ask LLM to run a quality check
+            pending2 = t.fire("quality_check", review=True)
+            tools = pending2.to_tools()
+            ctx_info = pending2.to_dict()
+            messages = [
+                {"role": "system", "content": "You are a context management agent. "
+                 "Use the provided tools to manage pending operations."},
+                {"role": "user", "content": "Run a quality check with threshold 10 "
+                 "and strict=false.\n\n"
+                 f"Pending state: {json.dumps(ctx_info)}"},
+            ]
+            resp = httpx.post(
+                f"{TRACT_OPENAI_BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {TRACT_OPENAI_API_KEY}"},
+                json={"model": MODEL_ID, "messages": messages, "tools": tools},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            raw = resp.json()
+            tc_list = raw["choices"][0]["message"].get("tool_calls", [])
+            if tc_list:
+                tc = tc_list[0]
+                decision = {
+                    "action": tc["function"]["name"],
+                    "args": json.loads(tc["function"].get("arguments", "{}")),
+                }
+            else:
+                decision = {"action": "check", "args": {"threshold": 10, "strict": False}}
+
+            print(f"  Decision: {decision}")
+            pending2.apply_decision(decision)
+            print(f"  Status after: {pending2.status}")
+            print(f"  Passed: {pending2.fields['passed']}")
+
+            # Second decision: ask LLM to override
+            pending3 = t.fire("quality_check", review=True)
+            messages[-1] = {"role": "user", "content": "Force-pass the quality check "
+                            "with reason 'Admin bypass'.\n\n"
+                            f"Pending state: {json.dumps(pending3.to_dict())}"}
+            resp2 = httpx.post(
+                f"{TRACT_OPENAI_BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {TRACT_OPENAI_API_KEY}"},
+                json={"model": MODEL_ID, "messages": messages,
+                      "tools": pending3.to_tools()},
+                timeout=120,
+            )
+            resp2.raise_for_status()
+            raw2 = resp2.json()
+            tc_list2 = raw2["choices"][0]["message"].get("tool_calls", [])
+            if tc_list2:
+                tc2 = tc_list2[0]
+                decision2 = {
+                    "action": tc2["function"]["name"],
+                    "args": json.loads(tc2["function"].get("arguments", "{}")),
+                }
+            else:
+                decision2 = {"action": "override", "args": {"reason": "Admin bypass"}}
+
+            print(f"\n  Decision: {decision2}")
+            pending3.apply_decision(decision2)
+            print(f"  Status after: {pending3.status}")
+            print(f"  Passed: {pending3.fields['passed']}")
+        else:
+            print("  (No API key — using deterministic decisions)\n")
+            print("  LLM returns a decision dict; apply_decision() routes it.")
+
+            pending2 = t.fire("quality_check", review=True)
+            decision = {"action": "check", "args": {"threshold": 10, "strict": False}}
+            print(f"\n  Decision: {decision}")
+            pending2.apply_decision(decision)
+            print(f"  Status after: {pending2.status}")
+            print(f"  Passed: {pending2.fields['passed']}")
+
+            pending3 = t.fire("quality_check", review=True)
+            decision2 = {"action": "override", "args": {"reason": "Admin bypass"}}
+            print(f"\n  Decision: {decision2}")
+            pending3.apply_decision(decision2)
+            print(f"  Status after: {pending3.status}")
+            print(f"  Passed: {pending3.fields['passed']}")
 
 
 if __name__ == "__main__":

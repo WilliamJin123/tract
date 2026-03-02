@@ -69,13 +69,12 @@ def part1_manual_tools():
             ]},
         )
 
-        # Manual tool result
-        ci = t.tool_result(
-            "call_001", "list_directory",
-            "01_agentic_loop.py\n02_auto_summarization.py\n03_offline_tool_management.py",
-        )
+        # Execute the tool for real and commit the result
+        listing = execute_tool("list_directory", {"path": "."})
+        ci = t.tool_result("call_001", "list_directory", listing)
 
-        t.assistant("Found 3 Python files in the directory.")
+        file_count = len(listing.splitlines())
+        t.assistant(f"Found {file_count} files in the directory.")
 
         print(f"  Tool result committed: {ci.commit_hash[:8]}")
         print(f"  Content: {t.get_content(ci.commit_hash)}\n")

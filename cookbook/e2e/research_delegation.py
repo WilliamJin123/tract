@@ -5,9 +5,33 @@
   PART 3 -- LLM / Agent:  Full session deploy + compress + collapse
 """
 
+import os
+
 import click
+from dotenv import load_dotenv
 
 from tract import Session
+from tract.models.config import LLMConfig
+
+load_dotenv()
+
+TRACT_OPENAI_API_KEY = os.environ.get("TRACT_OPENAI_API_KEY", "")
+TRACT_OPENAI_BASE_URL = os.environ.get("TRACT_OPENAI_BASE_URL", "")
+MODEL_ID = "gpt-oss-120b"
+
+
+def _configure_llm(tract):
+    """Configure LLM client on a session-created tract."""
+    from tract.llm.client import OpenAIClient
+
+    client = OpenAIClient(
+        api_key=TRACT_OPENAI_API_KEY,
+        base_url=TRACT_OPENAI_BASE_URL or None,
+        default_model=MODEL_ID,
+    )
+    tract.configure_llm(client)
+    tract._owns_llm_client = True
+    tract._default_config = LLMConfig(model=MODEL_ID)
 
 
 # =====================================================================
@@ -79,38 +103,46 @@ def part1_manual():
 # =====================================================================
 
 def part2_interactive():
+    if not TRACT_OPENAI_API_KEY:
+        print("\n" + "=" * 60)
+        print("PART 2: SKIPPED (no TRACT_OPENAI_API_KEY)")
+        print("=" * 60)
+        return
+
     print("\n" + "=" * 60)
     print("PART 2 -- Interactive: Review Before Merge")
     print("=" * 60)
 
     session = Session.open()
     parent = session.create_tract(display_name="supervisor")
+    _configure_llm(parent)
 
     parent.system("You are a materials science research coordinator.")
     parent.user("We need reports on three material classes.")
 
     branch_configs = [
-        ("metals-research", "Research metallic bonding and properties.",
-         "Metals: metallic bonding, sea of electrons, high conductivity and malleability."),
-        ("ceramics-research", "Research ceramic materials and applications.",
-         "Ceramics: ionic/covalent bonding, high hardness, thermal resistance, brittle."),
-        ("polymers-research", "Research polymer chemistry and uses.",
-         "Polymers: long chain molecules, flexible, lightweight, wide range of properties."),
+        ("metals-research", "Describe metallic bonding and properties of metals in 2-3 sentences."),
+        ("ceramics-research", "Describe ceramic materials, their bonding, and applications in 2-3 sentences."),
+        ("polymers-research", "Describe polymer chemistry, structure, and uses in 2-3 sentences."),
     ]
 
-    for branch_name, work_text, summary in branch_configs:
+    for branch_name, question in branch_configs:
         child = session.deploy(parent, purpose=branch_name, branch_name=branch_name)
         child._seed_base_tags()
-        child.user(work_text)
-        child.assistant(summary)
+        _configure_llm(child)
+
+        # Real LLM call: child researches the topic
+        response = child.chat(question)
+        print(f"\n  {branch_name}: LLM responded ({len(response.text)} chars)")
 
         ctx = child.compile()
-        print(f"\n  {branch_name}: {len(ctx.messages)} msgs, {ctx.token_count} tokens")
+        print(f"  Context: {len(ctx.messages)} msgs, {ctx.token_count} tokens")
         for m in ctx.messages[-2:]:
             print(f"    {m.role:>10}: {m.content[:60]}...")
 
         if click.confirm(f"  Accept {branch_name}'s findings?", default=True):
-            child.compress(content=summary)
+            # Compress using the LLM-generated response as summary content
+            child.compress(content=response.text[:200])
             parent.merge(branch_name)
             print(f"  Merged '{branch_name}'")
         else:
@@ -125,38 +157,46 @@ def part2_interactive():
 # =====================================================================
 
 def part3_agent():
+    if not TRACT_OPENAI_API_KEY:
+        print("\n" + "=" * 60)
+        print("PART 3: SKIPPED (no TRACT_OPENAI_API_KEY)")
+        print("=" * 60)
+        return
+
     print("\n" + "=" * 60)
     print("PART 3 -- LLM / Agent: Deploy-Compress-Collapse")
     print("=" * 60)
 
     session = Session.open()
     parent = session.create_tract(display_name="orchestrator")
+    _configure_llm(parent)
 
     parent.system("You are a particle physics research coordinator.")
     parent.user("We need summaries of three fundamental forces.")
 
     research = [
-        ("force-em", "electromagnetic force",
-         "Electromagnetic: carried by photons, infinite range, governs light and chemistry."),
-        ("force-strong", "strong nuclear force",
-         "Strong force: carried by gluons, binds quarks into protons/neutrons, short range."),
-        ("force-weak", "weak nuclear force",
-         "Weak force: carried by W/Z bosons, responsible for beta decay, short range."),
+        ("force-em", "Describe the electromagnetic force in 2-3 sentences: carrier particle, range, and role in nature."),
+        ("force-strong", "Describe the strong nuclear force in 2-3 sentences: carrier particle, range, and role in nature."),
+        ("force-weak", "Describe the weak nuclear force in 2-3 sentences: carrier particle, range, and role in nature."),
     ]
 
-    for branch_name, purpose, summary in research:
-        child = session.deploy(parent, purpose=purpose, branch_name=branch_name)
+    for branch_name, question in research:
+        child = session.deploy(parent, purpose=branch_name, branch_name=branch_name)
         child._seed_base_tags()
-        child.user(f"Describe the {purpose} in detail.")
-        child.assistant(summary)
+        _configure_llm(child)
 
-        # Collapse child into parent with summary
+        # Real LLM call: child researches the topic
+        response = child.chat(question)
+        summary = response.text[:200]
+        print(f"\n  {branch_name}: LLM responded ({len(response.text)} chars)")
+
+        # Collapse child into parent with LLM-generated summary
         session.collapse(
             child, into=parent,
             content=summary,
             auto_commit=True,
         )
-        print(f"\n  Collapsed '{branch_name}': {summary[:60]}...")
+        print(f"  Collapsed '{branch_name}': {summary[:60]}...")
 
     ctx = parent.compile()
     print(f"\n  Parent context: {len(ctx.messages)} messages, {ctx.token_count} tokens")

@@ -5,9 +5,11 @@
   PART 3 -- LLM / Agent:  Full LLM-driven tool loop: compile + tools -> LLM -> execute
 """
 
+import json
 import os
 
 import click
+import httpx
 from dotenv import load_dotenv
 
 from tract import Tract, TractConfig, TokenBudgetConfig
@@ -94,6 +96,12 @@ def part2_interactive():
 # =====================================================================
 
 def part3_agent():
+    if not TRACT_OPENAI_API_KEY:
+        print("\n" + "=" * 60)
+        print("Part 3: SKIPPED (no TRACT_OPENAI_API_KEY)")
+        print("=" * 60)
+        return
+
     print("\n" + "=" * 60)
     print("PART 3 -- LLM / Agent: LLM-Driven Tool Loop")
     print("=" * 60)
@@ -115,22 +123,29 @@ def part3_agent():
         executor = ToolExecutor(t)
         print(f"\n  {len(tools)} tools available for LLM")
 
-        # Build messages for the LLM
-        messages = [
-            {"role": "system", "content": "You are a context management agent. "
-             "Check the tract status and log, then decide if any action is needed."},
-            {"role": "user", "content": "Please check the current context status "
-             "and report what you find."},
-        ]
+        # Use the tract's own context as the message history
+        ctx = t.compile()
+        messages = ctx.to_dicts()
+        messages.append({
+            "role": "user",
+            "content": "Check the current context status and log. "
+                       "Take any maintenance action if needed.",
+        })
 
-        # Single-round tool loop (production would repeat until no tool_calls)
-        response = t._llm_client.chat(messages, tools=tools)
-        tool_calls = response.get("choices", [{}])[0].get("message", {}).get("tool_calls", [])
+        # Call LLM with toolkit tools via HTTP (no private API access)
+        llm_response = httpx.post(
+            f"{TRACT_OPENAI_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {TRACT_OPENAI_API_KEY}"},
+            json={"model": MODEL_ID, "messages": messages, "tools": tools},
+            timeout=120,
+        )
+        llm_response.raise_for_status()
+        raw = llm_response.json()
+        tool_calls = raw["choices"][0]["message"].get("tool_calls", [])
 
         if tool_calls:
             print(f"\n  LLM requested {len(tool_calls)} tool call(s):")
             for tc in tool_calls:
-                import json
                 name = tc["function"]["name"]
                 args = json.loads(tc["function"].get("arguments", "{}"))
                 result = executor.execute(name, args)
@@ -138,7 +153,7 @@ def part3_agent():
                 print(f"    {name}({args}) -> [{status}]")
                 print(f"      {(result.output or result.error or '')[:100]}")
         else:
-            content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            content = raw["choices"][0]["message"].get("content", "")
             print(f"\n  LLM responded without tools: {content[:120]}...")
 
 
