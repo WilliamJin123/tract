@@ -204,7 +204,7 @@ def pprint_compiled_context(
                 content = content[:max_chars - 3] + "..."
             sk = _style_key(msg)
             color = _ROLE_COLORS.get(sk, "white")
-            label = "reasoning" if sk == "reasoning" else msg.role
+            label = "reasoning" if sk == "reasoning" else ("tool res." if msg.role == "tool" else msg.role)
             role_label = Text(label, style=f"bold {color}")
             # Role-appropriate content rendering:
             # - system: dim (configuration, not conversation)
