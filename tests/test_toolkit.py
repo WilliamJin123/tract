@@ -484,6 +484,43 @@ class TestNewTools:
         assert result.success
         assert "tract-wide" in result.output
 
+    def test_configure_model_merges_tract_default(self, tract):
+        """configure_model merges with existing default instead of replacing."""
+        from tract.models.config import LLMConfig
+        executor = ToolExecutor(tract)
+
+        # Set model first
+        executor.execute("configure_model", {"model": "gpt-4o"})
+        assert tract._default_config.model == "gpt-4o"
+
+        # Set temperature -- model should be preserved
+        executor.execute("configure_model", {"temperature": 0.8})
+        assert tract._default_config.temperature == 0.8
+        assert tract._default_config.model == "gpt-4o", (
+            "model should survive a temperature-only configure_model call"
+        )
+
+        # Override model again -- temperature should be preserved
+        executor.execute("configure_model", {"model": "gpt-3.5-turbo"})
+        assert tract._default_config.model == "gpt-3.5-turbo"
+        assert tract._default_config.temperature == 0.8, (
+            "temperature should survive a model-only configure_model call"
+        )
+
+    def test_configure_model_merges_operation_config(self, tract):
+        """configure_model merges per-operation configs."""
+        executor = ToolExecutor(tract)
+
+        executor.execute("configure_model", {"model": "gpt-4o", "operation": "chat"})
+        chat_cfg = tract._operation_configs.chat
+        assert chat_cfg.model == "gpt-4o"
+
+        # Add temperature to chat -- model preserved
+        executor.execute("configure_model", {"temperature": 0.5, "operation": "chat"})
+        chat_cfg = tract._operation_configs.chat
+        assert chat_cfg.temperature == 0.5
+        assert chat_cfg.model == "gpt-4o"
+
     def test_tag_untag_roundtrip(self, tract):
         """tag and untag tools work together."""
         tract.register_tag("important", "important items")

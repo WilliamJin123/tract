@@ -880,11 +880,22 @@ def _handle_configure_model(
     operation: str | None,
     temperature: float | None,
 ) -> str:
+    import dataclasses
+
     from tract.models.config import LLMConfig
 
+    # Build overlay with only the fields the caller provided
+    overlay = LLMConfig(model=model, temperature=temperature)
+    non_none = overlay.non_none_fields()
+
     if operation is not None:
-        config = LLMConfig(model=model, temperature=temperature)
-        tract.configure_operations(**{operation: config})
+        # Merge with existing operation config (if any)
+        existing = getattr(tract._operation_configs, operation, None)
+        if existing is not None and non_none:
+            merged = dataclasses.replace(existing, **non_none)
+        else:
+            merged = overlay
+        tract.configure_operations(**{operation: merged})
         parts = []
         if model:
             parts.append(f"model={model}")
@@ -892,9 +903,13 @@ def _handle_configure_model(
             parts.append(f"temperature={temperature}")
         return f"Configured {operation}: {', '.join(parts)}"
     else:
-        # Set tract-wide default
-        config = LLMConfig(model=model, temperature=temperature)
-        tract._default_config = config
+        # Merge with existing tract-wide default (preserves fields not overridden)
+        existing = tract._default_config
+        if existing is not None and non_none:
+            merged = dataclasses.replace(existing, **non_none)
+        else:
+            merged = overlay
+        tract._default_config = merged
         parts = []
         if model:
             parts.append(f"model={model}")
