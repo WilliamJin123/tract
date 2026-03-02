@@ -106,9 +106,9 @@ def part1_per_call_config():
 # =============================================================================
 # Part 2 -- Agent: LLM Self-Configures via configure_model Tool
 # =============================================================================
-# The LLM receives toolkit tools (including configure_model) via set_tools +
-# as_tools and autonomously decides to call configure_model to set its own
-# temperature. We use generate() for the agentic loop — no custom LLM calls.
+# The LLM receives only configure_model + status tools (custom ToolProfile)
+# and autonomously decides to call configure_model to set its own temperature.
+# We use generate() for the agentic loop — no custom LLM calls needed.
 
 def part2_agent():
     print(f"\n{'=' * 60}")
@@ -116,7 +116,17 @@ def part2_agent():
     print("=" * 60)
     print()
 
-    from tract.toolkit import ToolExecutor
+    from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
+
+    # Custom profile: only expose config + status tools — the LLM can
+    # change its own temperature but we handle the actual chat calls.
+    config_profile = ToolProfile(
+        name="config-only",
+        tool_configs={
+            "configure_model": ToolConfig(enabled=True),
+            "status": ToolConfig(enabled=True),
+        },
+    )
 
     with Tract.open(
         api_key=TRACT_OPENAI_API_KEY,
@@ -124,7 +134,7 @@ def part2_agent():
         model=MODEL_ID,
     ) as t:
         executor = ToolExecutor(t)
-        tools = t.as_tools(profile="self")
+        tools = t.as_tools(profile=config_profile)
         t.set_tools(tools)
 
         t.system("You are a helpful assistant.")
@@ -135,28 +145,38 @@ def part2_agent():
             "For each, set an appropriate temperature first, then answer."
         )
 
-        # Agentic loop using generate() — it compiles, calls LLM, commits,
-        # and parses tool_calls automatically.
+        # Agentic loop: generate() compiles, calls LLM, commits, and
+        # parses tool_calls automatically. Loop until the LLM responds
+        # with text instead of tool calls.
         for turn in range(10):
             response = t.generate()
 
             if not response.tool_calls:
-                print(f"  Final answer:\n    {response.text[:200]}...")
                 break
 
-            # Execute each tool call the LLM requested
             for tc in response.tool_calls:
-                args = tc.arguments
-                result = executor.execute(tc.name, args)
+                result = executor.execute(tc.name, tc.arguments)
                 t.tool_result(tc.id, tc.name, str(result))
-                print(f"  LLM called: {tc.name}({args}) -> {str(result)[:80]}")
+                print(f"  LLM called: {tc.name}({tc.arguments})")
+                print(f"    -> {result.output[:100]}")
 
-        # Show the generation_configs the LLM chose
-        print()
+        # --- Inspect the full conversation the agent built ---
+        print(f"\n{'=' * 60}")
+        print("COMPILED CONTEXT")
+        print("=" * 60)
+        ctx = t.compile()
+        print(f"  {len(ctx.messages)} messages, {ctx.token_count} tokens\n")
+        ctx.pprint(style="chat")
+
+        # --- Show generation_config provenance per commit ---
+        print(f"\n{'=' * 60}")
+        print("GENERATION CONFIG PROVENANCE")
+        print("=" * 60)
         for ci in t.log():
             if ci.generation_config:
                 gc = ci.generation_config
-                print(f"  Commit {ci.commit_hash[:8]}: temp={gc.temperature}")
+                print(f"  {ci.commit_hash[:8]}  temp={gc.temperature}  "
+                      f"({ci.content_type})")
 
 
 def main():
