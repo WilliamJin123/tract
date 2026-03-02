@@ -25,7 +25,7 @@ MODEL_ID = "gpt-oss-120b"
 
 
 def main():
-    db_path = os.path.join(os.path.curdir, "01_conversation.db")
+    db_path = os.path.join(os.path.curdir, "conversation.db")
     if os.path.exists(db_path):
         os.unlink(db_path)
 

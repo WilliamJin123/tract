@@ -18,7 +18,6 @@ Demonstrates: LLMConfig, sugar params, generate() two-step,
 
 import os
 
-import click
 from dotenv import load_dotenv
 
 from tract import LLMConfig, Tract
@@ -105,16 +104,26 @@ def part1_per_call_config():
 
 
 # =============================================================================
-# Part 2 -- Interactive: Prompt user for config before each call
+# Part 2 -- Interactive: Config Presets (developer-defined)
 # =============================================================================
-# Show the user what config will be used, let them tweak temperature and
-# max_tokens via click prompts, and confirm before sending.
+# Define reusable config presets in code, run the same question with each,
+# and compare the outputs and captured provenance side-by-side.
 
 def part2_interactive():
-    """Part 2: Interactive -- prompt for temperature/max_tokens before chat."""
+    """Part 2: Interactive -- compare config presets side-by-side."""
     print("=" * 60)
-    print("PART 2 -- Interactive: Prompt for Config Before Each Call")
+    print("PART 2 -- Interactive: Config Presets (Compare Side-by-Side)")
     print("=" * 60)
+    print()
+
+    # Define presets — a developer tweaks these in code, not at runtime
+    PRESETS = {
+        "precise":  LLMConfig(temperature=0.1, max_tokens=150),
+        "balanced": LLMConfig(temperature=0.5, max_tokens=300),
+        "creative": LLMConfig(temperature=0.9, max_tokens=300, top_p=0.95),
+    }
+
+    question = "What is a good analogy for how a database index works?"
 
     with Tract.open(
         api_key=TRACT_OPENAI_API_KEY,
@@ -123,27 +132,19 @@ def part2_interactive():
     ) as t:
         t.system("You are a helpful assistant. Be concise.")
 
-        question = click.prompt("\n  Your question", default="What is Python?")
-        temp = click.prompt("  Temperature", type=float, default=0.7)
-        max_tok = click.prompt("  Max tokens", type=int, default=300)
-
-        config = LLMConfig(temperature=temp, max_tokens=max_tok)
-        print(f"\n  Resolved config: temperature={temp}, max_tokens={max_tok}")
-
-        if click.confirm("  Use this config?", default=True):
+        for name, config in PRESETS.items():
             response = t.chat(question, llm_config=config)
             gc = response.generation_config
-            print(f"\n  Captured: temp={gc.temperature}, max_tokens={gc.max_tokens}")
-            response.pprint()
-        else:
-            print("  Skipped -- no call made.")
+            print(f"  [{name}] temp={gc.temperature}, max_tokens={gc.max_tokens}")
+            print(f"    {response.text[:120]}...")
+            print()
 
 
 # =============================================================================
-# Part 3 -- Agent: Self-Configuring via Toolkit
+# Part 3 -- Agent: Self-Configuring via configure_model Tool
 # =============================================================================
-# Agents introspect their own generation_config via status() and adjust
-# temperature/max_tokens per-call using the toolkit.
+# The agent uses the built-in configure_model tool to change its own
+# temperature between calls. High temp for creative work, low for factual.
 
 def part3_agent():
     print(f"\n{'=' * 60}")
@@ -161,22 +162,30 @@ def part3_agent():
         t.system("You are a helpful assistant.")
         executor = ToolExecutor(t)
 
-        # Agent checks its current config via status()
+        # Agent checks its baseline config
         status = executor.execute("status", {})
-        print(f"  Agent sees its own config via status():\n{status}\n")
+        print(f"  Baseline config:\n{status}\n")
 
-        # Agent makes a creative call with high temperature
-        r = t.chat("Invent a metaphor for recursion.", temperature=0.9)
-        print(f"  Creative call (temp=0.9): {r.text[:80]}...")
+        # Agent sets high temperature for creative work
+        result = executor.execute("configure_model", {"temperature": 0.95})
+        print(f"  configure_model(temperature=0.95): {result}\n")
 
-        # Agent makes a precise call with low temperature
-        r = t.chat("Define recursion in one sentence.", temperature=0.1)
-        print(f"  Precise call (temp=0.1): {r.text[:80]}...")
+        r1 = t.chat("Write a surreal one-sentence poem about a clock that melts.")
+        gc1 = r1.generation_config
+        print(f"  Creative call — captured temp={gc1.temperature}")
+        print(f"    {r1.text[:120]}...\n")
 
-    # Note: Agents introspect their own generation_config via status()
-    # and adjust temperature/max_tokens per-call using the toolkit.
-    # The toolkit's status tool surfaces the resolved config so agents
-    # can reason about what settings are active before each call.
+        # Agent switches to low temperature for factual work
+        result = executor.execute("configure_model", {"temperature": 0.1})
+        print(f"  configure_model(temperature=0.1): {result}\n")
+
+        r2 = t.chat("What is the speed of light in meters per second?")
+        gc2 = r2.generation_config
+        print(f"  Factual call — captured temp={gc2.temperature}")
+        print(f"    {r2.text[:120]}...\n")
+
+        # Both responses live in the same tract with different generation_configs
+        print(f"  Temperature changed: {gc1.temperature} -> {gc2.temperature}")
 
 
 def main():

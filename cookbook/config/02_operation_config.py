@@ -30,14 +30,14 @@ MODEL_ID = "gpt-oss-120b"
 
 
 # =============================================================================
-# Part 2 -- Manual: Defaults and Per-Operation Config
+# Part 1 -- Manual: Defaults and Per-Operation Config
 # =============================================================================
 # Set a tract-level default (every call inherits it), then override per
 # operation so chat is creative and compression is deterministic.
 
-def part2_defaults_and_operations():
+def part1_defaults_and_operations():
     print(f"\n{'=' * 60}")
-    print("PART 2 -- Manual: DEFAULTS AND PER-OPERATION CONFIG")
+    print("PART 1 -- Manual: DEFAULTS AND PER-OPERATION CONFIG")
     print("=" * 60)
     print()
 
@@ -178,7 +178,7 @@ def part3_agent():
 
 
 def main():
-    part2_defaults_and_operations()
+    part1_defaults_and_operations()
     part2_interactive()
     part3_agent()
 

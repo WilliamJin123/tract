@@ -3,7 +3,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
-**/0*.db
+**/*conversation.db
 
 # C extensions
 *.so

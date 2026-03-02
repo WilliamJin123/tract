@@ -5,6 +5,7 @@ Tract operations as function-calling schemas for LLM agents.
 """
 
 from tract.toolkit.definitions import get_all_tools
+from tract.toolkit.executor import ToolExecutor
 from tract.toolkit.models import ToolConfig, ToolDefinition, ToolProfile, ToolResult
 from tract.toolkit.profiles import (
     FULL_PROFILE,
@@ -14,13 +15,6 @@ from tract.toolkit.profiles import (
 )
 
 from tract.orchestrator.models import ToolCall
-
-# Lazy import to avoid circular dependency (executor imports definitions)
-def __getattr__(name: str):
-    if name == "ToolExecutor":
-        from tract.toolkit.executor import ToolExecutor
-        return ToolExecutor
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
