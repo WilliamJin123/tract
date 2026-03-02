@@ -104,51 +104,15 @@ def part1_per_call_config():
 
 
 # =============================================================================
-# Part 2 -- Interactive: Config Presets (developer-defined)
+# Part 2 -- Agent: LLM Self-Configures via configure_model Tool
 # =============================================================================
-# Define reusable config presets in code, run the same question with each,
-# and compare the outputs and captured provenance side-by-side.
+# The LLM receives toolkit tools (including configure_model) via set_tools +
+# as_tools and autonomously decides to call configure_model to set its own
+# temperature. We use generate() for the agentic loop — no custom LLM calls.
 
-def part2_interactive():
-    """Part 2: Interactive -- compare config presets side-by-side."""
-    print("=" * 60)
-    print("PART 2 -- Interactive: Config Presets (Compare Side-by-Side)")
-    print("=" * 60)
-    print()
-
-    # Define presets — a developer tweaks these in code, not at runtime
-    PRESETS = {
-        "precise":  LLMConfig(temperature=0.1, max_tokens=150),
-        "balanced": LLMConfig(temperature=0.5, max_tokens=300),
-        "creative": LLMConfig(temperature=0.9, max_tokens=300, top_p=0.95),
-    }
-
-    question = "What is a good analogy for how a database index works?"
-
-    with Tract.open(
-        api_key=TRACT_OPENAI_API_KEY,
-        base_url=TRACT_OPENAI_BASE_URL,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a helpful assistant. Be concise.")
-
-        for name, config in PRESETS.items():
-            response = t.chat(question, llm_config=config)
-            gc = response.generation_config
-            print(f"  [{name}] temp={gc.temperature}, max_tokens={gc.max_tokens}")
-            print(f"    {response.text[:120]}...")
-            print()
-
-
-# =============================================================================
-# Part 3 -- Agent: Self-Configuring via configure_model Tool
-# =============================================================================
-# The agent uses the built-in configure_model tool to change its own
-# temperature between calls. High temp for creative work, low for factual.
-
-def part3_agent():
+def part2_agent():
     print(f"\n{'=' * 60}")
-    print("PART 3 -- Agent: SELF-CONFIGURING VIA TOOLKIT")
+    print("PART 2 -- Agent: LLM SELF-CONFIGURES VIA TOOLKIT")
     print("=" * 60)
     print()
 
@@ -159,39 +123,45 @@ def part3_agent():
         base_url=TRACT_OPENAI_BASE_URL,
         model=MODEL_ID,
     ) as t:
-        t.system("You are a helpful assistant.")
         executor = ToolExecutor(t)
+        tools = t.as_tools(profile="self")
+        t.set_tools(tools)
 
-        # Agent checks its baseline config
-        status = executor.execute("status", {})
-        print(f"  Baseline config:\n{status}\n")
+        t.system("You are a helpful assistant.")
+        t.user(
+            "Two tasks:\n"
+            "1. Write a surreal one-sentence poem about a clock that melts.\n"
+            "2. What is the speed of light in meters per second?\n"
+            "For each, set an appropriate temperature first, then answer."
+        )
 
-        # Agent sets high temperature for creative work
-        result = executor.execute("configure_model", {"temperature": 0.95})
-        print(f"  configure_model(temperature=0.95): {result}\n")
+        # Agentic loop using generate() — it compiles, calls LLM, commits,
+        # and parses tool_calls automatically.
+        for turn in range(10):
+            response = t.generate()
 
-        r1 = t.chat("Write a surreal one-sentence poem about a clock that melts.")
-        gc1 = r1.generation_config
-        print(f"  Creative call — captured temp={gc1.temperature}")
-        print(f"    {r1.text[:120]}...\n")
+            if not response.tool_calls:
+                print(f"  Final answer:\n    {response.text[:200]}...")
+                break
 
-        # Agent switches to low temperature for factual work
-        result = executor.execute("configure_model", {"temperature": 0.1})
-        print(f"  configure_model(temperature=0.1): {result}\n")
+            # Execute each tool call the LLM requested
+            for tc in response.tool_calls:
+                args = tc.arguments
+                result = executor.execute(tc.name, args)
+                t.tool_result(tc.id, tc.name, str(result))
+                print(f"  LLM called: {tc.name}({args}) -> {str(result)[:80]}")
 
-        r2 = t.chat("What is the speed of light in meters per second?")
-        gc2 = r2.generation_config
-        print(f"  Factual call — captured temp={gc2.temperature}")
-        print(f"    {r2.text[:120]}...\n")
-
-        # Both responses live in the same tract with different generation_configs
-        print(f"  Temperature changed: {gc1.temperature} -> {gc2.temperature}")
+        # Show the generation_configs the LLM chose
+        print()
+        for ci in t.log():
+            if ci.generation_config:
+                gc = ci.generation_config
+                print(f"  Commit {ci.commit_hash[:8]}: temp={gc.temperature}")
 
 
 def main():
     part1_per_call_config()
-    part2_interactive()
-    part3_agent()
+    part2_agent()
 
 
 if __name__ == "__main__":
