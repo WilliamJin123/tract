@@ -4,8 +4,13 @@ An agent that reads its own token budget via status() and adapts: compressing
 when running hot, continuing normally when under budget. The agent makes this
 decision inline without a separate sidecar process.
 
+PART 1 -- Manual        Check status, compute fill %, decide to compress
+PART 2 -- Agent         Orchestrator self-compresses when budget is high
+PART 3 -- Agent         Toggle triggers: pause during bulk ops, resume after
+
 Demonstrates: status() via tools, budget-driven compress decisions,
-              Orchestrator for autonomous budget-aware compression
+              Orchestrator for autonomous budget-aware compression,
+              toggle_triggers for pause/resume during bulk operations
 """
 
 import sys
@@ -192,9 +197,113 @@ def part2_agent():
         print(f"    Commits:      {final_status.commit_count}")
 
 
+# =====================================================================
+# PART 3 -- Agent: Toggle triggers during bulk operations
+# =====================================================================
+# The SELF profile includes toggle_triggers, letting the agent pause
+# its own triggers during bulk data ingestion (to prevent premature
+# compression) and resume them afterward.
+
+def part3_toggle():
+    if not llm.api_key:
+        print(f"\n{'=' * 60}")
+        print("PART 3: SKIPPED (no llm.api_key)")
+        print("=" * 60)
+        return
+
+    print(f"\n{'=' * 60}")
+    print("PART 3 -- Agent: Pause/Resume Triggers During Bulk Ops")
+    print("=" * 60)
+    print()
+    print("  The agent pauses triggers before bulk ingestion to avoid")
+    print("  premature auto-compression, then resumes them and lets")
+    print("  the triggers clean up naturally.")
+    print()
+
+    from tract import CompressTrigger, GCTrigger
+
+    config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=600))
+
+    with Tract.open(
+        config=config,
+        api_key=llm.api_key,
+        base_url=llm.base_url,
+        model=MODEL_ID,
+    ) as t:
+        t.system("You are a data ingestion coordinator.")
+
+        # Pre-configure triggers (developer sets baseline)
+        t.configure_triggers([
+            CompressTrigger(threshold=0.7, summary_content="Bulk data summary."),
+            GCTrigger(max_dead_commits=10),
+        ])
+
+        # Agent profile includes toggle_triggers
+        toggle_profile = ToolProfile(
+            name="bulk-ingest",
+            tool_configs={
+                "status": ToolConfig(
+                    enabled=True,
+                    description="Check token budget and context health.",
+                ),
+                "toggle_triggers": ToolConfig(
+                    enabled=True,
+                    description=(
+                        "Pause triggers (enabled=false) before bulk operations "
+                        "to prevent premature compression. Resume (enabled=true) "
+                        "after ingestion so triggers can clean up."
+                    ),
+                ),
+                "compress": ToolConfig(
+                    enabled=True,
+                    description="Compress context when needed.",
+                ),
+                "log": ToolConfig(
+                    enabled=True,
+                    description="View recent commits.",
+                ),
+            },
+        )
+
+        # Seed some initial context
+        for i in range(4):
+            t.user(f"Dataset batch {i}: 100 records ingested.")
+            t.assistant(f"Batch {i} acknowledged. Running total: {(i+1)*100} records.")
+
+        status = t.status()
+        budget_max = status.token_budget_max or 1
+        print(f"  Before orchestrator: {status.token_count}/{budget_max} tokens")
+        print(f"  Triggers active: {not (t.trigger_evaluator and t.trigger_evaluator.is_paused)}")
+
+        orch_config = OrchestratorConfig(
+            autonomy_ceiling=AutonomyLevel.AUTONOMOUS,
+            max_steps=10,
+            profile=toggle_profile,
+            task_context=(
+                "You're about to ingest a large batch of data. "
+                "1. Pause triggers to prevent premature compression during ingestion. "
+                "2. Check the current status. "
+                "3. Resume triggers so they can clean up after the batch."
+            ),
+        )
+        orch = Orchestrator(t, config=orch_config)
+        result = orch.run()
+
+        print(f"\n  Orchestrator: {result.total_tool_calls} tool calls, "
+              f"state={result.state.value}")
+        for step in result.steps:
+            s = "OK" if step.success else "FAIL"
+            args_short = str(step.tool_call.arguments)[:60]
+            print(f"    [{s}] {step.tool_call.name}({args_short})")
+
+        print(f"\n  Triggers active after orchestrator: "
+              f"{not (t.trigger_evaluator and t.trigger_evaluator.is_paused)}")
+
+
 def main():
     part1_manual()
     part2_agent()
+    part3_toggle()
 
 
 if __name__ == "__main__":
@@ -205,4 +314,5 @@ if __name__ == "__main__":
 # cookbook/developer/conversations/03_status_and_budget.py  -- Status and budget basics
 # cookbook/agentic/sidecar/02_assessment_loop.py            -- Orchestrator-driven budget management
 # cookbook/agentic/sidecar/01_triggers.py                   -- CompressTrigger for automatic compression
+# cookbook/agentic/sidecar/03_toolkit.py                    -- Agent registers its own triggers via tools
 # cookbook/developer/operations/01_compress.py              -- Manual compression patterns

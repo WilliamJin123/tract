@@ -105,13 +105,13 @@ cookbook/
 │   ├── self_managing/                         # Agent has tract tools in its own loop
 │   │   ├── 01_tool_hints.py                     # Description-driven behavior, no system prompt crutches
 │   │   ├── 02_lightweight_ops.py                # Pin, tag, configure_model — inline decisions
-│   │   ├── 03_budget_awareness.py               # Agent reads status(), adapts behavior
+│   │   ├── 03_budget_awareness.py               # Agent reads status(), toggle_triggers for bulk ops
 │   │   └── 04_profiles.py                       # self/supervisor/observer tool scoping
 │   │
 │   ├── sidecar/                               # Companion agent handles context management
 │   │   ├── 01_triggers.py                       # Built-in triggers, autonomy spectrum, hook interception
-│   │   ├── 02_assessment_loop.py                # OrchestratorConfig, assessment loop, HITL
-│   │   ├── 03_toolkit.py                        # as_tools, profiles, ToolExecutor
+│   │   ├── 02_assessment_loop.py                # OrchestratorConfig, assessment loop, adaptive triggers
+│   │   ├── 03_toolkit.py                        # as_tools, profiles, agent registers own triggers
 │   │   └── 04_auto_tagger.py                    # Orchestrator-driven retrospective tagging
 │   │
 │   └── multi_agent/                           # Coordination across agents
@@ -167,7 +167,7 @@ cookbook/
 │
 └── e2e/                                     # End-to-end scenarios combining features
     ├── self_correcting_agent.py               # [self-managing] retry + edit + validation + provenance
-    ├── long_running_session.py                # [sidecar] triggers + compression + gc + 50+ turns
+    ├── long_running_session.py                # [sidecar] triggers + agent self-configures triggers + 50+ turns
     ├── ab_testing.py                          # [developer] branch + config + diff + provenance query
     ├── context_forensics.py                   # [developer] log + time-travel + branch + rebase
     ├── research_delegation.py                 # [sidecar + multi-agent] compress + merge
@@ -601,7 +601,7 @@ A companion agent (possibly cheaper/smaller model) handles tract operations whil
 
 **Use case:** Auto-assess context health and execute maintenance autonomously.
 
-> `OrchestratorConfig`, `TriggerConfig`, assessment loop, HITL via hooks
+> `OrchestratorConfig`, `TriggerConfig`, assessment loop, HITL via hooks, `register_trigger`, adaptive trigger policies
 
 ### 03 — Toolkit
 
@@ -610,7 +610,7 @@ A companion agent (possibly cheaper/smaller model) handles tract operations whil
 
 **Use case:** Expose tract operations as LLM-callable tools for the sidecar.
 
-> `as_tools(format=, profile=)`, `ToolExecutor`, profiles
+> `as_tools(format=, profile=)`, `ToolExecutor`, profiles, `register_trigger`, `toggle_triggers`, agent self-configuring triggers
 
 ### 04 — Auto-Tagger
 
