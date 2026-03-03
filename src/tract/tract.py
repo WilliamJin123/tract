@@ -92,7 +92,7 @@ def _fallback_message(content_type: str, text: str) -> str:
     """Generate a fallback commit message by truncating content text.
 
     Used when no LLM is available for auto-summarization, or when
-    auto_summarize is disabled.
+    auto_message is disabled.
 
     Args:
         content_type: The content type discriminator (kept for the
@@ -238,7 +238,7 @@ class Tract:
         self._hook_log: list[HookEvent] = []
         self._tool_summarization_config: ToolSummarizationConfig | None = None
         self._commit_reasoning: bool = True
-        self._auto_summarize: bool = False
+        self._auto_message_enabled: bool = False
 
         # Dynamic operations registry
         from tract.hooks.registry import OperationRegistry
@@ -271,7 +271,7 @@ class Tract:
         operation_configs: dict[str, LLMConfig] | None = None,  # deprecated: use operations=
         tokenizer_encoding: str | None = None,
         commit_reasoning: bool = True,
-        auto_summarize: bool | str | LLMConfig = False,
+        auto_message: bool | str | LLMConfig = False,
         agent_loop: object | None = None,
     ) -> Tract:
         """Open (or create) a Trace repository.
@@ -320,11 +320,11 @@ class Tract:
                 Common values: ``"o200k_base"`` (GPT-4o/o1/o3, default),
                 ``"cl100k_base"`` (GPT-4/3.5-turbo).  Overrides
                 ``config.tokenizer_encoding`` when both are provided.
-            auto_summarize: Enable LLM-generated commit messages.  Accepts:
+            auto_message: Enable LLM-generated commit messages.  Accepts:
                 - ``False`` (default): truncated content preview.
                 - ``True``: use the tract-level default LLM client/model.
                 - ``"model-name"``: use a specific model (e.g. ``"llama3.1-8b"``).
-                - :class:`LLMConfig`: full control over summarization config.
+                - :class:`LLMConfig`: full control over message generation config.
             agent_loop: A custom agent loop conforming to the
                 :class:`~tract.llm.protocols.AgentLoop` protocol.  When set,
                 :meth:`orchestrate` delegates to this loop instead of the
@@ -526,21 +526,21 @@ class Tract:
         # Reasoning commit config
         tract._commit_reasoning = commit_reasoning
 
-        # Auto-summarize config
-        if auto_summarize is not False:
-            tract._auto_summarize = True
-            if isinstance(auto_summarize, str):
+        # Auto-message config
+        if auto_message is not False:
+            tract._auto_message_enabled = True
+            if isinstance(auto_message, str):
                 from dataclasses import replace as _replace
                 tract._operation_configs = _replace(
                     tract._operation_configs,
-                    summarize=LLMConfig(model=auto_summarize, temperature=0.0),
+                    message=LLMConfig(model=auto_message, temperature=0.0),
                 )
-            elif isinstance(auto_summarize, LLMConfig):
+            elif isinstance(auto_message, LLMConfig):
                 from dataclasses import replace as _replace
                 tract._operation_configs = _replace(
-                    tract._operation_configs, summarize=auto_summarize,
+                    tract._operation_configs, message=auto_message,
                 )
-            # auto_summarize=True: no operation config needed, uses default
+            # auto_message=True: no operation config needed, uses default
 
         # Plug-in agent loop
         if agent_loop is not None:
@@ -3541,7 +3541,7 @@ class Tract:
             )
             return
         # Keyword path: validate and construct OperationConfigs
-        _valid_ops = {"chat", "merge", "compress", "orchestrate", "summarize"}
+        _valid_ops = {"chat", "merge", "compress", "orchestrate", "message"}
         for name, cfg in operation_configs.items():
             if not isinstance(cfg, LLMConfig):
                 raise TypeError(
@@ -3615,7 +3615,7 @@ class Tract:
             self._operation_clients = _clients
             self._log_config_change("operation_client", source="api")
             return
-        _valid_ops = {"chat", "merge", "compress", "orchestrate", "summarize"}
+        _valid_ops = {"chat", "merge", "compress", "orchestrate", "message"}
         for name in operation_clients:
             if name not in _valid_ops:
                 raise ValueError(
@@ -3723,7 +3723,7 @@ class Tract:
             _prompts: OperationPrompts instance with typed fields.
             **prompt_overrides: Operation name -> prompt string mappings.
                 Valid names: ``"compress"``, ``"merge"``, ``"orchestrate"``,
-                ``"summarize"``, ``"commit_message"``.
+                ``"message"``, ``"commit_message"``.
 
         Raises:
             TypeError: If both positional and keyword arguments provided.
@@ -3745,7 +3745,7 @@ class Tract:
                 source="api",
             )
             return
-        _valid_ops = {"compress", "merge", "orchestrate", "summarize", "commit_message"}
+        _valid_ops = {"compress", "merge", "orchestrate", "message", "commit_message"}
         for name, val in prompt_overrides.items():
             if not isinstance(val, str):
                 raise TypeError(
@@ -3819,7 +3819,7 @@ class Tract:
         """Generate a commit message, using LLM summarization when available.
 
         Falls back to truncation when:
-        - ``auto_summarize`` was not enabled on ``Tract.open()``
+        - ``auto_message`` was not enabled on ``Tract.open()``
         - No LLM client is available (per-operation or default)
         - Currently inside a batch (``_in_batch``)
         - The LLM call fails for any reason
@@ -3832,9 +3832,9 @@ class Tract:
             A concise one-sentence commit message, or a truncated preview.
         """
         if (
-            not self._auto_summarize
+            not self._auto_message_enabled
             or self._in_batch
-            or not self._has_llm_client("summarize")
+            or not self._has_llm_client("message")
         ):
             return _fallback_message(content_type, text)
 
@@ -3844,9 +3844,9 @@ class Tract:
                 build_commit_message_prompt,
             )
 
-            client = self._resolve_llm_client("summarize")
+            client = self._resolve_llm_client("message")
             llm_kwargs = self._resolve_llm_config(
-                "summarize", temperature=0.0, max_tokens=80,
+                "message", temperature=0.0, max_tokens=80,
             )
             messages = [
                 {"role": "system", "content": COMMIT_MESSAGE_SYSTEM},

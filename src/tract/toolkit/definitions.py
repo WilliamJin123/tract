@@ -426,7 +426,7 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
                     },
                     "operation": {
                         "type": "string",
-                        "enum": ["chat", "merge", "compress", "orchestrate", "summarize"],
+                        "enum": ["chat", "merge", "compress", "orchestrate", "message"],
                         "description": "Operation to configure. Omit to set tract-wide default.",
                     },
                     "temperature": {

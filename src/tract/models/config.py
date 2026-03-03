@@ -205,7 +205,7 @@ class OperationConfigs:
     merge: LLMConfig | None = None
     compress: LLMConfig | None = None
     orchestrate: LLMConfig | None = None
-    summarize: LLMConfig | None = None
+    message: LLMConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -229,7 +229,7 @@ class OperationClients:
     merge: object | None = None
     compress: object | None = None
     orchestrate: object | None = None
-    summarize: object | None = None
+    message: object | None = None
 
 
 @dataclass(frozen=True)
@@ -252,7 +252,7 @@ class OperationPrompts:
     compress: str | None = None
     merge: str | None = None
     orchestrate: str | None = None
-    summarize: str | None = None
+    message: str | None = None
     commit_message: str | None = None
 
 
