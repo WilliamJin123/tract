@@ -1,7 +1,7 @@
-"""Tests for Phase D: pprint() enhancements and __repr__ across all Pending subclasses.
+"""Tests for pprint() and __repr__ across all Pending subclasses.
 
-Tests __repr__ format for each subclass, pprint() runs without crash,
-verbose mode, compress token ratio display, merge conflict display,
+Tests __repr__ format for each subclass, pprint() full and compact modes,
+fields table display, compress token ratio, merge conflict display,
 and guidance panel rendering.
 """
 
@@ -36,7 +36,7 @@ def _make_tract() -> Tract:
     return t
 
 
-def _capture_pprint(pending, *, verbose: bool = False, compact: bool = False) -> str:
+def _capture_pprint(pending, *, compact: bool = False) -> str:
     """Capture pprint output by monkeypatching Console creation.
 
     Since pprint() creates its own Console, we monkeypatch the Rich Console
@@ -63,7 +63,7 @@ def _capture_pprint(pending, *, verbose: bool = False, compact: bool = False) ->
         original_rc = rich.console.Console
         rich.console.Console = CapturingConsole  # type: ignore[misc]
         try:
-            pending.pprint(verbose=verbose, compact=compact)
+            pending.pprint(compact=compact)
         finally:
             rich.console.Console = original_rc
     finally:
@@ -304,25 +304,25 @@ class TestPprintNoCrash:
         t.close()
 
 
-class TestPprintVerbose:
-    """Verify pprint(verbose=True) runs without exceptions."""
+class TestPprintFieldsTable:
+    """Verify pprint() always shows the fields table."""
 
-    def test_pending_verbose(self):
+    def test_pending_shows_fields(self):
         t = _make_tract()
         p = Pending(operation="test_op", tract=t)
-        output = _capture_pprint(p, verbose=True)
+        output = _capture_pprint(p)
         assert "test_op" in output
+        assert "Fields" in output
         t.close()
 
-    def test_compress_verbose(self):
+    def test_compress_shows_fields(self):
         t = _make_tract()
         p = PendingCompress(
             operation="compress", tract=t,
             summaries=["This is a summary that is long enough to test truncation " * 3],
             original_tokens=1000, estimated_tokens=300,
         )
-        output = _capture_pprint(p, verbose=True)
-        # verbose=True shows the fields table
+        output = _capture_pprint(p)
         assert "Fields" in output
         assert "summaries" in output
         t.close()
@@ -349,7 +349,7 @@ class TestCompressPprintDetails:
         assert "70%" in output
         t.close()
 
-    def test_fields_table_in_verbose(self):
+    def test_fields_table_always_shown(self):
         t = _make_tract()
         short_summary = "A short summary."
         long_summary = "X" * 200
@@ -358,26 +358,10 @@ class TestCompressPprintDetails:
             summaries=[short_summary, long_summary],
             original_tokens=500, estimated_tokens=200,
         )
-        output = _capture_pprint(p, verbose=True)
-        # verbose shows full fields table with all dataclass field values
+        output = _capture_pprint(p)
         assert "Fields" in output
         assert "original_tokens" in output
         assert "estimated_tokens" in output
-        t.close()
-
-    def test_fields_table_hidden_without_verbose(self):
-        t = _make_tract()
-        p = PendingCompress(
-            operation="compress", tract=t,
-            summaries=["summary"],
-            original_tokens=500, estimated_tokens=200,
-        )
-        output = _capture_pprint(p)
-        # Without verbose, no fields table
-        assert "Fields" not in output
-        # But details line still shown
-        assert "500" in output
-        assert "200" in output
         t.close()
 
     def test_guidance_panel_shown(self):
@@ -571,21 +555,12 @@ class TestPprintHeader:
         assert "Quality too low" in output
         t.close()
 
-    def test_approved_result_shown(self):
+    def test_approved_status_shown(self):
         t = _make_tract()
         p = Pending(operation="test_op", tract=t)
         p.status = "approved"
-        p._result = {"commit_hash": "abc123", "tokens_saved": 500}
         output = _capture_pprint(p)
-        assert "Result:" in output
-        assert "abc123" in output
-        t.close()
-
-    def test_no_result_when_pending(self):
-        t = _make_tract()
-        p = Pending(operation="test_op", tract=t)
-        output = _capture_pprint(p)
-        assert "Result:" not in output
+        assert "approved" in output
         t.close()
 
 
@@ -610,14 +585,14 @@ class TestGCPprintDetails:
         assert "GC targets" in output
         t.close()
 
-    def test_gc_verbose_shows_fields_table(self):
+    def test_gc_fields_table_shown(self):
         t = _make_tract()
         p = PendingGC(
             operation="gc", tract=t,
             commits_to_remove=["abcdef1234567890", "1234567890abcdef"],
             tokens_to_free=800,
         )
-        output = _capture_pprint(p, verbose=True)
+        output = _capture_pprint(p)
         assert "Fields" in output
         assert "commits_to_remove" in output
         t.close()
@@ -657,14 +632,14 @@ class TestRebasePprintDetails:
         assert "Diverged branch detected" in output
         t.close()
 
-    def test_rebase_verbose_shows_fields_table(self):
+    def test_rebase_fields_table_shown(self):
         t = _make_tract()
         p = PendingRebase(
             operation="rebase", tract=t,
             replay_plan=["abcdef1234567890", "1234567890abcdef"],
             target_base="deadbeef",
         )
-        output = _capture_pprint(p, verbose=True)
+        output = _capture_pprint(p)
         assert "Fields" in output
         assert "replay_plan" in output
         t.close()
@@ -693,7 +668,7 @@ class TestTriggerPprintDetails:
         assert "Token count exceeds threshold" in output
         t.close()
 
-    def test_trigger_verbose_shows_fields_table(self):
+    def test_trigger_fields_table_shown(self):
         t = _make_tract()
         p = PendingTrigger(
             operation="trigger", tract=t,
@@ -701,7 +676,7 @@ class TestTriggerPprintDetails:
             action_type="branch",
             action_params={"branch_name": "overflow-1", "max_tokens": 4000},
         )
-        output = _capture_pprint(p, verbose=True)
+        output = _capture_pprint(p)
         assert "Fields" in output
         assert "action_params" in output
         t.close()
@@ -750,14 +725,14 @@ class TestToolResultPprintDetails:
         assert "edited" in output.lower()
         t.close()
 
-    def test_verbose_shows_fields_table(self):
+    def test_fields_table_shown(self):
         t = _make_tract()
         p = PendingToolResult(
             operation="tool_result", tract=t,
             tool_name="search", token_count=100,
-            content="This is the full content of the search result that will be shown in verbose mode.",
+            content="This is the full content of the search result.",
         )
-        output = _capture_pprint(p, verbose=True)
+        output = _capture_pprint(p)
         assert "Fields" in output
         assert "tool_name" in output
         assert "content" in output

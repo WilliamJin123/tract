@@ -58,10 +58,8 @@ def pending_lifecycle() -> None:
         # --- Get the pending (not committed yet) ---
         pending: PendingCompress = t.compress(target_tokens=150, review=True)
 
-        # pprint(verbose=True) shows status, token ratio, summary previews,
-        # and guidance -- all the fields we used to print manually.
         print("\n  PendingCompress returned:")
-        pending.pprint(verbose=True)
+        pending.pprint()
 
         # --- Edit a summary before committing ---
         original: str = pending.summaries[0]
@@ -78,7 +76,7 @@ def pending_lifecycle() -> None:
 
         # pprint shows the updated status (approved) and final token ratio
         print("\n  Approved!")
-        pending.pprint()
+        pending.pprint(compact=True)
 
         # CompressResult details
         print(f"\n  CompressResult:")

@@ -296,20 +296,17 @@ class Pending:
         status = self.status.value if hasattr(self.status, 'value') else str(self.status)
         return f"<{type(self).__name__}: {self.operation}, {status}, id={self.pending_id[:8]}>"
 
-    def pprint(self, *, verbose: bool = False, compact: bool = False) -> None:
+    def pprint(self, *, compact: bool = False) -> None:
         """Pretty-print this Pending using Rich.
 
-        Three modes:
+        Two modes:
 
-        * ``compact=True`` — single colored line (for listings).
-        * default — header, available actions, and subclass details
-          (token ratio, branch info, etc.).
-        * ``verbose=True`` — also includes the full fields table with
-          every dataclass field value.
+        * ``pprint()`` — full output: header, fields table,
+          operation-specific details, and available actions.
+        * ``pprint(compact=True)`` — single colored line (for listings).
 
         Args:
-            verbose: If True, include the full fields table.
-            compact: If True, show a single colored line (useful for listing).
+            compact: If True, show a single colored line instead of full output.
         """
         import dataclasses
         import sys
@@ -369,39 +366,31 @@ class Pending:
         if self.created_at:
             self._print_created_at(console)
 
+        # Fields table
+        skip_fields = {
+            "operation", "pending_id", "status", "tract",
+            "triggered_by", "rejection_reason", "created_at",
+        }
+        table = Table(title="Fields", show_header=True, header_style="bold")
+        table.add_column("Field", style="cyan")
+        table.add_column("Value")
+
+        for f in dataclasses.fields(self):
+            if f.name.startswith("_"):
+                continue
+            if f.name in skip_fields:
+                continue
+            value = getattr(self, f.name)
+            table.add_row(f.name, _format_value_for_display(value))
+
+        console.print(table)
+
         # Subclass-specific details (token ratio, branch info, etc.)
         self._pprint_details(console)
 
         # Available actions
         actions = sorted(self._public_actions)
         console.print(f"  [bold]Available actions:[/bold] {', '.join(actions)}")
-
-        # Result summary (if approved)
-        if self.status == PendingStatus.APPROVED and self._result is not None:
-            result_str = repr(self._result)
-            if len(result_str) > 120:
-                result_str = result_str[:117] + "..."
-            console.print(f"  [bold]Result:[/bold] {result_str}")
-
-        # Verbose: full fields table
-        if verbose:
-            skip_fields = {
-                "operation", "pending_id", "status", "tract",
-                "triggered_by", "rejection_reason", "created_at",
-            }
-            table = Table(title="Fields", show_header=True, header_style="bold")
-            table.add_column("Field", style="cyan")
-            table.add_column("Value")
-
-            for f in dataclasses.fields(self):
-                if f.name.startswith("_"):
-                    continue
-                if f.name in skip_fields:
-                    continue
-                value = getattr(self, f.name)
-                table.add_row(f.name, _format_value_for_display(value))
-
-            console.print(table)
 
     def _compact_detail(self) -> str:
         """Return a short detail string for compact pprint mode.
