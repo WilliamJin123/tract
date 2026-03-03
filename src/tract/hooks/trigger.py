@@ -108,15 +108,11 @@ class PendingTrigger(Pending):
     def _compact_detail(self) -> str:
         return f"{self.trigger_name} -> {self.action_type}"
 
-    def _pprint_details(self, console, *, verbose: bool = False) -> None:
-        """Show trigger-specific details: trigger name, action, reason, params."""
+    def _pprint_details(self, console) -> None:
+        """Show trigger-specific details: trigger name, action, reason."""
         console.print(
             f"  Trigger: [bold]{self.trigger_name}[/bold] -> "
             f"[bold]{self.action_type}[/bold]"
         )
         if self.reason:
             console.print(f"  Reason: {self.reason}")
-        if verbose and self.action_params:
-            console.print("  [bold]Action params:[/bold]")
-            for k, v in self.action_params.items():
-                console.print(f"    {k}: {v!r}")

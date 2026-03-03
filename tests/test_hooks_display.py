@@ -322,7 +322,9 @@ class TestPprintVerbose:
             original_tokens=1000, estimated_tokens=300,
         )
         output = _capture_pprint(p, verbose=True)
-        assert "Summary previews" in output
+        # verbose=True shows the fields table
+        assert "Fields" in output
+        assert "summaries" in output
         t.close()
 
 
@@ -347,7 +349,7 @@ class TestCompressPprintDetails:
         assert "70%" in output
         t.close()
 
-    def test_summary_previews_in_verbose(self):
+    def test_fields_table_in_verbose(self):
         t = _make_tract()
         short_summary = "A short summary."
         long_summary = "X" * 200
@@ -357,9 +359,25 @@ class TestCompressPprintDetails:
             original_tokens=500, estimated_tokens=200,
         )
         output = _capture_pprint(p, verbose=True)
-        assert "A short summary." in output
-        # Long summary should be truncated with ...
-        assert "..." in output
+        # verbose shows full fields table with all dataclass field values
+        assert "Fields" in output
+        assert "original_tokens" in output
+        assert "estimated_tokens" in output
+        t.close()
+
+    def test_fields_table_hidden_without_verbose(self):
+        t = _make_tract()
+        p = PendingCompress(
+            operation="compress", tract=t,
+            summaries=["summary"],
+            original_tokens=500, estimated_tokens=200,
+        )
+        output = _capture_pprint(p)
+        # Without verbose, no fields table
+        assert "Fields" not in output
+        # But details line still shown
+        assert "500" in output
+        assert "200" in output
         t.close()
 
     def test_guidance_panel_shown(self):
@@ -592,7 +610,7 @@ class TestGCPprintDetails:
         assert "GC targets" in output
         t.close()
 
-    def test_gc_verbose_shows_commits(self):
+    def test_gc_verbose_shows_fields_table(self):
         t = _make_tract()
         p = PendingGC(
             operation="gc", tract=t,
@@ -600,9 +618,8 @@ class TestGCPprintDetails:
             tokens_to_free=800,
         )
         output = _capture_pprint(p, verbose=True)
-        assert "Commits to remove" in output
-        assert "abcdef12" in output
-        assert "12345678" in output
+        assert "Fields" in output
+        assert "commits_to_remove" in output
         t.close()
 
 
@@ -640,7 +657,7 @@ class TestRebasePprintDetails:
         assert "Diverged branch detected" in output
         t.close()
 
-    def test_rebase_verbose_shows_plan(self):
+    def test_rebase_verbose_shows_fields_table(self):
         t = _make_tract()
         p = PendingRebase(
             operation="rebase", tract=t,
@@ -648,8 +665,8 @@ class TestRebasePprintDetails:
             target_base="deadbeef",
         )
         output = _capture_pprint(p, verbose=True)
-        assert "Replay plan" in output
-        assert "abcdef12" in output
+        assert "Fields" in output
+        assert "replay_plan" in output
         t.close()
 
 
@@ -676,7 +693,7 @@ class TestTriggerPprintDetails:
         assert "Token count exceeds threshold" in output
         t.close()
 
-    def test_trigger_verbose_shows_params(self):
+    def test_trigger_verbose_shows_fields_table(self):
         t = _make_tract()
         p = PendingTrigger(
             operation="trigger", tract=t,
@@ -685,9 +702,8 @@ class TestTriggerPprintDetails:
             action_params={"branch_name": "overflow-1", "max_tokens": 4000},
         )
         output = _capture_pprint(p, verbose=True)
-        assert "Action params" in output
-        assert "branch_name" in output
-        assert "overflow-1" in output
+        assert "Fields" in output
+        assert "action_params" in output
         t.close()
 
 
@@ -734,7 +750,7 @@ class TestToolResultPprintDetails:
         assert "edited" in output.lower()
         t.close()
 
-    def test_verbose_shows_content_preview(self):
+    def test_verbose_shows_fields_table(self):
         t = _make_tract()
         p = PendingToolResult(
             operation="tool_result", tract=t,
@@ -742,6 +758,7 @@ class TestToolResultPprintDetails:
             content="This is the full content of the search result that will be shown in verbose mode.",
         )
         output = _capture_pprint(p, verbose=True)
-        assert "Content preview" in output
-        assert "search result" in output
+        assert "Fields" in output
+        assert "tool_name" in output
+        assert "content" in output
         t.close()

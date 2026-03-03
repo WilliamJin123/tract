@@ -100,7 +100,7 @@ def three_tier_routing() -> None:
         def review_compress(pending: PendingCompress) -> None:
             """Inspect summaries, show token savings, approve."""
             print(f"\n  [hook] PendingCompress received:")
-            pending.pprint(verbose=True)
+            pending.pprint()
 
             ratio = pending.estimated_tokens / max(pending.original_tokens, 1)
             print(f"  [hook] Token ratio: {ratio:.2f} ({int((1 - ratio) * 100)}% reduction)")

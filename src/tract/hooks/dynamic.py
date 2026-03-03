@@ -205,7 +205,7 @@ def make_dynamic_pending_class(spec: OperationSpec) -> type:
     def _compact_detail(self):
         return f"fields={list(self.fields.keys())}"
 
-    def _pprint_details(self, console, *, verbose=False):
+    def _pprint_details(self, console):
         if self.fields:
             from rich.table import Table
 

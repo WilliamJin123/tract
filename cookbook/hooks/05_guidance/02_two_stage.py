@@ -65,7 +65,7 @@ def two_stage() -> None:
         # show it explicitly alongside pprint's output.
         print(f"\n  After compress(two_stage=True, review=True):")
         print(f"    guidance_source: {pending.guidance_source}")
-        pending.pprint(verbose=True)
+        pending.pprint()
 
     # --- 5b: regenerate_guidance() for fresh LLM guidance ---
     print("\n  --- 5b: regenerate_guidance() ---")
@@ -82,13 +82,13 @@ def two_stage() -> None:
         )
 
         print(f"\n  Original guidance_source: {pending.guidance_source}")
-        pending.pprint(verbose=True)
+        pending.pprint()
 
         # Regenerate guidance from LLM (gets a fresh take)
         new_guidance: str = pending.regenerate_guidance()
         print(f"\n  After regenerate_guidance():")
         print(f"    guidance_source: {pending.guidance_source}")
-        pending.pprint(verbose=True)
+        pending.pprint()
 
     # --- 5c: edit_guidance() after two_stage (user + LLM) ---
     print("\n  --- 5c: edit_guidance() after two_stage ---")

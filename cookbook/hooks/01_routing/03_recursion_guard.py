@@ -64,7 +64,7 @@ def recursion_guard() -> None:
         def compress_triggers_tool_result(pending: PendingCompress) -> None:
             """Compress hook that triggers a tool_result inside itself."""
             print(f"\n  [hook] PendingCompress received:")
-            pending.pprint(verbose=True)
+            pending.pprint()
 
             # --- Trigger a nested hookable operation ---
             print(f"\n  [hook] Calling t.tool_result() inside the compress hook...")

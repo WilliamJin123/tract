@@ -335,7 +335,7 @@ class PendingMerge(GuidanceMixin, Pending):
     def _compact_detail(self) -> str:
         return f"{self.source_branch}->{self.target_branch} ({len(self.resolutions)}/{len(self.conflicts)} resolved)"
 
-    def _pprint_details(self, console, *, verbose: bool = False) -> None:
+    def _pprint_details(self, console) -> None:
         """Show merge-specific details: branch info, conflicts, guidance."""
         from rich.panel import Panel
 

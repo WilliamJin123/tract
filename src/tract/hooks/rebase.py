@@ -125,8 +125,8 @@ class PendingRebase(Pending):
         base_short = self.target_base[:8] if self.target_base else "???"
         return f"{len(self.replay_plan)} commits onto {base_short}"
 
-    def _pprint_details(self, console, *, verbose: bool = False) -> None:
-        """Show rebase-specific details: replay plan, target, warnings."""
+    def _pprint_details(self, console) -> None:
+        """Show rebase-specific details: replay plan count, target, warnings."""
         base_short = self.target_base[:8] if self.target_base else "???"
         console.print(
             f"  Rebase: [bold]{len(self.replay_plan)}[/bold] commits onto "
@@ -136,7 +136,3 @@ class PendingRebase(Pending):
             console.print(f"  [yellow]Warnings ({len(self.warnings)}):[/yellow]")
             for w in self.warnings:
                 console.print(f"    [yellow]- {w}[/yellow]")
-        if verbose and self.replay_plan:
-            console.print("  [bold]Replay plan:[/bold]")
-            for i, h in enumerate(self.replay_plan):
-                console.print(f"    [{i}] [bright_cyan]{h[:8]}[/bright_cyan]  {h}")

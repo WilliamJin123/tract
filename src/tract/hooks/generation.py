@@ -181,14 +181,9 @@ class PendingGeneration(Pending):
     def _compact_detail(self) -> str:
         return f"{len(self.response_text)} chars, {self.retry_count} retries"
 
-    def _pprint_details(self, console, *, verbose: bool = False) -> None:
+    def _pprint_details(self, console) -> None:
         if self.retry_count > 0:
             console.print(f"  Retries: {self.retry_count}")
             if self.retry_history:
                 for i, diag in enumerate(self.retry_history):
                     console.print(f"    [{i+1}] {diag}")
-        if verbose and self.response_text:
-            preview = self.response_text[:200]
-            if len(self.response_text) > 200:
-                preview += "..."
-            console.print(f"  Response: {preview}")

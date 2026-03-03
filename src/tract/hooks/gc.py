@@ -113,13 +113,9 @@ class PendingGC(Pending):
     def _compact_detail(self) -> str:
         return f"{len(self.commits_to_remove)} commits, ~{self.tokens_to_free} tokens"
 
-    def _pprint_details(self, console, *, verbose: bool = False) -> None:
-        """Show GC-specific details: commit count, token estimate, commit list."""
+    def _pprint_details(self, console) -> None:
+        """Show GC-specific details: commit count, token estimate."""
         console.print(
             f"  GC targets: [bold]{len(self.commits_to_remove)}[/bold] commits, "
             f"~[bold]{self.tokens_to_free}[/bold] tokens to free"
         )
-        if verbose and self.commits_to_remove:
-            console.print("  [bold]Commits to remove:[/bold]")
-            for h in self.commits_to_remove:
-                console.print(f"    [bright_cyan]{h[:8]}[/bright_cyan]  {h}")

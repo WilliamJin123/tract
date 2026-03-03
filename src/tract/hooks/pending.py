@@ -299,11 +299,16 @@ class Pending:
     def pprint(self, *, verbose: bool = False, compact: bool = False) -> None:
         """Pretty-print this Pending using Rich.
 
-        Shows operation type, status, pending_id, all public fields
-        in a table, and available actions.
+        Three modes:
+
+        * ``compact=True`` — single colored line (for listings).
+        * default — header, available actions, and subclass details
+          (token ratio, branch info, etc.).
+        * ``verbose=True`` — also includes the full fields table with
+          every dataclass field value.
 
         Args:
-            verbose: If True, show additional details via _pprint_details().
+            verbose: If True, include the full fields table.
             compact: If True, show a single colored line (useful for listing).
         """
         import dataclasses
@@ -364,24 +369,12 @@ class Pending:
         if self.created_at:
             self._print_created_at(console)
 
-        # Fields table
-        skip_fields = {
-            "operation", "pending_id", "status", "tract",
-            "triggered_by", "rejection_reason", "created_at",
-        }
-        table = Table(title="Fields", show_header=True, header_style="bold")
-        table.add_column("Field", style="cyan")
-        table.add_column("Value")
+        # Subclass-specific details (token ratio, branch info, etc.)
+        self._pprint_details(console)
 
-        for f in dataclasses.fields(self):
-            if f.name.startswith("_"):
-                continue
-            if f.name in skip_fields:
-                continue
-            value = getattr(self, f.name)
-            table.add_row(f.name, _format_value_for_display(value))
-
-        console.print(table)
+        # Available actions
+        actions = sorted(self._public_actions)
+        console.print(f"  [bold]Available actions:[/bold] {', '.join(actions)}")
 
         # Result summary (if approved)
         if self.status == PendingStatus.APPROVED and self._result is not None:
@@ -390,12 +383,25 @@ class Pending:
                 result_str = result_str[:117] + "..."
             console.print(f"  [bold]Result:[/bold] {result_str}")
 
-        # Available actions
-        actions = sorted(self._public_actions)
-        console.print(f"  [bold]Available actions:[/bold] {', '.join(actions)}")
+        # Verbose: full fields table
+        if verbose:
+            skip_fields = {
+                "operation", "pending_id", "status", "tract",
+                "triggered_by", "rejection_reason", "created_at",
+            }
+            table = Table(title="Fields", show_header=True, header_style="bold")
+            table.add_column("Field", style="cyan")
+            table.add_column("Value")
 
-        # Subclass-specific details
-        self._pprint_details(console, verbose=verbose)
+            for f in dataclasses.fields(self):
+                if f.name.startswith("_"):
+                    continue
+                if f.name in skip_fields:
+                    continue
+                value = getattr(self, f.name)
+                table.add_row(f.name, _format_value_for_display(value))
+
+            console.print(table)
 
     def _compact_detail(self) -> str:
         """Return a short detail string for compact pprint mode.
@@ -420,15 +426,15 @@ class Pending:
             rel = self.created_at.strftime("%Y-%m-%d %H:%M UTC")
         console.print(f"  created: [dim]{rel}[/dim]")
 
-    def _pprint_details(self, console, *, verbose: bool = False) -> None:
+    def _pprint_details(self, console) -> None:
         """Hook for subclasses to add operation-specific display details.
 
-        Called by pprint() after the base fields table and available actions.
-        Override in subclasses to show additional information.
+        Called by pprint() after the header and before available actions.
+        Override in subclasses to show concise, operation-specific info
+        (e.g. token ratio, branch names, conflict count).
 
         Args:
             console: The Rich Console instance to print to.
-            verbose: If True, show more detailed information.
         """
         pass
 
