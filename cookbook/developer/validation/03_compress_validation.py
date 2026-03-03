@@ -185,7 +185,7 @@ def part4_guided_and_validated():
         base_url=llm.base_url,
         model=MODEL_ID,
     ) as t:
-        t.system("You are a security audit assistant. Keep messages concise but informative.")
+        t.system("You are a security audit assistant. Keep messages concise.")
 
         t.chat("Review our authentication flow: we use JWT with RS256, "
                "refresh tokens with 7-day expiry, and rate limit to 100 req/min.")
@@ -193,7 +193,7 @@ def part4_guided_and_validated():
                "and TLS 1.3 in transit.")
         t.chat("For access control, we have RBAC with 4 roles: admin, editor, "
                "viewer, and auditor. Admin can modify roles.")
-
+        t.compile().pprint(style="compact")
         print(f"Before: {t.compile().token_count} tokens")
 
         def validate_security_summary(text: str) -> tuple[bool, str | None]:

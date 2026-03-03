@@ -292,6 +292,18 @@ class PendingCompress(GuidanceMixin, Pending):
 
         return ValidationResult(passed=True)
 
+    @property
+    def compressed_tokens(self) -> int:
+        """Alias for estimated_tokens, for duck-type compatibility with CompressResult."""
+        return self.estimated_tokens
+
+    @property
+    def compression_ratio(self) -> float:
+        """Ratio of estimated_tokens / original_tokens, matching CompressResult semantics."""
+        if self.original_tokens == 0:
+            return 0.0
+        return self.estimated_tokens / self.original_tokens
+
     def edit_interactive(self) -> None:
         """Launch an interactive editing session for summaries.
 

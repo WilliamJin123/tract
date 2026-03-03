@@ -9,8 +9,14 @@ they remain in the commit chain for audit but are excluded from compile().
 Retry metadata (attempt count, history) is auto-attached to the final
 commit when retries occur.
 
-Demonstrates: chat(validator=, max_retries=, hide_retries=, retry_prompt=),
-              generate(validator=), RetryExhaustedError
+Demonstrates: chat(validator=, max_retries=, hide_retries=),
+              auto-attached retry metadata
+
+Parts:
+  1. Manual validator (pure Python, no LLM in the validator)
+  2. chat(validator=) with steering in context
+  3. hide_retries=False — keep retry artifacts visible in compile()
+  4. Auto-attached retry metadata
 """
 
 import json
@@ -18,7 +24,6 @@ import sys
 from pathlib import Path
 
 from tract import Tract
-from tract.exceptions import RetryExhaustedError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from _providers import cerebras as llm  
@@ -145,22 +150,24 @@ def part3_hide_retries():
             hide_retries=False,  # Keep retry artifacts visible in compile()
         )
 
-        response.pprint()
-
         # With hide_retries=False, steering messages appear in compiled context
         print("Full chain (retry artifacts visible in compiled context):")
         compiled = t.compile()
+        compiled.pprint()
         for msg in compiled.messages:
             preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
             print(f"  [{msg.role}] {preview}")
 
 
 # =============================================================================
-# Part 4: Auto-attached retry metadata (via hook layer)
+# Part 4: Auto-attached retry metadata
 # =============================================================================
-# When retries occur, the hook layer automatically attaches retry_attempts and
-# retry_history to the successful commit's metadata. No explicit parameter
-# needed — just use validator= and the metadata appears if retries happened.
+# When retries occur, the hook layer automatically attaches retry_attempts
+# and retry_history to the successful commit's metadata. No explicit
+# parameter needed — just use validator= and the metadata appears.
+# (The failed responses themselves are committed as SKIP'd commits in the
+# chain, retrievable via t.log() — metadata only stores the short
+# diagnosis strings, not the full failed outputs.)
 
 def part4_retry_metadata():
     call_count = 0
@@ -180,8 +187,6 @@ def part4_retry_metadata():
     ) as t:
         t.system("You are a history assistant. Be specific with dates.")
 
-        # No retry_metadata= parameter needed — the hook layer auto-attaches
-        # retry metadata to the commit when retries occur
         response = t.chat(
             "When was the first computer invented?",
             validator=flaky_validator,
@@ -194,66 +199,9 @@ def part4_retry_metadata():
         commit = response.commit_info
         print(f"Commit metadata: {commit.metadata}")
 
-        print("Log (no synthetic retry messages — metadata is on the commit):")
+        print("\nCommit chain (SKIP'd intermediates visible in log):")
         for entry in reversed(t.log()):
             print(f"  {entry}")
-
-
-# =============================================================================
-# Part 5: retry_prompt= and generate(validator=)
-# =============================================================================
-# retry_prompt= customizes the steering message. generate(validator=) works
-# for two-step flows where user() was already called.
-
-def part5_custom_steering():
-    def validate_haiku(text: str) -> tuple[bool, str | None]:
-        lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-        if len(lines) != 3:
-            return (False, f"A haiku must have exactly 3 lines, got {len(lines)}")
-        return (True, None)
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a poet. Respond with ONLY the poem — no title, no explanation.")
-
-        # Two-step: commit user message, then generate with validation
-        t.user("Write a haiku about programming.")
-
-        response = t.generate(
-            validator=validate_haiku,
-            max_retries=3,
-            retry_prompt="Your poem did not meet the format requirements.",
-        )
-
-        response.pprint()
-
-
-# =============================================================================
-# Part 6: RetryExhaustedError from chat()
-# =============================================================================
-# When all retries fail, chat() raises RetryExhaustedError with last_result.
-
-def part6_exhaustion():
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a helpful assistant.")
-
-        try:
-            t.chat(
-                "Say hello.",
-                validator=lambda text: (False, "Must be exactly 1000 characters"),
-                max_retries=2,
-            )
-        except RetryExhaustedError as e:
-            print(f"RetryExhaustedError after {e.attempts} attempts")
-            print(f"  last_diagnosis: {e.last_diagnosis}")
-            print(f"  last_result:    {e.last_result!r:.80}")
 
 
 def main():
@@ -268,12 +216,6 @@ def main():
 
     print(f"\n=== Part 4: Auto-attached retry metadata ===\n")
     part4_retry_metadata()
-
-    print(f"\n=== Part 5: generate(validator=) + retry_prompt= ===\n")
-    part5_custom_steering()
-
-    print(f"\n=== Part 6: RetryExhaustedError ===\n")
-    part6_exhaustion()
 
 
 if __name__ == "__main__":
