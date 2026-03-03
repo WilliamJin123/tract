@@ -236,11 +236,9 @@ def part3_self_configuring():
 
         # Show what the agent registered
         print(f"\n  Agent-registered triggers:")
-        if t.trigger_evaluator:
-            for trig in t.trigger_evaluator._triggers:
-                cfg = trig.to_config() if hasattr(trig, 'to_config') else {}
-                print(f"    - {trig.name}: {cfg}")
-        else:
+        for info in t.list_triggers():
+            print(f"    - {info['name']}: {info['config']}")
+        if not t.list_triggers():
             print("    (none)")
 
         # Now run more turns -- triggers fire automatically

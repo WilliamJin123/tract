@@ -93,7 +93,7 @@ def part2_automated():
     from tract import CompressTrigger
 
     config = TractConfig(
-        token_budget=TokenBudgetConfig(max_tokens=4096),
+        token_budget=TokenBudgetConfig(max_tokens=600),
     )
 
     with Tract.open(
@@ -124,9 +124,13 @@ def part2_automated():
             status = t.status()
             budget_max = status.token_budget_max or float("inf")
             usage_pct = (status.token_count / budget_max * 100) if budget_max else 0
-            print(f"  Turn {i}: {usage_pct:.0f}% budget | {str(response)[:60]}...")
+            print(f"  Turn {i}: {usage_pct:.0f}% budget")
+            response.pprint()
 
-        after_tokens = t.compile().token_count
+        chat = t.compile()
+        print("AFTER AUTO-COMPRESSION TRIGGERED:")
+        chat.pprint(style="compact")
+        after_tokens = chat.token_count
         print(f"\n  After chat loop: {after_tokens} tokens")
         print(f"  Trigger auto-compressed to stay within budget.")
         t.status().pprint()

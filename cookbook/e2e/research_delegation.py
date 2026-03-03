@@ -74,7 +74,6 @@ def part1_manual():
     children = {}
     for branch_name, qa_pairs in topics.items():
         child = session.deploy(parent, purpose=branch_name, branch_name=branch_name)
-        child._seed_base_tags()
         for q, a in qa_pairs:
             child.user(q)
             child.assistant(a)
@@ -124,7 +123,6 @@ def part2_agent():
 
     for branch_name, question in research:
         child = session.deploy(parent, purpose=branch_name, branch_name=branch_name)
-        child._seed_base_tags()
         _configure_llm(child)
 
         # Real LLM call: child researches the topic

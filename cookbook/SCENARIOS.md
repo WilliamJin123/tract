@@ -18,12 +18,14 @@ The agent pattern has a spectrum:
 
 ### 2-Tier Convention
 
-Most cookbook files follow a two-tier pattern showing the same feature at different autonomy levels:
+Many cookbook files follow a two-tier pattern where applicable, showing the same feature at different autonomy levels:
 
 | Tier | Label | Description |
 |------|-------|-------------|
 | **PART 1** | Manual | Direct API calls, no LLM, fully deterministic |
 | **PART 2** | Agent / Automated | Orchestrator, triggers, hooks auto-manage |
+
+Not every file uses both tiers. Pure commit/compile primitives (e.g., `developer/conversations/`, `developer/history/`), hook middleware patterns, and multi-agent coordination files often have only a single tier because the feature is inherently manual or inherently agent-driven.
 
 For interactive (HITL) patterns, see `hooks/` — the hook system (`review=True`, `t.on()`) is the built-in interactivity mechanism. Every file is standalone.
 
@@ -73,10 +75,8 @@ cookbook/
 │   │   ├── 04_tool_results.py                   # set_tools, tool_result, compress_tool_calls
 │   │   ├── 05_tool_summarization.py             # configure_tool_summarization, auto-summarize
 │   │   ├── 06_offline_tool_management.py        # tool management without LLM calls
-│   │   ├── 07_reasoning.py                      # t.reasoning(), ReasoningContent, SKIP default
-│   │   ├── 08_reasoning_compile.py              # compile(include_reasoning=True), annotate overrides
-│   │   ├── 09_reasoning_formatting.py           # pprint reasoning in dim cyan
-│   │   ├── 10_reasoning_llm.py                  # generate() auto-extract, reasoning=False
+│   │   ├── 07_reasoning.py                      # Manual reasoning commits + compile control
+│   │   ├── 08_reasoning_llm.py                  # Reasoning formatting + LLM integration
 │   │   └── _helpers.py                          # Shared utilities for tool result examples
 │   │
 │   ├── config/                                # LLM routing, budgets, generation config
@@ -120,11 +120,11 @@ cookbook/
 │       └── 03_curated_deploy.py                 # session.deploy(), curation, merge-back
 │
 ├── integrations/                              # External framework integration (requires extra deps)
-│   ├── 01_callable_tools.py                     # as_callable_tools() -- framework-agnostic export
-│   ├── 02_agent_loop.py                         # AgentLoop protocol -- pluggable orchestrator
-│   ├── 03_agno.py                               # Agno: TractToolkit, message sync, adapter
-│   ├── 04_langchain.py                          # LangChain/LangGraph: tools, graph nodes, adapter
-│   └── 05_crewai.py                             # CrewAI: tools, multi-agent tracts, delegation
+│   ├── 01_callable_tools.py                     # as_callable_tools() -- framework-agnostic export [Coming Soon]
+│   ├── 02_agent_loop.py                         # AgentLoop protocol -- pluggable orchestrator [Coming Soon]
+│   ├── 03_agno.py                               # Agno: TractToolkit, message sync, adapter [Coming Soon]
+│   ├── 04_langchain.py                          # LangChain/LangGraph: tools, graph nodes, adapter [Coming Soon]
+│   └── 05_crewai.py                             # CrewAI: tools, multi-agent tracts, delegation [Coming Soon]
 │
 ├── hooks/                                   # Approval + middleware layer (cross-cutting)
 │   ├── 01_routing/                            # Core registration and dispatch
@@ -149,18 +149,11 @@ cookbook/
 │   │   ├── 03_docs.py                           # Pending.describe_api() human-readable
 │   │   └── 04_dispatch.py                       # apply_decision() routing
 │   ├── 04_middleware/                         # Developer and agent middleware patterns
-│   │   ├── 01_basic_gate.py                     # Token budget gate
-│   │   ├── 02_auto_truncate.py                  # Auto-truncate on threshold
-│   │   ├── 03_middleware_enforcer.py            # Middleware-style enforcement
-│   │   ├── 04_dynamic_budget.py                 # Dynamic budget adjustment
-│   │   ├── 05_ordering_basics.py                # Message ordering hooks
-│   │   ├── 06_pass_through.py                   # Pass-through patterns
-│   │   ├── 07_conditional.py                    # Conditional ordering
-│   │   ├── 08_dynamic_insertion.py              # Dynamic message insertion
-│   │   ├── 09_full_pipeline.py                  # Full ordering pipeline
-│   │   ├── 10_register_and_fire.py              # Dynamic hook registration
-│   │   ├── 11_introspection.py                  # Hook introspection
-│   │   └── 12_review_and_execute.py             # Review-then-execute pattern
+│   │   ├── 01_budget_middleware.py              # Token budget: gate, truncate, enforcer, dynamic
+│   │   ├── 02_ordering_middleware.py            # Ordering: basics, pass_through, conditional, dynamic, pipeline
+│   │   ├── 03_dynamic_operations.py             # Dynamic hook registration and firing
+│   │   ├── 04_introspection.py                  # Hook introspection: to_dict, to_tools, describe_api
+│   │   └── 05_review_and_execute.py             # Review gate and execute_fn pattern
 │   └── 05_guidance/                           # Two-stage judgment patterns
 │       ├── 01_guidance.py                       # GuidanceMixin, two-stage reasoning
 │       └── 02_two_stage.py                      # Two-stage judgment + execution
@@ -171,7 +164,9 @@ cookbook/
     ├── ab_testing.py                          # [developer] branch + config + diff + provenance query
     ├── context_forensics.py                   # [developer] log + time-travel + branch + rebase
     ├── research_delegation.py                 # [sidecar + multi-agent] compress + merge
-    └── autonomous_steering.py                 # [sidecar] orchestrator + triggers + hooks + drift
+    ├── autonomous_steering.py                 # [sidecar] orchestrator + triggers + hooks + drift
+    ├── provenance_audit.py                    # [developer] full audit trail + triggers + time-travel
+    └── multi_model_routing.py                 # [developer] configure_operations + configure_clients + triggers
 ```
 
 ---
@@ -399,33 +394,19 @@ Open an in-memory tract. Commit messages using `InstructionContent` and `Dialogu
 
 > `find_tool_results()`, `find_tool_calls()`, `find_tool_turns()`, `tool_result(edit=)`
 
-### 07 — Manual Reasoning
+### 07 — Reasoning Commits and Compile Control
 
 **File:** `developer/metadata/07_reasoning.py`
+**Tiers:** Manual
+
+> `t.reasoning()`, `ReasoningContent`, `format=`, `compile(include_reasoning=True)`, `annotate()` overrides
+
+### 08 — Reasoning Formatting and LLM Integration
+
+**File:** `developer/metadata/08_reasoning_llm.py`
 **Tiers:** Manual | Agent
 
-> `t.reasoning()`, `ReasoningContent`, `format=`
-
-### 08 — Reasoning Compile Control
-
-**File:** `developer/metadata/08_reasoning_compile.py`
-**Tiers:** Manual | Agent
-
-> `compile(include_reasoning=True)`, `annotate()` overrides
-
-### 09 — Reasoning Formatting
-
-**File:** `developer/metadata/09_reasoning_formatting.py`
-**Tiers:** Manual | Agent
-
-> `pprint()` rendering for reasoning
-
-### 10 — Reasoning LLM Integration
-
-**File:** `developer/metadata/10_reasoning_llm.py`
-**Tiers:** Manual | Agent
-
-> `generate()` auto-extract, `reasoning=False`, `commit_reasoning=False`, `ChatResponse.reasoning`
+> `pprint()` reasoning styles, `to_dicts()`, `to_openai()`, `generate()` auto-extract, `reasoning=False`, `commit_reasoning=False`, `ChatResponse.reasoning`
 
 ## Config
 
@@ -650,12 +631,14 @@ Coordination across multiple agents with parent-child relationships.
 
 # Integrations
 
+> **Note:** The integrations section is planned but not yet implemented. All entries below are marked [Coming Soon].
+
 Use tract with external agent frameworks. These examples require extra dependencies (`agno`, `langchain`, `crewai`). Two universal building blocks:
 
 - **`as_callable_tools()`** exports tract tools as typed Python callables that any framework can introspect — no per-framework adapters needed.
 - **`AgentLoop`** protocol lets you swap tract's built-in Orchestrator for an external framework's loop, the same way `LLMClient` lets you swap the LLM transport layer.
 
-### 01 — Callable Tools
+### 01 — Callable Tools [Coming Soon]
 
 **File:** `integrations/01_callable_tools.py`
 
@@ -665,7 +648,7 @@ Use tract with external agent frameworks. These examples require extra dependenc
 
 > `as_callable_tools()`, `inspect.signature()`, profile filtering, description overrides
 
-### 02 — Agent Loop Protocol
+### 02 — Agent Loop Protocol [Coming Soon]
 
 **File:** `integrations/02_agent_loop.py`
 
@@ -675,7 +658,7 @@ The protocol is minimal: `run(messages, tools, execute_tool) -> AgentLoopResult`
 
 > `AgentLoop`, `AgentLoopResult`, `configure_agent_loop()`, `Tract.open(agent_loop=)`, provenance
 
-### 03 — Agno
+### 03 — Agno [Coming Soon]
 
 **File:** `integrations/03_agno.py`
 
@@ -685,7 +668,7 @@ Two depths: inject tract tools via `as_callable_tools()`, or build a `TractToolk
 
 > `as_callable_tools()` + Agno Agent, `TractToolkit`, pre/post hooks, `AgnoAdapter`
 
-### 04 — LangChain / LangGraph
+### 04 — LangChain / LangGraph [Coming Soon]
 
 **File:** `integrations/04_langchain.py`
 
@@ -693,7 +676,7 @@ Two depths: inject tract tools via `as_callable_tools()`, or build a `TractToolk
 
 > `as_callable_tools()` + AgentExecutor, LangGraph tool nodes, callback-based provenance
 
-### 05 — CrewAI
+### 05 — CrewAI [Coming Soon]
 
 **File:** `integrations/05_crewai.py`
 
@@ -788,3 +771,15 @@ Three sub-agents research in parallel, compress findings, merge summaries.
 **Combines:** sidecar/triggers + hooks + operations/compress
 
 All triggers active at `autonomy="autonomous"`, one hook for human sign-off on large compressions.
+
+## provenance_audit.py — [developer]
+
+**Combines:** metadata/tags + metadata/priority + operations/compress + history/log_and_diff + sidecar/triggers
+
+Build a conversation with commits, edits, compression, and trigger-driven actions. Walk the full audit trail: `log(include_edits=True)`, `query_by_tags()`, time-travel with `compile(at_commit=)`, and config provenance. Trace a compression back to the trigger that caused it.
+
+## multi_model_routing.py — [developer]
+
+**Combines:** config/operation_config + config/operation_clients + sidecar/triggers
+
+Route different operations to different models: large model for chat, small model for compression and auto-message. Show both `configure_operations()` and `configure_clients()` approaches, then trigger-driven automatic routing.

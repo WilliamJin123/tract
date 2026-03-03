@@ -209,10 +209,9 @@ def part3_adaptive_triggers():
 
         # Show registered triggers
         print(f"\n  Triggers now active:")
-        if t.trigger_evaluator:
-            for trig in t.trigger_evaluator._triggers:
-                print(f"    - {trig.name} (fires_on={trig.fires_on})")
-        else:
+        for info in t.list_triggers():
+            print(f"    - {info['name']} (fires_on={info['fires_on']})")
+        if not t.list_triggers():
             print("    (none)")
 
 

@@ -6,10 +6,10 @@ mutable annotation tags after the fact, register custom tags with
 descriptions, and query history by tag.
 
 Demonstrates: auto-classification, explicit tags, mutable annotation tags,
-              tag registry with strict mode, tag queries (any/all matching)
+              tag registry, tag queries (any/all matching)
 """
 
-from tract import Tract, TagNotRegisteredError
+from tract import Tract
 from tract.formatting import pprint_log, pprint_tag_registry
 
 
@@ -142,12 +142,12 @@ def part3_mutable_tags():
 
 
 # =============================================================================
-# Part 4: Tag Registry and Strict Mode
+# Part 4: Tag Registry
 # =============================================================================
 
 def part4_tag_registry():
     print("=" * 60)
-    print("Part 4: TAG REGISTRY AND STRICT MODE")
+    print("Part 4: TAG REGISTRY")
     print("=" * 60)
     print()
     print("  Base tags (instruction, reasoning, tool_call, etc.) are pre-seeded.")
@@ -169,34 +169,6 @@ def part4_tag_registry():
     pprint_tag_registry(t.list_tags()[:5])
 
     t.close()
-
-    # --- Strict mode demonstration ---
-    print()
-    print("  Strict mode is ON by default.  Unregistered tags raise errors:")
-    print()
-
-    t2 = Tract.open()
-    assert t2._strict_tags is True
-
-    try:
-        t2.user("test", tags=["totally_made_up_tag"])
-        print("    (no error -- unexpected)")
-    except TagNotRegisteredError as e:
-        print(f"    TagNotRegisteredError: {e}")
-
-    # Register it, then it works
-    t2.register_tag("totally_made_up_tag")
-    ci = t2.user("test", tags=["totally_made_up_tag"])
-    print(f"    After register_tag(): tags = {t2.get_tags(ci.commit_hash)}")
-
-    # Turn strict mode off -- any tag is accepted
-    t2._strict_tags = False
-    ci2 = t2.user("anything goes", tags=["wild_west"])
-    print(f"    Strict=False: tags = {t2.get_tags(ci2.commit_hash)}")
-
-    print()
-
-    t2.close()
 
 
 # =============================================================================

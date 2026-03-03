@@ -20,12 +20,6 @@ def _enable_tags(tract):
     )
     tract._tag_annotation_repo = SqliteTagAnnotationRepository(tract._session)
     tract._tag_registry_repo = SqliteTagRegistryRepository(tract._session)
-    tract._seed_base_tags()
-
-
-def _seed_child_tags(child):
-    """Seed base tags on a deployed child so auto-classified tags pass validation."""
-    child._seed_base_tags()
 
 
 def _show_compiled(label, ctx):
@@ -66,7 +60,6 @@ def part1_basic_deploy():
         purpose="research caching strategies",
         branch_name="research-caching",
     )
-    _seed_child_tags(child)
 
     print(f"  Parent branch:  {parent_branch}")
     print(f"  Child branch:   {child.current_branch}")
@@ -133,7 +126,6 @@ def part2_curated_deploy_with_tags():
         branch_name="coherence-only",
         curate={"keep_tags": ["instruction", "hypothesis"]},
     )
-    _seed_child_tags(child)
 
     ctx = child.compile()
     _show_compiled("child (curated)", ctx)
@@ -178,7 +170,6 @@ def part3_drop_and_compact():
         branch_name="roadmap-clean",
         curate={"drop": [irrelevant.commit_hash]},
     )
-    _seed_child_tags(child_drop)
 
     ctx = child_drop.compile()
     _show_compiled("after drop", ctx)
@@ -193,7 +184,6 @@ def part3_drop_and_compact():
         branch_name="roadmap-compact",
         curate={"compact_before": recent.commit_hash},
     )
-    _seed_child_tags(child_compact)
 
     ctx_compact = child_compact.compile()
     _show_compiled("after compact", ctx_compact)
@@ -230,7 +220,6 @@ def part4_merge_back():
         purpose="evaluate PostgreSQL vs MySQL",
         branch_name="db-evaluation",
     )
-    _seed_child_tags(child)
 
     # Child does research work
     child.user("Compare PostgreSQL and MySQL for our use case.")

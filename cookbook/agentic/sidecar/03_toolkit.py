@@ -241,11 +241,10 @@ def part3_agent_triggers():
 
         # Show what triggers the agent registered
         print(f"\n  Agent-registered triggers:")
-        if t.trigger_evaluator:
-            for trig in t.trigger_evaluator._triggers:
-                print(f"    - {trig.name} (fires_on={trig.fires_on}, "
-                      f"priority={trig.priority})")
-        else:
+        for info in t.list_triggers():
+            print(f"    - {info['name']} (fires_on={info['fires_on']}, "
+                  f"priority={info['priority']})")
+        if not t.list_triggers():
             print("    (none)")
 
         # Now the triggers will fire automatically on future operations

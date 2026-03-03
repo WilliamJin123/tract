@@ -31,7 +31,6 @@ def manual():
         purpose="research caching patterns",
         branch_name="research-caching",
     )
-    child._seed_base_tags()
 
     # Child does extensive work (simulating many turns)
     topics = [
