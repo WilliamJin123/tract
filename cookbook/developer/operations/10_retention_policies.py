@@ -78,9 +78,8 @@ def part2_automated():
     print("  GCTrigger fires when dead commits exceed a threshold.")
     print("  A hook handler logs and auto-approves GC operations.")
 
-    trigger = GCTrigger(archive_retention_days=30)
-    print(f"\n  GCTrigger: fires_on={trigger.fires_on}, "
-          f"archive_retention_days=30")
+    trigger = GCTrigger(max_dead_commits=3)
+    print(f"\n  {trigger}")
 
     with Tract.open(
         api_key=llm.api_key,
@@ -107,7 +106,7 @@ def part2_automated():
         # Evaluate trigger
         action = trigger.evaluate(t)
         if action:
-            print(f"\n  Trigger fired: {action.reason}")
+            print(f"\n  Trigger fired: {action}")
         else:
             print(f"\n  Trigger not yet fired (dead commits below threshold)")
 

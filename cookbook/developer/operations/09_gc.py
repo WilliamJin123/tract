@@ -100,8 +100,8 @@ def part2_trigger_driven():
     compress_trigger = CompressTrigger(threshold=0.7, summary_content="Auto-condensed.")
     gc_trigger = GCTrigger(max_dead_commits=5)
 
-    print(f"\n  CompressTrigger: threshold=0.7, fires_on={compress_trigger.fires_on}")
-    print(f"  GCTrigger:       max_dead_commits=5, fires_on={gc_trigger.fires_on}")
+    print(f"\n  {compress_trigger}")
+    print(f"  {gc_trigger}")
 
     config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=300))
 
@@ -130,7 +130,7 @@ def part2_trigger_driven():
         # Check if GC trigger would fire
         gc_action = gc_trigger.evaluate(t)
         if gc_action:
-            print(f"\n  GCTrigger fired: {gc_action.reason}")
+            print(f"\n  GCTrigger fired: {gc_action}")
         else:
             print(f"\n  GCTrigger: not yet triggered (dead commits below threshold)")
 

@@ -70,6 +70,31 @@ class Trigger(ABC):
         return "compile"
 
     # ------------------------------------------------------------------
+    # Display
+    # ------------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        return (
+            f"<{type(self).__name__} '{self.name}': "
+            f"fires_on={self.fires_on!r}, priority={self.priority}>"
+        )
+
+    def __str__(self) -> str:
+        extra = ""
+        if hasattr(self, "to_config"):
+            config = self.to_config()
+            for skip in ("name", "enabled"):
+                config.pop(skip, None)
+            if config:
+                extra = ", " + ", ".join(
+                    f"{k}={v!r}" for k, v in config.items()
+                )
+        return (
+            f"{type(self).__name__}"
+            f"(fires_on={self.fires_on!r}, priority={self.priority}{extra})"
+        )
+
+    # ------------------------------------------------------------------
     # Hook integration (Phase 2)
     # ------------------------------------------------------------------
 

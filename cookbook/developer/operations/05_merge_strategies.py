@@ -221,10 +221,7 @@ def part3_trigger():
         # Manual evaluate to show when trigger fires
         action = trigger.evaluate(t)
         if action:
-            print(f"\n  Trigger fired!")
-            print(f"    action_type: {action.action_type}")
-            print(f"    source: {action.params['source']} -> target: {action.params['target']}")
-            print(f"    reason: {action.reason}")
+            print(f"\n  Trigger fired: {action}")
         print()
 
         # Now show it working via configure_triggers + hook

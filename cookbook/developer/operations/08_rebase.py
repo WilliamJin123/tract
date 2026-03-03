@@ -99,8 +99,7 @@ def part2_trigger_driven():
     print(f"\n  --- RebaseTrigger approach ---")
 
     trigger = RebaseTrigger(target_branch="main", divergence_commits=3)
-    print(f"  RebaseTrigger: fires_on={trigger.fires_on}, "
-          f"divergence_commits=3")
+    print(f"  {trigger}")
 
     with Tract.open(
         api_key=llm.api_key,
@@ -123,8 +122,7 @@ def part2_trigger_driven():
         t.switch("feature")
         action = trigger.evaluate(t)
         if action:
-            print(f"  Trigger fired: {action.action_type}")
-            print(f"  Reason: {action.reason}")
+            print(f"  {action}")
 
 
 

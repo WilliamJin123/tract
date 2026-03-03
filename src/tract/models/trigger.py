@@ -24,6 +24,47 @@ class TriggerAction:
     reason: str = ""
     autonomy: str = "collaborative"  # "autonomous", "collaborative", "supervised"
 
+    def __str__(self) -> str:
+        parts = [f"[{self.action_type}]"]
+        if self.reason:
+            parts.append(self.reason)
+        if self.params:
+            params_str = ", ".join(f"{k}={v!r}" for k, v in self.params.items())
+            parts.append(f"({params_str})")
+        return " ".join(parts)
+
+    def pprint(self) -> None:
+        """Pretty-print this trigger action using Rich."""
+        import io
+        import sys
+
+        from rich.console import Console
+
+        try:
+            out = open(
+                sys.stdout.fileno(), "w",
+                encoding="utf-8", errors="replace", closefd=False,
+            )
+            console = Console(file=out)
+        except (io.UnsupportedOperation, OSError):
+            console = Console()
+
+        autonomy_color = {
+            "autonomous": "green",
+            "collaborative": "yellow",
+            "supervised": "red",
+        }.get(self.autonomy, "white")
+
+        console.print(
+            f"  [bold cyan]{self.action_type}[/bold cyan]  "
+            f"[{autonomy_color}]{self.autonomy}[/{autonomy_color}]"
+        )
+        if self.reason:
+            console.print(f"  {self.reason}")
+        if self.params:
+            for k, v in self.params.items():
+                console.print(f"    [dim]{k}:[/dim] {v!r}")
+
 
 @dataclass(frozen=True)
 class EvaluationResult:

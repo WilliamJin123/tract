@@ -1,7 +1,61 @@
 """Autonomous triggers: threshold-based automation for context management.
 
-Triggers evaluate on every compile() or commit() and fire actions automatically
-or collaboratively.  This cookbook covers all built-in triggers and hook interception.
+Triggers are threshold-based rules that fire automatically when conditions are
+met during normal tract operations.  They eliminate manual housekeeping by
+watching token counts, branch divergence, content types, and other metrics,
+then proposing (or executing) maintenance actions on your behalf.
+
+When triggers fire
+------------------
+Each trigger declares a ``fires_on`` event:
+
+* **"compile"** -- evaluated on every ``compile()`` call.  Good for token-
+  budget concerns (compression, GC) that only matter when you materialise
+  the context window.
+* **"commit"** -- evaluated on every ``commit()`` (and the shorthand methods
+  ``system()``, ``user()``, ``assistant()``).  Good for per-message
+  reactions like auto-pinning instructions.
+
+Autonomy spectrum
+-----------------
+Every ``TriggerAction`` carries an ``autonomy`` field that controls routing:
+
+* **autonomous** -- execute immediately, no approval needed.  The action is
+  applied inside the same call that evaluated the trigger.
+  Example: ``PinTrigger`` silently annotates instruction commits.
+* **collaborative** -- routed through the hook system for approval.  If no
+  hook is registered the trigger's ``default_handler`` decides (usually
+  auto-approve).  Example: ``CompressTrigger`` fires a ``PendingTrigger``
+  hook so callers can inspect / modify / reject.
+* **supervised** -- require explicit human review before execution.  The
+  action is surfaced but never auto-approved.
+
+Hook interception lifecycle
+---------------------------
+For collaborative triggers the flow is::
+
+    evaluate(tract) -> TriggerAction -> PendingTrigger -> hook handler -> approve / reject
+
+Register a handler with ``t.on("trigger", handler)`` to intercept.  Inside
+the handler you can inspect the pending action, ``modify_params()``, then
+call ``approve()`` or ``reject(reason)``.
+
+Built-in triggers
+-----------------
+==============================  ==========  ================================
+Trigger                         fires_on    Default behaviour
+==============================  ==========  ================================
+``CompressTrigger``             compile     collaborative -- compress range
+``PinTrigger``                  commit      autonomous -- annotate PINNED
+``RebaseTrigger``               compile     collaborative -- rebase branch
+``GCTrigger``                   compile     collaborative -- garbage-collect
+``MergeTrigger``                compile     collaborative -- merge branch
+``BranchTrigger``               commit      collaborative -- create branch
+``ArchiveTrigger``              compile     collaborative -- archive branch
+==============================  ==========  ================================
+
+This cookbook demonstrates all seven triggers, hook interception, and the
+autonomy spectrum end-to-end.
 """
 
 from tract import (
@@ -28,8 +82,8 @@ def trigger_basics() -> None:
     compress_trigger = CompressTrigger(threshold=0.5, summary_content="Condensed.")
     pin_trigger = PinTrigger(pin_types={"instruction"})
 
-    print(f"\n  CompressTrigger: fires_on={compress_trigger.fires_on}, priority={compress_trigger.priority}")
-    print(f"  PinTrigger:      fires_on={pin_trigger.fires_on}, priority={pin_trigger.priority}")
+    print(f"\n  {compress_trigger}")
+    print(f"  {pin_trigger}")
 
     config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=200))
     with Tract.open(config=config) as t:
@@ -76,8 +130,7 @@ def new_triggers() -> None:
         t.switch("feature")
         action = rebase.evaluate(t)
         if action:
-            print(f"  Fired: {action.action_type}, autonomy={action.autonomy}")
-            print(f"  Reason: {action.reason}")
+            print(f"  {action}")
 
     # -- GCTrigger: fires when dead commits exceed threshold ----------
     print(f"\n  GCTrigger(max_dead_commits=3)")
@@ -89,7 +142,7 @@ def new_triggers() -> None:
         t.compress(content="Summary.")
         action = gc_trigger.evaluate(t)
         if action:
-            print(f"  Fired: {action.reason}")
+            print(f"  {action}")
 
     # -- MergeTrigger: fires when branch is complete ------------------
     print(f"\n  MergeTrigger(completion_commits=3, idle_seconds=0)")
@@ -102,8 +155,7 @@ def new_triggers() -> None:
             t.user(f"Feature-x item {i}")
         action = merge.evaluate(t)
         if action:
-            print(f"  Fired: params={action.params}")
-            print(f"  Reason: {action.reason}")
+            print(f"  {action}")
 
     # -- BranchTrigger: fires when content types switch rapidly ----
     print(f"\n  BranchTrigger(content_type_window=5, switch_threshold=2)")
@@ -113,13 +165,11 @@ def new_triggers() -> None:
         t.system("You are a helpful assistant.")          # instruction
         t.user("What is Python?")                         # dialogue
         t.assistant("Python is a programming language.")   # dialogue
-        t.tool_result("def hello(): pass", tool_call_id="t1", name="code_gen")  # tool_io
+        t.tool_result("t1", "code_gen", "def hello(): pass")  # tool_io
         t.user("Now explain decorators.")                  # dialogue
         action = branch_trigger.evaluate(t)
         if action:
-            print(f"  Fired: {action.action_type}, autonomy={action.autonomy}")
-            print(f"  Reason: {action.reason}")
-            print(f"  Proposed branch: {action.params.get('name', '?')}")
+            print(f"  {action}")
         else:
             print(f"  Not fired (transitions below threshold)")
 
@@ -134,9 +184,7 @@ def new_triggers() -> None:
         # Branch has 1 commit and stale_days=0 -> should fire
         action = archive.evaluate(t)
         if action:
-            print(f"  Fired: {action.action_type}")
-            print(f"  Reason: {action.reason}")
-            print(f"  Archive to: {action.params.get('archive_name', '?')}")
+            print(f"  {action}")
         else:
             print(f"  Not fired (branch not stale enough or too many commits)")
 

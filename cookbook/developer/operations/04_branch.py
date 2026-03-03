@@ -183,9 +183,7 @@ def part2_automated():
         print("\n  --- Manual evaluate() ---")
         action = trigger.evaluate(t)
         if action:
-            print(f"  action_type={action.action_type}")
-            print(f"  reason: {action.reason}")
-            print(f"  autonomy: {action.autonomy}")
+            print(f"  {action}")
         else:
             print("  No tangent detected (already handled or below threshold)")
 

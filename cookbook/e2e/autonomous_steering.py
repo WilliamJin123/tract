@@ -54,11 +54,7 @@ def part1_manual():
         for trigger in [compress_trigger, gc_trigger, pin_trigger]:
             action = trigger.evaluate(t)
             if action:
-                print(f"\n  {type(trigger).__name__} FIRED:")
-                print(f"    action_type: {action.action_type}")
-                print(f"    autonomy:    {action.autonomy}")
-                print(f"    reason:      {action.reason}")
-                print(f"    params:      {action.params}")
+                print(f"\n  {type(trigger).__name__} FIRED: {action}")
             else:
                 print(f"\n  {type(trigger).__name__}: no action needed")
 
