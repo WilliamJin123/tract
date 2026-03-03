@@ -6,6 +6,7 @@ token deltas, and generation config changes.
 """
 from __future__ import annotations
 
+import atexit
 import difflib
 import os
 import shutil
@@ -114,8 +115,9 @@ class DiffResult:
                 "or install VS Code ('code' on PATH)."
             )
 
-        # Write temp files
+        # Write temp files (cleaned up at process exit via atexit)
         tmpdir = tempfile.mkdtemp(prefix="tract-diff-")
+        atexit.register(shutil.rmtree, tmpdir, True)
         label_a = self.commit_a[:8] if self.commit_a != "(empty)" else "empty"
         label_b = self.commit_b[:8]
         path_a = os.path.join(tmpdir, f"{label_a}.md")

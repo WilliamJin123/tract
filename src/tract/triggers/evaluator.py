@@ -94,6 +94,11 @@ class TriggerEvaluator:
         """Whether the evaluator is currently paused."""
         return self._paused
 
+    @property
+    def triggers(self) -> list[Trigger]:
+        """Return a copy of the registered triggers list."""
+        return list(self._triggers)
+
     # ------------------------------------------------------------------
     # Core evaluation
     # ------------------------------------------------------------------

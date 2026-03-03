@@ -375,6 +375,7 @@ class Session:
             max_tokens=max_tokens,
         )
         self._tracts[child.tract_id] = child
+        child._seed_base_tags()
         return child
 
     def collapse(
@@ -562,6 +563,7 @@ class Session:
         #    with parent which uses the same tract_id)
         child_key = f"{parent.tract_id}:{branch_name}"
         self._tracts[child_key] = child
+        child._seed_base_tags()
 
         return child
 

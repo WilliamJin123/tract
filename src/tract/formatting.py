@@ -180,9 +180,9 @@ def pprint_compiled_context(
     console = _make_console(file)
 
     table = Table(title="Compiled Context", show_lines=False)
-    table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("#", style="dim", width=2, justify="right")
     table.add_column("Hash", style="dim", width=8)
-    table.add_column("", width=1)
+    table.add_column("P", width=1)
     table.add_column("Role", width=10)
     table.add_column("Content", no_wrap=False)
     table.add_column("Tokens", justify="right", width=8)

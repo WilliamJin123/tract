@@ -5081,6 +5081,30 @@ class Tract:
         if self._trigger_evaluator is not None:
             self._trigger_evaluator.resume()
 
+    def list_triggers(self) -> list[dict]:
+        """Return info about all registered triggers.
+
+        Returns:
+            List of dicts with keys: name, fires_on, priority, config.
+        """
+        if self._trigger_evaluator is None:
+            return []
+        result = []
+        for trig in self._trigger_evaluator.triggers:
+            config = {}
+            if hasattr(trig, "to_config") and callable(trig.to_config):
+                try:
+                    config = trig.to_config()
+                except Exception:
+                    pass
+            result.append({
+                "name": trig.name,
+                "fires_on": trig.fires_on,
+                "priority": trig.priority,
+                "config": config,
+            })
+        return result
+
     def save_trigger_config(self, config_data: dict) -> None:
         """Persist trigger configuration to _trace_meta.
 
