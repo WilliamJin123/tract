@@ -14,6 +14,7 @@ Demonstrates: OperationSpec, ActionDef, register_operation(), fire(),
 
 from tract import Tract
 from tract.hooks.dynamic import ActionDef, OperationSpec
+from tract.hooks.pending import Pending
 
 
 def register_and_fire() -> None:
@@ -89,7 +90,7 @@ else:
         print()
         print("  Register a handler that calls the custom 'verify' action.")
 
-        def verify_citations(pending):
+        def verify_citations(pending: Pending):
             """Handler that runs the verify action with strict=True."""
             print(f"  [handler] Running verify(strict=True)...")
             pending.verify(strict=True)

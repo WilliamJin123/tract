@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 from tract import Tract, MergeTrigger
+from tract.hooks.merge import PendingMerge
+from tract.hooks.trigger import PendingTrigger
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from _providers import cerebras as llm
@@ -163,7 +165,7 @@ def part2_automated():
     ) as t:
 
         # Register hook: auto-approve FF, reject others
-        def auto_merge(pending):
+        def auto_merge(pending: PendingMerge):
             if pending.merge_type == "fast_forward":
                 print(f"    [hook] FF merge -> auto-approving")
                 return pending.approve()
@@ -228,7 +230,7 @@ def part3_trigger():
         print("  --- With configure_triggers + hook ---")
         merged = []
 
-        def on_trigger(pending):
+        def on_trigger(pending: PendingTrigger):
             print(f"  [trigger] {pending.trigger_name}: {pending.reason}")
             merged.append(pending.action_params)
             pending.approve()

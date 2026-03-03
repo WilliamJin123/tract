@@ -13,6 +13,7 @@ Demonstrates: register_operation(review=True), fire(execute_fn=...),
 
 from tract import Tract
 from tract.hooks.dynamic import ActionDef, OperationSpec, spec_from_dict, spec_to_dict
+from tract.hooks.pending import Pending
 
 
 def review_and_execute() -> None:
@@ -83,7 +84,7 @@ pending.approve()
 
         side_effects = []
 
-        def deploy_action(pending):
+        def deploy_action(pending: Pending):
             """Simulate deployment side effect."""
             side_effects.append(f"deployed:{pending.fields.get('test_suite')}")
             return {"deployed": True, "suite": pending.fields.get("test_suite")}

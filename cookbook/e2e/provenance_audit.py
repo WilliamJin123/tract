@@ -22,6 +22,7 @@ from tract import (
     TractConfig,
     TokenBudgetConfig,
 )
+from tract.hooks.compress import PendingCompress
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _providers import cerebras as llm
@@ -162,7 +163,7 @@ def part2_agent():
     # Track trigger-driven compressions
     trigger_events: list[dict] = []
 
-    def audit_compress(pending):
+    def audit_compress(pending: PendingCompress):
         """Hook that records compression provenance before approving."""
         trigger_events.append({
             "original_tokens": pending.original_tokens,

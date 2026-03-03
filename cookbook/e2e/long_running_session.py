@@ -16,6 +16,7 @@ from tract import (
     TractConfig,
     TokenBudgetConfig,
 )
+from tract.hooks.compress import PendingCompress
 from tract.toolkit import ToolConfig, ToolProfile
 from tract.orchestrator import Orchestrator, OrchestratorConfig, AutonomyLevel
 
@@ -102,7 +103,7 @@ def part2_agent():
         ]
 
         compress_count = 0
-        def count_compress(pending):
+        def count_compress(pending: PendingCompress):
             nonlocal compress_count
             compress_count += 1
             pending.approve()
@@ -247,7 +248,7 @@ def part3_self_configuring():
         # Now run more turns -- triggers fire automatically
         print(f"\n  --- Continuing session with agent-configured triggers ---")
         compress_count = 0
-        def count_compress(pending):
+        def count_compress(pending: PendingCompress):
             nonlocal compress_count
             compress_count += 1
             pending.approve()

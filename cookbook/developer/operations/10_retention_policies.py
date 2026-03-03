@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from tract import GCTrigger, Priority, Tract
+from tract.hooks.gc import PendingGC
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from _providers import cerebras as llm
@@ -88,7 +89,7 @@ def part2_automated():
     ) as t:
 
         # Register hook: log and auto-approve GC
-        def auto_gc(pending):
+        def auto_gc(pending: PendingGC):
             print(f"    [hook] GC pending: {pending.commits_to_remove} commits")
             print(f"    [hook] Auto-approving...")
             return pending.approve()

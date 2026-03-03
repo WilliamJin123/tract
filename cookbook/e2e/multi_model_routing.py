@@ -18,6 +18,7 @@ from tract import (
     TractConfig,
     TokenBudgetConfig,
 )
+from tract.hooks.compress import PendingCompress
 from tract.models.config import LLMConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -150,7 +151,7 @@ def part2_agent():
     # Track which model handles each operation
     compression_count = 0
 
-    def count_compress(pending):
+    def count_compress(pending: PendingCompress):
         nonlocal compression_count
         compression_count += 1
         pending.approve()
