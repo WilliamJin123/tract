@@ -6,12 +6,7 @@ token deltas, and generation config changes.
 """
 from __future__ import annotations
 
-import atexit
 import difflib
-import os
-import shutil
-import subprocess
-import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -92,67 +87,18 @@ class DiffResult:
         Writes both sides of the diff to temporary files and launches an
         editor diff command.  Supports VS Code (``code --diff``), any
         editor that accepts two file arguments (``$EDITOR``), and falls
-        back to printing a message if no editor is found.
+        back to raising if no editor is found.
 
         Args:
             editor: Editor command to use.  Detected automatically when
                 *None*: tries ``$TRACT_DIFF_EDITOR``, ``$EDITOR``, then
                 auto-detects ``code`` on ``$PATH``.
         """
-        editor = editor or os.environ.get("TRACT_DIFF_EDITOR") or os.environ.get("EDITOR")
+        from tract._editor import open_in_editor
 
-        # Auto-detect VS Code if no editor configured
-        auto_detected = False
-        if not editor:
-            code_path = shutil.which("code")
-            if code_path:
-                editor = code_path
-                auto_detected = True
-
-        if not editor:
-            raise EnvironmentError(
-                "No editor found.  Set $EDITOR or $TRACT_DIFF_EDITOR, "
-                "or install VS Code ('code' on PATH)."
-            )
-
-        # Write temp files (cleaned up at process exit via atexit)
-        tmpdir = tempfile.mkdtemp(prefix="tract-diff-")
-        atexit.register(shutil.rmtree, tmpdir, True)
         label_a = self.commit_a[:8] if self.commit_a != "(empty)" else "empty"
         label_b = self.commit_b[:8]
-        path_a = os.path.join(tmpdir, f"{label_a}.md")
-        path_b = os.path.join(tmpdir, f"{label_b}.md")
-
-        with open(path_a, "w", encoding="utf-8") as f:
-            f.write(self._text_a)
-        with open(path_b, "w", encoding="utf-8") as f:
-            f.write(self._text_b)
-
-        # Build command list.  Auto-detected paths may contain spaces
-        # (e.g. "C:\Program Files\Microsoft VS Code\bin\code.CMD")
-        # so keep them as a single element; env-var editors may contain
-        # extra arguments (e.g. "code --wait") so split those.
-        cmd_base = [editor] if auto_detected else editor.split()
-
-        # Resolve bare command names to full paths (needed on Windows
-        # where e.g. "code" is actually a .CMD wrapper).
-        resolved = shutil.which(cmd_base[0])
-        if resolved:
-            cmd_base[0] = resolved
-
-        prog = os.path.basename(cmd_base[0]).lower()
-
-        if prog in ("code", "code.cmd", "code.exe"):
-            cmd = [*cmd_base, "--diff", path_a, path_b]
-        else:
-            cmd = [*cmd_base, path_a, path_b]
-
-        # On Windows, .cmd/.bat scripts require shell=True to execute
-        use_shell = (
-            os.name == "nt"
-            and cmd[0].lower().endswith((".cmd", ".bat"))
-        )
-        subprocess.Popen(cmd, shell=use_shell)  # noqa: S603
+        open_in_editor(self._text_a, self._text_b, label_a, label_b, editor=editor)
 
 
 def _serialize_message(msg: Message) -> str:

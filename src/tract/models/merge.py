@@ -91,6 +91,28 @@ class ConflictInfo(BaseModel):
         th = (self.target_hash or "")[:8]
         return f"{self.conflict_type.value} conflict at {th}"
 
+    def open(self, *, editor: str | None = None) -> None:
+        """Open this conflict in an external editor's diff view.
+
+        Writes the two sides (ours / theirs) to temporary files and
+        launches an editor diff command.
+
+        Args:
+            editor: Editor command override; auto-detected when *None*.
+        """
+        from tract._editor import open_in_editor
+
+        label_a = f"ours-{(self.commit_a.commit_hash or 'unknown')[:8]}"
+        label_b = f"theirs-{(self.commit_b.commit_hash or 'unknown')[:8]}"
+        open_in_editor(
+            self.content_a_text,
+            self.content_b_text,
+            label_a,
+            label_b,
+            editor=editor,
+            prefix="tract-conflict-",
+        )
+
     def pprint(self) -> None:
         """Pretty-print this conflict as a git-style diff."""
         from tract.formatting import pprint_conflict_info
@@ -150,6 +172,19 @@ class MergeResult(BaseModel):
             f"{self.source_branch}->{self.target_branch} "
             f"({n} conflicts, {status})"
         )
+
+    def open(self, *, editor: str | None = None) -> None:
+        """Open each conflict in an external editor's diff view.
+
+        Opens one diff tab per conflict showing ours vs theirs.
+
+        Args:
+            editor: Editor command override; auto-detected when *None*.
+        """
+        if not self.conflicts:
+            return
+        for conflict in self.conflicts:
+            conflict.open(editor=editor)
 
     def pprint(self) -> None:
         """Pretty-print this merge result summary."""

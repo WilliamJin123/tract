@@ -6,6 +6,8 @@ their linear commit history through the Tract facade.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from tract import (
@@ -409,7 +411,8 @@ class TestDiff:
 
         assert len(launched) == 1
         cmd = launched[0]
-        assert cmd[0] == "code"
+        # cmd[0] may be resolved to full path (e.g. ".../code.CMD")
+        assert "code" in os.path.basename(cmd[0]).lower()
         assert cmd[1] == "--diff"
 
     def test_diff_open_no_editor_raises(self, monkeypatch):

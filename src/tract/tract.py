@@ -3971,6 +3971,39 @@ class Tract:
                 return True
         return hasattr(self, "_llm_client")
 
+    def _resolve_resolver(
+        self, resolver: object | None, operation: str = "merge",
+    ) -> object | None:
+        """Resolve a resolver argument to a callable.
+
+        Handles three cases:
+        1. ``resolver="llm"`` — build an :class:`OpenAIResolver` from the
+           configured LLM client for *operation*.
+        2. ``resolver=None`` — fall back to ``_default_resolver`` if set.
+        3. Anything else (callable) — return as-is.
+
+        Returns:
+            A resolver callable or *None*.
+        """
+        if resolver == "llm":
+            if not self._has_llm_client(operation):
+                raise RuntimeError(
+                    f"resolver='llm' requires an LLM client.  "
+                    f"Pass api_key= to Tract.open() or call configure_llm()."
+                )
+            from tract.llm.resolver import OpenAIResolver
+
+            llm_cfg = self._resolve_llm_config(operation) or {}
+            return OpenAIResolver(
+                self._resolve_llm_client(operation),
+                model=llm_cfg.get("model"),
+                temperature=llm_cfg.get("temperature", 0.3),
+                max_tokens=llm_cfg.get("max_tokens", 2048),
+            )
+        if resolver is None:
+            return getattr(self, "_default_resolver", None)
+        return resolver
+
     def _auto_message(self, content_type: str, text: str) -> str:
         """Generate a commit message, using LLM summarization when available.
 
@@ -4078,20 +4111,17 @@ class Tract:
         if delete_branch is None:
             delete_branch = self.config.delete_branch_on_merge
 
-        # Determine resolver
-        effective_resolver = resolver
-        if effective_resolver is None:
-            effective_resolver = getattr(self, "_default_resolver", None)
+        # Determine resolver (handles "llm" string, None -> default, callables)
+        effective_resolver = self._resolve_resolver(resolver, "merge")
 
-        # Resolve per-operation config for merge
-        merge_config = self._resolve_llm_config(
-            "merge", model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config,
-        )
-
-        # If using default resolver AND config differs from default, create tailored resolver
-        if effective_resolver is getattr(self, "_default_resolver", None) and merge_config:
-            if self._has_llm_client("merge"):
+        # If using default resolver AND per-call config overrides exist,
+        # create a tailored resolver with those overrides.
+        if effective_resolver is getattr(self, "_default_resolver", None):
+            merge_config = self._resolve_llm_config(
+                "merge", model=model, temperature=temperature,
+                max_tokens=max_tokens, llm_config=llm_config,
+            )
+            if merge_config and self._has_llm_client("merge"):
                 from tract.llm.resolver import OpenAIResolver
 
                 effective_resolver = OpenAIResolver(
@@ -4324,10 +4354,8 @@ class Tract:
         # Resolve commit hash (supports prefixes and branch names)
         resolved = self.resolve_commit(commit_hash)
 
-        # Determine resolver
-        effective_resolver = resolver
-        if effective_resolver is None:
-            effective_resolver = getattr(self, "_default_resolver", None)
+        # Determine resolver (handles "llm" string, None -> default, callables)
+        effective_resolver = self._resolve_resolver(resolver, "merge")
 
         result = _import_commit(
             commit_hash=resolved,
@@ -4386,10 +4414,8 @@ class Tract:
         from tract.models.merge import RebaseResult
         from tract.operations.rebase import execute_rebase, plan_rebase
 
-        # Determine resolver
-        effective_resolver = resolver
-        if effective_resolver is None:
-            effective_resolver = getattr(self, "_default_resolver", None)
+        # Determine resolver (handles "llm" string, None -> default, callables)
+        effective_resolver = self._resolve_resolver(resolver, "merge")
 
         # Plan phase: determine what to replay and check safety
         plan = plan_rebase(
