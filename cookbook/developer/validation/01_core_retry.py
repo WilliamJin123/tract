@@ -102,7 +102,7 @@ def part2_exhaustion():
         try:
             retry_with_steering(
                 attempt=lambda: t.generate().text,
-                validate=lambda text: (False, "Must contain the word 'xylophone'"),
+                validate=lambda text: (False, "Response must be exactly 0 characters long"),
                 steer=lambda diag: t.user(f"Try again. {diag}"),
                 head_fn=lambda: t.head or "",
                 reset_fn=lambda h: t.reset(h) if h else None,
