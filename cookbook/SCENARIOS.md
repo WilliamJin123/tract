@@ -1,6 +1,6 @@
 # Tract Cookbook — Scenarios
 
-The cookbook is organized around **who drives the context**. **Getting Started** has two on-ramps: one for developers writing code, one for agents using tools. **Developer** covers everything you do when calling tract methods directly. **Agentic** covers the spectrum from self-managing agents (tools in the agent's own loop) to sidecar agents (companion handles context management). **Hooks** provide the cross-cutting approval and middleware layer used by both patterns. **E2E** combines everything into real-world scenarios.
+The cookbook is organized around **who drives the context**. **Getting Started** has two on-ramps: one for developers writing code, one for agents using tools. **Developer** covers everything you do when calling tract methods directly. **Agentic** covers the spectrum from self-managing agents (tools in the agent's own loop) to sidecar agents (companion handles context management). **Integrations** shows how to use tract with external agent frameworks (Agno, LangChain, CrewAI) via the framework-agnostic `as_callable_tools()` and pluggable `AgentLoop` protocol. **Hooks** provide the cross-cutting approval and middleware layer used by both patterns. **E2E** combines everything into real-world scenarios.
 
 ### Two Mental Models
 
@@ -119,6 +119,13 @@ cookbook/
 │       ├── 01_parent_child.py                   # Child tracts, provenance, parent()
 │       ├── 02_delegation.py                     # Branch-delegate-merge, compress-and-ingest
 │       └── 03_curated_deploy.py                 # session.deploy(), curation, merge-back
+│
+├── integrations/                              # External framework integration (requires extra deps)
+│   ├── 01_callable_tools.py                     # as_callable_tools() -- framework-agnostic export
+│   ├── 02_agent_loop.py                         # AgentLoop protocol -- pluggable orchestrator
+│   ├── 03_agno.py                               # Agno: TractToolkit, message sync, adapter
+│   ├── 04_langchain.py                          # LangChain/LangGraph: tools, graph nodes, adapter
+│   └── 05_crewai.py                             # CrewAI: tools, multi-agent tracts, delegation
 │
 ├── hooks/                                   # Approval + middleware layer (cross-cutting)
 │   ├── 01_routing/                            # Core registration and dispatch
@@ -639,6 +646,61 @@ Coordination across multiple agents with parent-child relationships.
 **Tiers:** Manual | Interactive | Agent
 
 > `session.deploy()`, `curate=`, merge-back, collapse
+
+---
+
+# Integrations
+
+Use tract with external agent frameworks. These examples require extra dependencies (`agno`, `langchain`, `crewai`). Two universal building blocks:
+
+- **`as_callable_tools()`** exports tract tools as typed Python callables that any framework can introspect — no per-framework adapters needed.
+- **`AgentLoop`** protocol lets you swap tract's built-in Orchestrator for an external framework's loop, the same way `LLMClient` lets you swap the LLM transport layer.
+
+### 01 — Callable Tools
+
+**File:** `integrations/01_callable_tools.py`
+
+**Use case:** You want tract's context management tools (compress, branch, gc, etc.) available in any agent framework without writing adapter code.
+
+`as_callable_tools()` returns functions with proper `__name__`, `__doc__`, `__signature__`, and type annotations. Every framework introspects these natively.
+
+> `as_callable_tools()`, `inspect.signature()`, profile filtering, description overrides
+
+### 02 — Agent Loop Protocol
+
+**File:** `integrations/02_agent_loop.py`
+
+**Use case:** You want `t.orchestrate()` to delegate to an external agent loop (Agno, LangGraph, custom) instead of the built-in Orchestrator.
+
+The protocol is minimal: `run(messages, tools, execute_tool) -> AgentLoopResult` + `stop()`. Tract prepares everything, the loop does loop stuff, provenance flows back via the result type.
+
+> `AgentLoop`, `AgentLoopResult`, `configure_agent_loop()`, `Tract.open(agent_loop=)`, provenance
+
+### 03 — Agno
+
+**File:** `integrations/03_agno.py`
+
+**Use case:** You have an Agno agent (web search, reasoning, etc.) and want tract to manage its context window.
+
+Two depths: inject tract tools via `as_callable_tools()`, or build a `TractToolkit` (native Agno Toolkit subclass) with message sync hooks.
+
+> `as_callable_tools()` + Agno Agent, `TractToolkit`, pre/post hooks, `AgnoAdapter`
+
+### 04 — LangChain / LangGraph
+
+**File:** `integrations/04_langchain.py`
+
+**Use case:** You have a LangChain agent or LangGraph graph and want tract tools available alongside task tools.
+
+> `as_callable_tools()` + AgentExecutor, LangGraph tool nodes, callback-based provenance
+
+### 05 — CrewAI
+
+**File:** `integrations/05_crewai.py`
+
+**Use case:** You have a CrewAI multi-agent workflow and want each agent to manage its own context.
+
+> `as_callable_tools()` + CrewAI Agent, per-agent tracts, delegation with `import_commit()`
 
 ---
 
