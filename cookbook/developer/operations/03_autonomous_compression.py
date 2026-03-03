@@ -52,7 +52,7 @@ def part1_manual():
 
         print(f"\n  ToolResult:")
         print(f"    success: {result.success}")
-        print(f"    output:  {result.output[:120]}...")
+        print(f"    output:  {result.output}" if result.success else f"    error:   {result.error}")
 
         print("\n  AFTER compression:\n")
         t.compile().pprint(style="compact")

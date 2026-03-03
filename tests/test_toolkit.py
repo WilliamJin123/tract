@@ -311,15 +311,40 @@ class TestToolExecutor:
         assert result.success is True
         assert "dialogue" in result.output
 
-    def test_execute_compress_manual(self, tract_with_commits):
-        """Execute compress tool with manual content for testing."""
+    def test_execute_compress_no_llm_fails(self, tract_with_commits):
+        """Compress without LLM or content fails gracefully."""
         executor = ToolExecutor(tract_with_commits)
-        # compress via the tool requires LLM or manual content.
-        # The tool always uses auto_commit=True, so we need to test carefully.
-        # This may fail if no LLM configured, which is expected behavior.
         result = executor.execute("compress", {})
-        # Without LLM config, this should fail with a descriptive error
-        assert result.success is False or "Compressed" in result.output
+        assert result.success is False
+
+    def test_execute_compress_with_content(self, tract_with_commits):
+        """Compress with manual content succeeds via tool."""
+        executor = ToolExecutor(tract_with_commits)
+        result = executor.execute("compress", {"content": "Summary of the chat."})
+        assert result.success is True
+        assert "Compressed" in result.output
+
+    def test_execute_compress_with_content_and_preserve(self):
+        """Compress with content + preserve keeps pinned commits."""
+        from tract import Tract, DialogueContent
+        t = Tract.open()
+        t.commit(DialogueContent(role="user", text="First"))
+        t.commit(DialogueContent(role="user", text="Second"))
+        t.commit(DialogueContent(role="user", text="Third"))
+        entries = list(t.log(limit=10))
+        # entries: [Third, Second, First] -- preserve the middle
+        middle_hash = entries[1].commit_hash
+        executor = ToolExecutor(t)
+        result = executor.execute("compress", {
+            "content": "Summary of first and third",
+            "preserve": [middle_hash],
+        })
+        assert result.success is True
+        msgs = t.compile().to_dicts()
+        # summary + preserved middle
+        assert len(msgs) == 2
+        assert msgs[0]["content"] == "Summary of first and third"
+        assert msgs[1]["content"] == "Second"
 
 
 # ===========================================================================

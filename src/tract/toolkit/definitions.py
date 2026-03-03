@@ -224,10 +224,25 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
                         "type": "string",
                         "description": "Additional instructions for LLM-based compression.",
                     },
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Manual summary text. When provided, bypasses the LLM "
+                            "and uses this text as the compression summary."
+                        ),
+                    },
+                    "preserve": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "List of commit hashes to preserve verbatim "
+                            "(treated as PINNED during compression)."
+                        ),
+                    },
                 },
             },
-            handler=lambda target_tokens=None, from_commit=None, to_commit=None, instructions=None: _handle_compress(
-                tract, target_tokens, from_commit, to_commit, instructions
+            handler=lambda target_tokens=None, from_commit=None, to_commit=None, instructions=None, content=None, preserve=None: _handle_compress(
+                tract, target_tokens, from_commit, to_commit, instructions, content, preserve
             ),
         ),
         # 8. branch
@@ -780,16 +795,22 @@ def _handle_compress(
     from_commit: str | None,
     to_commit: str | None,
     instructions: str | None,
+    content: str | None = None,
+    preserve: list[str] | None = None,
 ) -> str:
     if from_commit is not None:
         from_commit = tract.resolve_commit(from_commit)
     if to_commit is not None:
         to_commit = tract.resolve_commit(to_commit)
+    if preserve is not None:
+        preserve = [tract.resolve_commit(h) for h in preserve]
     result = tract.compress(
         target_tokens=target_tokens,
         from_commit=from_commit,
         to_commit=to_commit,
         instructions=instructions,
+        content=content,
+        preserve=preserve,
     )
     # CompressResult has original_tokens, compressed_tokens, source_commits, summary_commits
     return (
