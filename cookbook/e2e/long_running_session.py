@@ -1,14 +1,11 @@
 """Long-running session: 50+ turns with auto-maintenance.
 
   PART 1 -- Manual:      Chat loop, check status(), manually compress/gc at intervals
-  PART 2 -- Interactive:  status.pprint() every N turns, click.confirm("Compress?")
   PART 3 -- LLM / Agent:  CompressTrigger(0.8) + GCTrigger(20) + PinTrigger over 50+ turns
 """
 
 import sys
 from pathlib import Path
-
-import click
 
 from tract import (
     CompressTrigger,
@@ -65,41 +62,6 @@ def part1_manual():
 
         final = t.status()
         print(f"\n  Final: {final.token_count} tokens, {final.commit_count} commits")
-
-
-# =====================================================================
-# PART 2 -- Interactive: human decides when to compress
-# =====================================================================
-
-def part2_interactive():
-    print("\n" + "=" * 60)
-    print("PART 2 -- Interactive: Human-Triggered Maintenance")
-    print("=" * 60)
-
-    config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=500))
-    with Tract.open(config=config) as t:
-        t.system("You are a planetary survey coordinator.")
-
-        for i in range(1, 16):
-            t.user(f"Survey {i}: spectral analysis of asteroid {1000 + i}.")
-            t.assistant(f"Asteroid {1000 + i}: S-type silicate composition, "
-                        f"albedo {0.15 + i * 0.01:.2f}, diameter ~{i * 12} km.")
-
-            if i % 5 == 0:
-                status = t.status()
-                budget_max = status.token_budget_max or 1
-                usage_pct = status.token_count / budget_max
-                print(f"\n  Turn {i}: {usage_pct:.0%} budget used")
-                status.pprint()
-
-                if click.confirm("  Compress now?", default=usage_pct > 0.6):
-                    start = max(1, i - 4)
-                    t.compress(content=f"Asteroid survey {start}-{i}: "
-                               f"S-type silicate compositions confirmed, "
-                               f"diameters ranging {start * 12}-{i * 12} km.")
-                    print(f"  Compressed. Now {t.status().token_count} tokens.")
-
-        print(f"\n  Session complete: {t.status().commit_count} commits")
 
 
 # =====================================================================
@@ -170,7 +132,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

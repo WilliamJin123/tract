@@ -1,20 +1,14 @@
 """Edit in Place
 
-Two tiers of editing: manual edit with chat verification and interactive
-editing via $EDITOR.
-
-PART 1 -- Manual           Direct API calls, no LLM, deterministic
-PART 2 -- Interactive       review=True, click.edit/confirm, human decides
+Manual edit with chat verification.
 
 Demonstrates: system(edit=hash), annotate(SKIP) for stale responses,
               chat() before/after edit, compile() serves corrected
-              content, log() preserves both versions, click.edit()
+              content, log() preserves both versions
 """
 
 import sys
 from pathlib import Path
-
-import click
 
 from tract import Priority, Tract
 
@@ -98,61 +92,11 @@ def part1_edit_in_place():
 
 
 # =============================================================================
-# Part 2: Interactive Edit via $EDITOR  (PART 2 — Interactive)
-# =============================================================================
-
-def part2_interactive_edit():
-    print("=" * 60)
-    print("Part 2: INTERACTIVE EDIT VIA $EDITOR  [Interactive Tier]")
-    print("=" * 60)
-    print()
-    print("  Open the current system prompt in $EDITOR, make changes,")
-    print("  then confirm and apply the edit.")
-    print()
-
-    t = Tract.open()
-
-    sys_ci = t.system(
-        "You are a customer support agent for Acme Corp.\n"
-        "Return policy: customers may return any item within 60 days.\n"
-        "Tone: friendly and professional.",
-    )
-    t.user("Tell me about returns.")
-    t.assistant("Our return policy allows returns within 60 days of purchase.")
-
-    # Show current system prompt
-    old_text = t.get_content(sys_ci.commit_hash)["text"]
-    print(f"  Current system prompt:\n    {old_text[:80]}...\n")
-
-    # Open in $EDITOR
-    edited = click.edit(old_text)
-    if edited and edited.strip() != old_text.strip():
-        if click.confirm("  Apply this edit to the system prompt?"):
-            new_ci = t.system(edited.strip(), edit=sys_ci.commit_hash)
-            print(f"  Edit applied: {new_ci.commit_hash[:8]}\n")
-
-            print("  --- Compiled context (after edit) ---\n")
-            t.compile().pprint()
-        else:
-            print("  Edit cancelled.")
-    else:
-        print("  No changes made (or editor closed without saving).")
-
-    print()
-    t.close()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
-def main():
-    part1_edit_in_place()
-    part2_interactive_edit()
-    print("=" * 60)
-    print("Done -- both tiers of edit-in-place demonstrated.")
-    print("=" * 60)
-
-
 if __name__ == "__main__":
-    main()
+    part1_edit_in_place()
+    print("=" * 60)
+    print("Done -- edit-in-place demonstrated.")
+    print("=" * 60)

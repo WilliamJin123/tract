@@ -115,57 +115,11 @@ def part2_exhaustion():
             print("  (last_result is still usable for fallback logic)")
 
 
-# =============================================================================
-# Part 2b -- Interactive: Human is the Validator
-# =============================================================================
-# The human reviews each LLM response and decides whether it's acceptable.
-# If not, the human provides a correction that steers the next attempt.
-
-def part2b_interactive():
-    import click
-
-    print(f"\n{'=' * 60}")
-    print("PART 2b -- Interactive: HUMAN IS THE VALIDATOR")
-    print("=" * 60)
-    print()
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system(
-            "You are a data generator. Produce JSON objects as requested. "
-            "Respond with ONLY the JSON — no markdown, no explanation."
-        )
-        t.user("Generate a JSON object for a fictional person with name, age, and hobbies.")
-
-        max_attempts = 5
-        for attempt in range(1, max_attempts + 1):
-            print(f"\n  --- Attempt {attempt} ---")
-            result = t.generate()
-            print(f"  Response:\n{result.text}\n")
-
-            if click.confirm("  Acceptable?", default=True):
-                print("  Accepted!")
-                break
-            else:
-                correction = click.prompt("  Correction")
-                t.user(correction)
-        else:
-            print(f"  Gave up after {max_attempts} attempts.")
-
-        print("\n  Final commit chain:")
-        for entry in reversed(t.log()):
-            print(f"    {entry}")
-
-
 def main():
     print("=== Part 1 -- Manual: retry_with_steering + live LLM ===\n")
     part1_retry_with_llm()
     print(f"\n=== Part 2 -- Manual: RetryExhaustedError ===\n")
     part2_exhaustion()
-    part2b_interactive()
 
 
 if __name__ == "__main__":

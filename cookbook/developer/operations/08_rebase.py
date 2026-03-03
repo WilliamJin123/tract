@@ -1,27 +1,22 @@
 """Rebase
 
-Three tiers of rebase usage -- manual rebase with result inspection,
-interactive review with PendingRebase, and trigger-driven auto-rebase.
+Two tiers of rebase usage -- manual rebase with result inspection and
+trigger-driven auto-rebase.
 
 PART 1 -- Manual           Direct rebase(), inspect RebaseResult
-PART 2 -- Interactive       rebase(review=True), PendingRebase, click.confirm
 PART 3 -- Trigger-Driven    RebaseTrigger auto-rebase on divergence
 
 Demonstrates: rebase(), RebaseResult, replayed_commits, original_commits,
-              new_head, rebase(review=True), PendingRebase, approve/reject,
-              RebaseTrigger
+              new_head, RebaseTrigger
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import RebaseTrigger, Tract
-from tract.hooks.rebase import PendingRebase
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import cerebras as llm  
+from _providers import cerebras as llm
 
 MODEL_ID = llm.large
 
@@ -90,51 +85,6 @@ def part1_manual():
 
 
 # =============================================================================
-# PART 2 -- Interactive: rebase(review=True), PendingRebase, click.confirm
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: Rebase with Review")
-    print("=" * 60)
-    print()
-    print("  rebase(review=True) returns a PendingRebase for human")
-    print("  inspection before committing the replayed commits.")
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-
-        _build_diverged_branches(t)
-
-        print(f"\n  examples BEFORE rebase:")
-        t.compile().pprint(style="compact")
-
-        # review=True returns PendingRebase
-        pending = t.rebase("main", review=True)
-
-        if not isinstance(pending, PendingRebase):
-            print(f"  Rebase completed without review.")
-            return
-
-        print(f"\n  PendingRebase returned:")
-        print(f"    commits to replay: {len(pending.original_commits)}")
-        pending.pprint()
-
-        if click.confirm("  Proceed with rebase?", default=True):
-            result = pending.approve()
-            print(f"\n  Rebase approved:")
-            print(f"    replayed: {len(result.replayed_commits)} commits")
-            print(f"    new HEAD: {result.new_head[:8]}")
-            t.compile().pprint(style="chat")
-        else:
-            pending.reject("User declined rebase.")
-            print("  Rebase rejected. Branch unchanged.")
-
-
-# =============================================================================
 # PART 3 -- Trigger-Driven: RebaseTrigger auto-rebase on divergence
 # =============================================================================
 
@@ -184,7 +134,6 @@ def part3_trigger_driven():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_trigger_driven()
 
 

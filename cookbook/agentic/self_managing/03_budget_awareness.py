@@ -11,8 +11,6 @@ Demonstrates: status() via tools, budget-driven compress decisions,
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Tract, TractConfig, TokenBudgetConfig
 from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
 from tract.orchestrator import Orchestrator, OrchestratorConfig, AutonomyLevel
@@ -74,54 +72,6 @@ def part1_manual():
             print(f"  After compress: {status_after.token_count} tokens ({new_pct:.1f}%)")
         else:
             print(f"\n  Under {COMPRESS_THRESHOLD}% -- no action needed.")
-
-
-# =====================================================================
-# PART 2 -- Interactive: Agent reports budget, human decides
-# =====================================================================
-
-def part2_interactive():
-    """Agent reports budget status; human decides whether to compress."""
-    print(f"\n{'=' * 60}")
-    print("PART 2 -- Interactive: Human-Gated Budget Management")
-    print("=" * 60)
-
-    config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=400))
-
-    with Tract.open(config=config) as t:
-        t.system("You are a data analysis assistant.")
-
-        for i in range(8):
-            t.user(f"Dataset {i}: loaded {(i + 1) * 1000} rows from warehouse.")
-            t.assistant(f"Processed dataset {i}. Found {i * 3} anomalies.")
-
-        executor = ToolExecutor(t)
-
-        # Check status
-        result = executor.execute("status", {})
-        print(f"\n  Status: {result.output}")
-
-        status = t.status()
-        budget_max = status.token_budget_max or 1
-        fill_pct = status.token_count / budget_max * 100
-
-        print(f"\n  Budget fill: {fill_pct:.1f}%")
-
-        if fill_pct > 60:
-            print(f"  Budget is above 60%.")
-            if click.confirm("  Compress context to free up budget?", default=True):
-                t.compress(content=(
-                    "Data analysis session: processed 8 datasets from "
-                    "warehouse, found increasing anomaly counts. Total "
-                    "rows: 36,000."
-                ))
-                status_after = t.status()
-                new_pct = status_after.token_count / budget_max * 100
-                print(f"  Compressed: {status_after.token_count} tokens ({new_pct:.1f}%)")
-            else:
-                print(f"  Skipped compression (human override).")
-        else:
-            print(f"  Budget healthy -- no compression needed.")
 
 
 # =====================================================================
@@ -244,7 +194,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

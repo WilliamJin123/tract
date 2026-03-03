@@ -1,14 +1,11 @@
 """Toolkit: expose tract operations as LLM-callable tools.
 
   PART 1 -- Manual:      as_tools(profile="self"), 3 profiles, ToolExecutor.execute()
-  PART 2 -- Interactive:  Human-gated tool execution with click.confirm per call
   PART 3 -- LLM / Agent:  Orchestrator with custom ToolProfile for autonomous tool use
 """
 
 import sys
 from pathlib import Path
-
-import click
 
 from tract import Tract, TractConfig, TokenBudgetConfig
 from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
@@ -52,41 +49,6 @@ def part1_manual():
         # Profile filtering on the executor
         executor.set_profile("supervisor")
         print(f"\n  Supervisor tools: {executor.available_tools()}")
-
-
-# =====================================================================
-# PART 2 -- Interactive: human-gated tool execution
-# =====================================================================
-
-def part2_interactive():
-    print("\n" + "=" * 60)
-    print("PART 2 -- Interactive: Human-Gated Tool Execution")
-    print("=" * 60)
-
-    with Tract.open() as t:
-        t.system("You are a research assistant.")
-        t.user("Summarize the Drake equation.")
-        t.assistant("The Drake equation estimates the number of active "
-                    "civilizations in the Milky Way.")
-
-        executor = ToolExecutor(t)
-
-        # Simulate a list of tool calls an LLM might request
-        planned_calls = [
-            ("status", {}),
-            ("log", {"limit": 5}),
-            ("compile", {}),
-        ]
-
-        print("\n  Simulated LLM tool calls (human gates each one):\n")
-        for name, args in planned_calls:
-            if click.confirm(f"  Execute {name}({args})?", default=True):
-                result = executor.execute(name, args)
-                status = "OK" if result.success else "FAIL"
-                output = (result.output or result.error or "")[:80]
-                print(f"    [{status}] {output}...\n")
-            else:
-                print(f"    [SKIPPED] {name}\n")
 
 
 # =====================================================================
@@ -171,7 +133,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

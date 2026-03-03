@@ -1,27 +1,24 @@
 """Merge Conflict Resolution
 
-Three tiers of conflict resolution -- programmatic resolution, interactive
-editor-based resolution, and automated LLM-driven resolution.
+Two tiers of conflict resolution -- programmatic resolution and
+automated LLM-driven resolution.
 
 PART 1 -- Manual           Detect conflicts, set_resolution(), commit_merge()
-PART 2 -- Interactive       review=True, edit_interactive(), click.confirm
 PART 3 -- Automated         resolver="llm" for automatic conflict resolution
 
 Demonstrates: merge(), MergeResult, conflicts, set_resolution(),
-              merge(review=True), PendingMerge, edit_interactive(),
-              approve(), merge(resolver="llm")
+              merge(review=True), PendingMerge, approve(),
+              merge(resolver="llm")
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import CommitOperation, InstructionContent, Tract
 from tract.hooks.merge import PendingMerge
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import cerebras as llm  
+from _providers import cerebras as llm
 
 MODEL_ID = llm.large
 
@@ -116,91 +113,6 @@ def part1_manual():
 
 
 # =============================================================================
-# PART 2 -- Interactive: review=True, editor, click.confirm
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: Editor-Based Conflict Resolution")
-    print("=" * 60)
-    print()
-    print("  Both branches EDIT the same system prompt. Tract can't")
-    print("  auto-resolve -- you inspect the conflict and write a resolution.")
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        _build_diverged_branches(t)
-
-        print(f"\n  BEFORE MERGE")
-        print(f"  main (casual persona):")
-        t.compile().pprint(style="compact")
-
-        t.switch("formal")
-        print(f"\n  formal (academic persona):")
-        t.compile().pprint(style="compact")
-
-        # review=True returns PendingMerge for interactive resolution
-        t.switch("main")
-        pending = t.merge("formal", review=True)
-
-        if not isinstance(pending, PendingMerge):
-            print(f"\n  No conflicts -- merge completed: {pending.merge_type}")
-            pending.pprint()
-            return
-
-        print(f"\n  merge('formal', review=True) -> PendingMerge")
-        print(f"    conflicts: {len(pending.conflicts)}")
-        print(f"    resolutions: {len(pending.resolutions)} (empty -- no resolver)\n")
-
-        # Resolve the conflict
-        default_resolution = (
-            "You are a knowledgeable assistant. Be precise when discussing "
-            "technical concepts, but keep your tone approachable and friendly."
-        )
-
-        if sys.stdin.isatty():
-            # Interactive: quick-pick menu for each conflict
-            pending.edit_interactive()
-
-            # Fall back to default for any unresolved
-            for conflict in pending.conflicts:
-                key = conflict.target_hash
-                if key and key not in pending.resolutions:
-                    print(f"  Using default resolution for unresolved conflict.")
-                    pending.set_resolution(key, default_resolution)
-        else:
-            for conflict in pending.conflicts:
-                if conflict.target_hash:
-                    pending.set_resolution(conflict.target_hash, default_resolution)
-
-        result = pending.approve()
-        result.pprint()
-
-        # Apply the resolution as an EDIT commit
-        for target_hash, resolved_text in result.resolutions.items():
-            t.commit(
-                InstructionContent(text=resolved_text),
-                operation=CommitOperation.EDIT,
-                edit_target=target_hash,
-                message="apply merge resolution",
-            )
-
-        print(f"  AFTER MERGE (resolution applied)")
-        t.compile().pprint(style="compact")
-
-        # Verify: chat with the resolved persona
-        print(f"\n  VERIFY: chat with the resolved persona")
-        r = t.chat("Explain Python decorators in two sentences.")
-        r.pprint()
-
-        print(f"\n  FINAL CONTEXT")
-        t.compile().pprint(style="compact")
-
-
-# =============================================================================
 # PART 3 -- Automated: LLM-driven conflict resolution
 # =============================================================================
 
@@ -249,7 +161,6 @@ def part3_automated():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_automated()
 
 

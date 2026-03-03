@@ -1,14 +1,11 @@
 """Autonomous steering: triggers + orchestrator + hooks over many turns.
 
   PART 1 -- Manual:      Manual trigger evaluation: trigger.evaluate(t) -> inspect -> execute
-  PART 2 -- Interactive:  Hook-gated triggers with click.confirm per action
   PART 3 -- LLM / Agent:  All triggers active + autonomous orchestrator over 20+ turns
 """
 
 import sys
 from pathlib import Path
-
-import click
 
 from tract import (
     CompressTrigger,
@@ -68,48 +65,6 @@ def part1_manual():
             t.compress(content="Geology session: 8 granite samples analyzed. "
                        "Composition: ~60% feldspar, 25% quartz, 15% mica.")
             print(f"  After compress: {t.status().token_count} tokens")
-
-
-# =====================================================================
-# PART 2 -- Interactive: hook-gated triggers
-# =====================================================================
-
-def part2_interactive():
-    print("\n" + "=" * 60)
-    print("PART 2 -- Interactive: Hook-Gated Triggers")
-    print("=" * 60)
-
-    config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=250))
-    with Tract.open(config=config) as t:
-        actions_taken = []
-
-        def trigger_hook(pending):
-            label = f"{pending.trigger_name}: {pending.action_type}"
-            print(f"\n  [hook] {label}")
-            print(f"         reason: {pending.reason}")
-            if click.confirm(f"  Execute {pending.action_type}?", default=True):
-                pending.approve()
-                actions_taken.append(pending.action_type)
-            else:
-                pending.reject("user declined")
-
-        t.on("trigger", trigger_hook, name="interactive-gate")
-        t.configure_triggers([
-            CompressTrigger(threshold=0.5, summary_content="Condensed geology notes."),
-            PinTrigger(pin_types={"instruction"}),
-        ])
-
-        # System message triggers PinTrigger (autonomous, no hook)
-        t.system("You are a volcanology research assistant.")
-
-        # Build up tokens to trip CompressTrigger on next compile
-        for i in range(6):
-            t.user(f"Eruption data {i}: Mount Vesuvius pyroclastic flow analysis.")
-
-        # compile() evaluates collaborative triggers through hook
-        ctx = t.compile()
-        print(f"\n  Actions taken: {actions_taken}")
-        print(f"  Context: {ctx.token_count} tokens, {len(ctx.messages)} messages")
 
 
 # =====================================================================
@@ -173,7 +128,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

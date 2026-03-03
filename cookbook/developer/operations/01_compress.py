@@ -1,26 +1,20 @@
-"""Core compression: manual and interactive.
-
-Two ways to compress conversation history:
+"""Core compression: manual compress with your own summary text.
 
   PART 1 -- Manual:      compress(content="your summary"), no LLM needed
-  PART 2 -- Interactive:  compress(target_tokens=150, review=True), human edits + approves
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Priority, Tract
-from tract.hooks.compress import PendingCompress
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import groq as llm  
+from _providers import groq as llm
 
 MODEL_ID = llm.large
 
 
-def part1_manual():
+def main():
     print("=" * 60)
     print("PART 1 -- Manual: compress(content=), no LLM needed")
     print("=" * 60)
@@ -64,57 +58,6 @@ def part1_manual():
         print("\n  AFTER compression:\n")
         t.compile().pprint(style="compact")
         print(f"\n  3 Q&A pairs -> 1 summary. PINNED system prompt survived.")
-
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: review=True, human edits + approves")
-    print("=" * 60)
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-
-        sys_ci = t.system("You are a concise biology explainer.")
-        t.annotate(sys_ci.commit_hash, Priority.PINNED)
-
-        t.chat("What is CRISPR and how does it work?")
-        t.chat("How does mRNA deliver instructions to cells?")
-        t.chat("Explain epigenetics and why it matters.")
-
-        print("\n  BEFORE compression:\n")
-        t.compile().pprint(style="chat")
-
-        # review=True returns a PendingCompress -- nothing committed yet
-        pending: PendingCompress = t.compress(target_tokens=150, review=True)
-
-        pending.pprint(verbose=True)
-
-        # Interactive: open each draft in $EDITOR for human editing
-        for i, summary in enumerate(pending.summaries):
-            print(f"\n  Opening summary [{i}] in your editor...")
-            edited = click.edit(summary)
-            if edited is not None and edited.strip() != summary.strip():
-                pending.edit_summary(i, edited.strip())
-                print(f"  Summary [{i}] updated with your edits.")
-            else:
-                print(f"  Summary [{i}] kept as-is.")
-
-        # Approve -- NOW it commits
-        if click.confirm("\n  Approve and commit?", default=True):
-            result = pending.approve()
-            print(f"\n  Approved! {result.compression_ratio:.1%} compression ratio")
-            t.compile().pprint(style="compact")
-        else:
-            pending.reject("User declined")
-            print("  Cancelled. Nothing was committed.")
-
-
-def main():
-    part1_manual()
-    part2_interactive()
 
 
 if __name__ == "__main__":

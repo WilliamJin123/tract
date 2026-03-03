@@ -1,24 +1,18 @@
 """Branch Lifecycle -- Create, Switch, List, Delete
 
-Two tiers of branch management -- manual API calls and interactive prompts.
-
 PART 1 -- Manual           Direct branch/switch/list/delete calls
-PART 2 -- Interactive       click.confirm, click.prompt, human decides
 
 Demonstrates: branch(), switch(), list_branches(), current_branch,
-              branch(switch=False), delete_branch(force=True),
-              click.confirm, click.prompt
+              branch(switch=False), delete_branch(force=True)
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Tract
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import cerebras as llm  
+from _providers import cerebras as llm
 
 MODEL_ID = llm.large
 
@@ -27,7 +21,7 @@ MODEL_ID = llm.large
 # PART 1 -- Manual: Direct API calls, no LLM, deterministic
 # =============================================================================
 
-def part1_manual():
+def main():
     print("=" * 60)
     print("PART 1 -- Manual: Branch Lifecycle")
     print("=" * 60)
@@ -114,75 +108,6 @@ def part1_manual():
 
         remaining = [b.name for b in t.list_branches()]
         print(f"  Remaining branches: {remaining}")
-
-
-# =============================================================================
-# PART 2 -- Interactive: click.confirm, click.prompt, human decides
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: Branch Management with Prompts")
-    print("=" * 60)
-    print()
-    print("  Use click prompts to let the user decide branch operations.")
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a concise Python tutor.")
-        t.chat("What is a list comprehension?")
-
-        # Create branch with confirmation
-        if click.confirm("  Create branch 'experiment'?", default=True):
-            t.branch("experiment")
-            print(f"  Created and switched to: {t.current_branch}")
-            t.chat("Explain generator expressions.")
-        else:
-            print("  Skipped branch creation.")
-            return
-
-        t.switch("main")
-
-        # List branches with numbered display
-        branches = t.list_branches()
-        print(f"\n  Available branches:")
-        for i, b in enumerate(branches):
-            marker = "*" if b.is_current else " "
-            print(f"    [{i}] {marker} {b.name:15s} @ {b.commit_hash[:8]}")
-
-        # Switch with interactive selection
-        choice = click.prompt(
-            "  Switch to which branch? (number)",
-            type=int,
-            default=0,
-        )
-        if 0 <= choice < len(branches):
-            t.switch(branches[choice].name)
-            print(f"  Switched to: {t.current_branch}")
-            t.compile().pprint(style="compact")
-
-        # Delete with force confirmation
-        t.switch("main")
-        if click.confirm("  Force delete unmerged branch 'experiment'?", default=False):
-            t.delete_branch("experiment", force=True)
-            print(f"  Deleted 'experiment'.")
-        else:
-            print("  Kept 'experiment'.")
-
-        remaining = [b.name for b in t.list_branches()]
-        print(f"\n  Remaining branches: {remaining}")
-
-
-# =============================================================================
-# main
-# =============================================================================
-
-def main():
-    part1_manual()
-    part2_interactive()
 
 
 if __name__ == "__main__":

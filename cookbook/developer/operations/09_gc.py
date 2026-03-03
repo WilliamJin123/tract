@@ -1,27 +1,22 @@
 """GC After Compression
 
-Three tiers of garbage collection -- manual compress+gc, interactive
-review with editor, and trigger-driven auto-maintenance.
+Two tiers of garbage collection -- manual compress+gc and trigger-driven
+auto-maintenance.
 
 PART 1 -- Manual           compress(content=) + gc(), inspect GCResult
-PART 2 -- Interactive       compress(review=True), edit summaries, gc()
 PART 3 -- Trigger-Driven    CompressTrigger + GCTrigger compound auto-maintenance
 
-Demonstrates: gc(), GCResult, compress(content=), compress(review=True),
-              PendingCompress, edit_summary(), approve(),
+Demonstrates: gc(), GCResult, compress(content=),
               CompressTrigger, GCTrigger, configure_triggers()
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import CompressTrigger, GCTrigger, Priority, TokenBudgetConfig, Tract, TractConfig
-from tract.hooks.compress import PendingCompress
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import cerebras as llm  
+from _providers import cerebras as llm
 
 MODEL_ID = llm.small
 
@@ -90,78 +85,6 @@ def part1_manual():
 
 
 # =============================================================================
-# PART 2 -- Interactive: compress(review=True), edit summaries, gc()
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: Collaborative Compression + GC")
-    print("=" * 60)
-    print()
-    print("  LLM drafts summaries, you review and edit them in $EDITOR,")
-    print("  then approve and run gc() to reclaim storage.")
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        sys_ci = t.system("You are a concise travel advisor.")
-        t.annotate(sys_ci.commit_hash, Priority.PINNED)
-
-        t.chat("Best time to visit Japan?")
-        t.chat("What about Iceland?")
-        t.chat("Tips for visiting Morocco.")
-        t.chat("Best way to travel through Southeast Asia?")
-
-        ctx_before = t.compile()
-        print(f"\n  Built conversation: {len(ctx_before.messages)} messages, "
-              f"{ctx_before.token_count} tokens")
-
-        # Collaborative compression: LLM drafts, user reviews & edits
-        pending = t.compress(target_tokens=100, review=True)
-
-        print(f"\n  PendingCompress (NOT yet committed):")
-        print(f"    summaries:        {len(pending.summaries)} draft(s)")
-        print(f"    source_commits:   {len(pending.source_commits)}")
-        print(f"    original_tokens:  {pending.original_tokens}")
-        print(f"    estimated_tokens: {pending.estimated_tokens}")
-
-        # Interactive review: open each draft in $EDITOR for real editing
-        for i, summary in enumerate(pending.summaries):
-            print(f"\n  Opening summary [{i}] in your editor...")
-            edited = click.edit(summary)
-            if edited is not None and edited.strip() != summary.strip():
-                pending.edit_summary(i, edited.strip())
-                print(f"  Summary [{i}] updated with your edits.")
-            else:
-                print(f"  Summary [{i}] kept as-is.")
-
-        # Approve -- NOW it commits
-        compress_result = pending.approve()
-
-        print(f"\n  Approved! CompressResult:")
-        print(f"    {len(compress_result.source_commits)} commits archived")
-        print(f"    {compress_result.original_tokens} -> {compress_result.compressed_tokens} tokens")
-        print(f"    compression_ratio: {compress_result.compression_ratio:.1%}")
-
-        ctx_after = t.compile()
-        print(f"\n  Post-compression context:")
-        ctx_after.pprint(style="chat")
-
-        # GC with 0-day archive retention (immediate cleanup for demo)
-        print(f"\n  Running gc(archive_retention_days=0)...\n")
-        gc_result = t.gc(archive_retention_days=0)
-
-        print(f"  GCResult:")
-        print(f"    commits_removed:        {gc_result.commits_removed}")
-        print(f"    tokens_freed:           {gc_result.tokens_freed}")
-
-        print(f"\n  Context unchanged after GC:")
-        t.compile().pprint(style="chat")
-
-
-# =============================================================================
 # PART 3 -- Trigger-Driven: CompressTrigger + GCTrigger compound auto-maintenance
 # =============================================================================
 
@@ -221,7 +144,6 @@ def part3_trigger_driven():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_trigger_driven()
 
 

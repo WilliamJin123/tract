@@ -16,17 +16,16 @@ The agent pattern has a spectrum:
 | **Self-managing** | Simple meta-decisions inline | Good tool descriptions are enough (temperature, pin, tag) |
 | **Sidecar** | Complex meta-reasoning separated | Compress, GC, branch decisions shouldn't burden the main model |
 
-### 3-Tier Convention
+### 2-Tier Convention
 
-Most cookbook files follow a three-tier pattern showing the same feature at different autonomy levels:
+Most cookbook files follow a two-tier pattern showing the same feature at different autonomy levels:
 
 | Tier | Label | Description |
 |------|-------|-------------|
 | **PART 1** | Manual | Direct API calls, no LLM, fully deterministic |
-| **PART 2** | Interactive | `review=True`, `click.edit`/`click.confirm`, human decides |
-| **PART 3** | LLM / Agent | Orchestrator, triggers, hooks auto-manage |
+| **PART 3** | Agent / Automated | Orchestrator, triggers, hooks auto-manage |
 
-The gold-standard example is `hooks/01_routing/01_three_tier.py`. Every file is standalone.
+For interactive (HITL) patterns, see `hooks/` — the hook system (`review=True`, `t.on()`) is the built-in interactivity mechanism. Every file is standalone.
 
 ## File Tree
 
@@ -85,7 +84,7 @@ cookbook/
 │   │   ├── 02_operation_config.py               # configure_operations, per-op LLMConfig
 │   │   ├── 03_operation_clients.py              # configure_clients, separate LLM clients per op
 │   │   ├── 04_resolution_chain.py               # 4-level chain: sugar > llm_config > operation > default
-│   │   ├── 05_summarize_config.py               # compression-specific LLM config
+│   │   ├── 05_message_config.py                  # auto-message commit message LLM config
 │   │   └── 06_budget_guardrail.py               # status() loop, budget check before chat, auto-stop
 │   │
 │   ├── queries/                               # Inspecting and auditing history
@@ -205,7 +204,7 @@ Open a tract, get tools with `as_tools()`, use `ToolExecutor` to dispatch agent 
 
 # Developer
 
-You call the methods, you control the flow. This section covers every tract feature from the developer's perspective. Files show manual (Part 1) and interactive (Part 2) tiers.
+You call the methods, you control the flow. This section covers every tract feature from the developer's perspective.
 
 ## Internals
 
@@ -282,77 +281,77 @@ Open an in-memory tract. Commit messages using `InstructionContent` and `Dialogu
 ### 01 — Core Compression
 
 **File:** `developer/operations/01_compress.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `compress(content=)`, `compress(review=True)`, `PendingCompress`, `instructions=`
 
 ### 02 — Guided Compression and Retention
 
 **File:** `developer/operations/02_guided_compression.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `Priority.IMPORTANT`, `retain_match=`, `retain_match_mode=`, `preserve=`, `max_retries=`
 
 ### 03 — Autonomous Compression
 
 **File:** `developer/operations/03_autonomous_compression.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `ToolExecutor`, `t.on("compress", ...)`, `CompressTrigger`, `configure_triggers()`
 
 ### 04 — Branch Lifecycle
 
 **File:** `developer/operations/04_branch.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `branch()`, `switch()`, `list_branches()`, `current_branch`, `delete_branch(force=True)`
 
 ### 05 — Merge Strategies
 
 **File:** `developer/operations/05_merge_strategies.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `merge()`, `MergeResult`, `merge_type`, `no_ff`, `delete_branch=True`
 
 ### 06 — Merge Conflicts
 
 **File:** `developer/operations/06_merge_conflicts.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `ConflictInfo`, `edit_resolution()`, `commit_merge()`
 
 ### 07 — Import Commit
 
 **File:** `developer/operations/07_import_commit.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `import_commit(hash)`, `ImportResult`
 
 ### 08 — Rebase
 
 **File:** `developer/operations/08_rebase.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `rebase("main")`, `RebaseResult`, `replayed_commits`, `new_head`
 
 ### 09 — GC After Compression
 
 **File:** `developer/operations/09_gc.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `gc(archive_retention_days=)`, `GCResult`
 
 ### 10 — Retention Policies
 
 **File:** `developer/operations/10_retention_policies.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `archive_retention_days` parameter
 
 ### 11 — Message Reordering
 
 **File:** `developer/operations/11_reorder.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `compile(order=)`, `ReorderWarning`
 
@@ -361,70 +360,70 @@ Open an in-memory tract. Commit messages using `InstructionContent` and `Dialogu
 ### 01 — Tags: Classify and Query
 
 **File:** `developer/metadata/01_tags.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `tags=["..."]`, `t.tag()`, `t.untag()`, `register_tag()`, `query_by_tags()`, `log(tags=)`
 
 ### 02 — Priority: Pin, Skip, Reset
 
 **File:** `developer/metadata/02_priority.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `annotate(hash, Priority.PINNED/SKIP/NORMAL)`, `Priority` enum
 
 ### 03 — Edit in Place
 
 **File:** `developer/metadata/03_edit_in_place.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `system(edit=hash)`, edit-in-place workflow
 
 ### 04 — Tool Results: Agentic Loop
 
 **File:** `developer/metadata/04_tool_results.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `set_tools()`, `tool_result()`, `ToolCall`, `compress_tool_calls()`
 
 ### 05 — Tool Summarization
 
 **File:** `developer/metadata/05_tool_summarization.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `configure_tool_summarization()`, auto-summarize hooks
 
 ### 06 — Offline Tool Management
 
 **File:** `developer/metadata/06_offline_tool_management.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `find_tool_results()`, `find_tool_calls()`, `find_tool_turns()`, `tool_result(edit=)`
 
 ### 07 — Manual Reasoning
 
 **File:** `developer/metadata/07_reasoning.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `t.reasoning()`, `ReasoningContent`, `format=`
 
 ### 08 — Reasoning Compile Control
 
 **File:** `developer/metadata/08_reasoning_compile.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `compile(include_reasoning=True)`, `annotate()` overrides
 
 ### 09 — Reasoning Formatting
 
 **File:** `developer/metadata/09_reasoning_formatting.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `pprint()` rendering for reasoning
 
 ### 10 — Reasoning LLM Integration
 
 **File:** `developer/metadata/10_reasoning_llm.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `generate()` auto-extract, `reasoning=False`, `commit_reasoning=False`, `ChatResponse.reasoning`
 
@@ -433,42 +432,42 @@ Open an in-memory tract. Commit messages using `InstructionContent` and `Dialogu
 ### 01 — Per-Call Config
 
 **File:** `developer/config/01_per_call.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `LLMConfig`, `chat(temperature=)`, `generate(llm_config=)`
 
 ### 02 — Operation Config
 
 **File:** `developer/config/02_operation_config.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `default_config=`, `configure_operations()`, `OperationConfigs`
 
 ### 03 — Operation Clients
 
 **File:** `developer/config/03_operation_clients.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `configure_clients()`, per-operation routing
 
 ### 04 — Resolution Chain
 
 **File:** `developer/config/04_resolution_chain.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > 4-level resolution chain, `LLMConfig.from_dict()`, alias handling
 
-### 05 — Summarize Config
+### 05 — Message Config
 
-**File:** `developer/config/05_summarize_config.py`
-**Tiers:** Manual | Interactive | Agent
+**File:** `developer/config/05_message_config.py`
+**Tiers:** Manual | Agent
 
-> Compression-specific LLM config
+> Auto-message commit message LLM config
 
 ### 06 — Budget Guardrail
 
 **File:** `developer/config/06_budget_guardrail.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `status()` in a loop, budget threshold check, `record_usage()`
 
@@ -477,35 +476,35 @@ Open an in-memory tract. Commit messages using `InstructionContent` and `Dialogu
 ### 01 — Tool Queries
 
 **File:** `developer/queries/01_tool_queries.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `find_tool_results(name=, after=)`, `find_tool_calls(name=)`, `find_tool_turns(name=)`, `ToolTurn`
 
 ### 02 — Surgical Edits
 
 **File:** `developer/queries/02_surgical_edits.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `tool_result(edit=)`, surgical replacement
 
 ### 03 — Selective Compression
 
 **File:** `developer/queries/03_selective_compression.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `compress_tool_calls(name=)`, targeted compression
 
 ### 04 — Config Provenance
 
 **File:** `developer/queries/04_config_provenance.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `query_by_config(model=, temperature=)`, `generation_config`
 
 ### 05 — Tool Provenance
 
 **File:** `developer/queries/05_tool_provenance.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `set_tools()`, `get_commit_tools()`, `to_openai_params()`, `to_anthropic_params()`
 
@@ -514,21 +513,21 @@ Open an in-memory tract. Commit messages using `InstructionContent` and `Dialogu
 ### 01 — Core Retry Primitive
 
 **File:** `developer/validation/01_core_retry.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `retry_with_steering()`, `RetryResult`, `RetryExhaustedError`
 
 ### 02 — Chat Validation
 
 **File:** `developer/validation/02_chat_validation.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `chat(validator=, max_retries=, purify=, provenance_note=, retry_prompt=)`
 
 ### 03 — Compress Validation
 
 **File:** `developer/validation/03_compress_validation.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `compress(validator=, max_retries=)`, `retain_match=` combo
 
@@ -545,7 +544,7 @@ The agent gets tract tools alongside its task tools and makes meta-decisions inl
 ### 01 — Tool Description Hints
 
 **File:** `agentic/self_managing/01_tool_hints.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 **Use case:** The simplest self-managing pattern: tool descriptions tell the agent when to act.
 
@@ -556,7 +555,7 @@ A `configure_model` tool with description "call BEFORE answering when creative v
 ### 02 — Lightweight Inline Operations
 
 **File:** `agentic/self_managing/02_lightweight_ops.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 **Use case:** Agent tags, pins, and checks status as part of its normal workflow.
 
@@ -565,7 +564,7 @@ A `configure_model` tool with description "call BEFORE answering when creative v
 ### 03 — Budget Awareness
 
 **File:** `agentic/self_managing/03_budget_awareness.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 **Use case:** Agent monitors its own budget and self-compresses when running hot.
 
@@ -574,7 +573,7 @@ A `configure_model` tool with description "call BEFORE answering when creative v
 ### 04 — Tool Profiles
 
 **File:** `agentic/self_managing/04_profiles.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 **Use case:** Scope what an agent can do: full CRUD, oversight only, or read-only monitoring.
 
@@ -587,7 +586,7 @@ A companion agent (possibly cheaper/smaller model) handles tract operations whil
 ### 01 — Triggers
 
 **File:** `agentic/sidecar/01_triggers.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 **Use case:** Threshold-based automation with hook interception.
 
@@ -598,7 +597,7 @@ A companion agent (possibly cheaper/smaller model) handles tract operations whil
 ### 02 — Assessment Loop
 
 **File:** `agentic/sidecar/02_assessment_loop.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 **Use case:** Auto-assess context health and execute maintenance autonomously.
 
@@ -607,7 +606,7 @@ A companion agent (possibly cheaper/smaller model) handles tract operations whil
 ### 03 — Toolkit
 
 **File:** `agentic/sidecar/03_toolkit.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 **Use case:** Expose tract operations as LLM-callable tools for the sidecar.
 
@@ -616,7 +615,7 @@ A companion agent (possibly cheaper/smaller model) handles tract operations whil
 ### 04 — Auto-Tagger
 
 **File:** `agentic/sidecar/04_auto_tagger.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 **Use case:** LLM agent retrospectively tags a conversation using the orchestrator.
 
@@ -629,21 +628,21 @@ Coordination across multiple agents with parent-child relationships.
 ### 01 — Parent-Child
 
 **File:** `agentic/multi_agent/01_parent_child.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `parent()`, `children()`, parent-child provenance
 
 ### 02 — Delegation
 
 **File:** `agentic/multi_agent/02_delegation.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `compress()` summary, `import_commit()` across tracts, compress-and-ingest pattern
 
 ### 03 — Curated Deploy
 
 **File:** `agentic/multi_agent/03_curated_deploy.py`
-**Tiers:** Manual | Interactive | Agent
+**Tiers:** Manual | Agent
 
 > `session.deploy()`, `curate=`, merge-back, collapse
 

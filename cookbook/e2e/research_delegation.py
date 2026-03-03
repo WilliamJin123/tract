@@ -1,14 +1,11 @@
 """Research delegation: parallel sub-agents with merge.
 
   PART 1 -- Manual:      Deploy 3 children, each compresses, parent merges
-  PART 2 -- Interactive:  Review each child's findings before merge, click.confirm
   PART 3 -- LLM / Agent:  Full session deploy + compress + collapse
 """
 
 import sys
 from pathlib import Path
-
-import click
 
 from tract import Session
 from tract.models.config import LLMConfig
@@ -98,60 +95,6 @@ def part1_manual():
 
 
 # =====================================================================
-# PART 2 -- Interactive: review each child before merge
-# =====================================================================
-
-def part2_interactive():
-    if not llm.api_key:
-        print("\n" + "=" * 60)
-        print("PART 2: SKIPPED (no llm.api_key)")
-        print("=" * 60)
-        return
-
-    print("\n" + "=" * 60)
-    print("PART 2 -- Interactive: Review Before Merge")
-    print("=" * 60)
-
-    session = Session.open()
-    parent = session.create_tract(display_name="supervisor")
-    _configure_llm(parent)
-
-    parent.system("You are a materials science research coordinator.")
-    parent.user("We need reports on three material classes.")
-
-    branch_configs = [
-        ("metals-research", "Describe metallic bonding and properties of metals in 2-3 sentences."),
-        ("ceramics-research", "Describe ceramic materials, their bonding, and applications in 2-3 sentences."),
-        ("polymers-research", "Describe polymer chemistry, structure, and uses in 2-3 sentences."),
-    ]
-
-    for branch_name, question in branch_configs:
-        child = session.deploy(parent, purpose=branch_name, branch_name=branch_name)
-        child._seed_base_tags()
-        _configure_llm(child)
-
-        # Real LLM call: child researches the topic
-        response = child.chat(question)
-        print(f"\n  {branch_name}: LLM responded ({len(response.text)} chars)")
-
-        ctx = child.compile()
-        print(f"  Context: {len(ctx.messages)} msgs, {ctx.token_count} tokens")
-        for m in ctx.messages[-2:]:
-            print(f"    {m.role:>10}: {m.content[:60]}...")
-
-        if click.confirm(f"  Accept {branch_name}'s findings?", default=True):
-            # Compress using the LLM-generated response as summary content
-            child.compress(content=response.text[:200])
-            parent.merge(branch_name)
-            print(f"  Merged '{branch_name}'")
-        else:
-            print(f"  Skipped '{branch_name}'")
-
-    print(f"\n  Parent final: {len(parent.log())} commits")
-    session.close()
-
-
-# =====================================================================
 # PART 3 -- LLM / Agent: deploy + compress + collapse
 # =====================================================================
 
@@ -206,7 +149,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

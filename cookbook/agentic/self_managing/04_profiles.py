@@ -12,8 +12,6 @@ Demonstrates: as_tools(profile=), ToolExecutor profiles, capability scoping,
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Tract, TractConfig, TokenBudgetConfig
 from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
 from tract.toolkit.profiles import SELF_PROFILE, SUPERVISOR_PROFILE, FULL_PROFILE
@@ -169,63 +167,6 @@ def part1_manual():
 
 
 # =====================================================================
-# PART 2 -- Interactive: Pick a profile, explore its tools
-# =====================================================================
-
-def part2_interactive():
-    """Let user select a profile and see available tools."""
-    print(f"\n{'=' * 60}")
-    print("PART 2 -- Interactive: Pick a Profile")
-    print("=" * 60)
-
-    with Tract.open() as t:
-        t.system("You are a helpful assistant.")
-        t.user("What is the speed of light?")
-        t.assistant("Approximately 299,792,458 meters per second.")
-
-        profile_names = ["self", "supervisor", "full", "observer"]
-        print(f"\n  Available profiles: {', '.join(profile_names)}")
-
-        choice = click.prompt(
-            "  Select a profile",
-            type=click.Choice(profile_names),
-            default="observer",
-        )
-
-        # Map name to profile
-        profile_map = {
-            "self": SELF_PROFILE,
-            "supervisor": SUPERVISOR_PROFILE,
-            "full": FULL_PROFILE,
-            "observer": OBSERVER_PROFILE,
-        }
-        profile = profile_map[choice]
-
-        tools = t.as_tools(profile=profile, format="openai")
-        print(f"\n  Profile '{choice}' has {len(tools)} tools:\n")
-        for tool in tools:
-            fn = tool["function"]
-            desc = fn["description"][:70]
-            print(f"    {fn['name']:20s} {desc}...")
-
-        # Try executing a tool
-        executor = ToolExecutor(t)
-        executor.set_profile(profile)
-
-        available = executor.available_tools()
-        if available:
-            tool_name = click.prompt(
-                "\n  Execute which tool?",
-                type=click.Choice(available),
-                default=available[0],
-            )
-            result = executor.execute(tool_name, {})
-            status = "OK" if result.success else "FAIL"
-            output = (result.output or result.error or "")[:100]
-            print(f"    [{status}] {output}")
-
-
-# =====================================================================
 # PART 3 -- Agent: Orchestrator with observer profile (read-only)
 # =====================================================================
 
@@ -312,7 +253,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

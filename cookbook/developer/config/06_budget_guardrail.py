@@ -79,70 +79,6 @@ def part1_manual():
 
 
 # =============================================================================
-# Part 2: Interactive Budget Guardrail
-# =============================================================================
-# Status check in loop. When budget hits 80%, ask the human whether to
-# compress. Show status.pprint() between turns for full visibility.
-
-def part2_interactive():
-    import click
-
-    print(f"\n{'=' * 60}")
-    print("Part 2: INTERACTIVE BUDGET GUARDRAIL")
-    print("=" * 60)
-    print()
-
-    config = TractConfig(
-        token_budget=TokenBudgetConfig(max_tokens=4096),
-    )
-
-    with Tract.open(
-        config=config,
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a concise assistant. Keep answers under 3 sentences.")
-
-        questions = [
-            "What is a Python decorator?",
-            "How does asyncio work?",
-            "Explain the GIL in Python.",
-            "What are metaclasses?",
-            "How does garbage collection work in CPython?",
-        ]
-
-        for i, question in enumerate(questions, 1):
-            status = t.status()
-            budget_max = status.token_budget_max or float("inf")
-            usage_pct = (status.token_count / budget_max * 100) if budget_max else 0
-
-            print(f"\n--- Turn {i} ---")
-            status.pprint()
-
-            # At 80%, offer human the choice to compress
-            if usage_pct > 80:
-                if click.confirm(
-                    f"  Budget at {usage_pct:.0f}%. Compress now?",
-                    default=True,
-                ):
-                    result = t.compress(target_tokens=int(budget_max * 0.4))
-                    print(f"  Compressed: {result.original_tokens} -> "
-                          f"{result.compressed_tokens} tokens")
-                    t.status().pprint()
-
-            if usage_pct > 95:
-                print("  STOPPING: Budget nearly exhausted.")
-                break
-
-            response = t.chat(question)
-            print(f"  Assistant: {str(response)[:100]}...")
-
-        print("\n=== Final Status ===")
-        t.status().pprint()
-
-
-# =============================================================================
 # Part 3: Automated Budget Management via Triggers
 # =============================================================================
 # CompressTrigger auto-compresses when budget fills past threshold.
@@ -198,7 +134,6 @@ def part3_automated():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_automated()
 
 

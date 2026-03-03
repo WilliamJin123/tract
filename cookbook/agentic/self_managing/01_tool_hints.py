@@ -15,7 +15,6 @@ import json
 import sys
 from pathlib import Path
 
-import click
 import httpx
 
 from tract import Tract, TractConfig, TokenBudgetConfig
@@ -124,53 +123,6 @@ def part1_manual():
 
 
 # =====================================================================
-# PART 2 -- Interactive: Agent suggests, human confirms
-# =====================================================================
-
-def part2_interactive():
-    """Agent suggests tool calls based on task type; human confirms each one."""
-    print(f"\n{'=' * 60}")
-    print("PART 2 -- Interactive: Human-Gated Tool Hints")
-    print("=" * 60)
-
-    with Tract.open() as t:
-        t.system("You are a helpful assistant.")
-        executor = ToolExecutor(t)
-        executor.set_profile(HINT_PROFILE)
-
-        # Simulate what a hint-driven agent would do for different tasks
-        tasks = [
-            ("Write a haiku about stars.", "creative", 0.9),
-            ("What is 2 + 2?", "precise", 0.1),
-            ("Invent a name for a new color.", "creative", 0.95),
-        ]
-
-        for task, task_type, suggested_temp in tasks:
-            print(f"\n  Task: \"{task}\"")
-            print(f"  Hint analysis: {task_type} -> temperature={suggested_temp}")
-
-            # The agent would call configure_model based on the hint
-            if click.confirm(
-                f"  Execute configure_model(temperature={suggested_temp})?",
-                default=True,
-            ):
-                result = executor.execute(
-                    "configure_model", {"temperature": suggested_temp}
-                )
-                print(f"    -> {result.output}")
-            else:
-                print(f"    -> Skipped (human override)")
-
-            # Commit the task as a user message
-            t.user(task)
-
-        # Check status at the end
-        if click.confirm("\n  Check context status?", default=True):
-            result = executor.execute("status", {})
-            print(f"    -> {result.output}")
-
-
-# =====================================================================
 # PART 3 -- Agent: Full LLM loop with hint-driven tool selection
 # =====================================================================
 
@@ -244,7 +196,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

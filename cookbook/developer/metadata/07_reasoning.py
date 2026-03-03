@@ -1,16 +1,7 @@
 """Manual Reasoning Commits
 
-Two tiers of reasoning management: manual commits and interactive
-confirmation.
-
-PART 1 -- Manual           Direct API calls, no LLM, deterministic
-PART 2 -- Interactive       review=True, click.edit/confirm, human decides
-
-Demonstrates: t.reasoning(), log(), compile(), get_content(), get_metadata(),
-              click.confirm(), compile(include_reasoning=True)
+Demonstrates: t.reasoning(), log(), compile(), get_content(), get_metadata()
 """
-
-import click
 
 from tract import Tract
 
@@ -73,55 +64,11 @@ def part1_manual_reasoning():
 
 
 # =============================================================================
-# Part 2: Interactive Reasoning Toggle  (PART 2 — Interactive)
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("Part 2: INTERACTIVE REASONING TOGGLE  [Interactive Tier]")
-    print("=" * 60)
-    print()
-    print("  Compile with reasoning included, then let the user decide")
-    print("  whether to include reasoning in the next compile.")
-    print()
-
-    t = Tract.open()
-    t.system("You are a helpful assistant.")
-    t.user("Explain gravity.")
-    t.reasoning(
-        "Gravity is the fundamental force of attraction between masses. "
-        "I should mention Newton's law and Einstein's general relativity."
-    )
-    t.assistant("Gravity is the force of attraction between objects with mass.")
-
-    # Show with reasoning
-    ctx_with = t.compile(include_reasoning=True)
-    print(f"  With reasoning: {ctx_with.commit_count} messages, "
-          f"{ctx_with.token_count} tokens")
-    ctx_with.pprint(style="chat")
-
-    if click.confirm("\n  Include reasoning in next compile?", default=False):
-        ctx = t.compile(include_reasoning=True)
-    else:
-        ctx = t.compile()
-
-    print(f"\n  Your choice: {ctx.commit_count} messages, {ctx.token_count} tokens")
-    print()
-
-    t.close()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
-def main():
-    part1_manual_reasoning()
-    part2_interactive()
-    print("=" * 60)
-    print("Done -- both tiers of reasoning management demonstrated.")
-    print("=" * 60)
-
-
 if __name__ == "__main__":
-    main()
+    part1_manual_reasoning()
+    print("=" * 60)
+    print("Done -- manual reasoning commits demonstrated.")
+    print("=" * 60)

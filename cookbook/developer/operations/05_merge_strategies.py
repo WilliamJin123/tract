@@ -1,27 +1,22 @@
 """Merge Strategies
 
-Three tiers of merge usage -- manual FF/clean/no_ff merges, interactive
-review with PendingMerge, and automated hook-driven merge decisions.
+Two tiers of merge usage -- manual FF/clean/no_ff merges and automated
+hook-driven merge decisions.
 
 PART 1 -- Manual           Direct merge calls, no LLM, deterministic
-PART 2 -- Interactive       review=True, click.confirm, human decides
 PART 3 -- Automated         Hook auto-manages merge decisions
 
 Demonstrates: merge(), merge_type, MergeResult, no_ff, delete_branch=True,
-              merge(review=True), PendingMerge, approve/reject,
               t.on("merge", handler)
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Tract
-from tract.hooks.merge import PendingMerge
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import cerebras as llm  
+from _providers import cerebras as llm
 
 MODEL_ID = llm.large
 
@@ -149,56 +144,6 @@ def part1_manual():
 
 
 # =============================================================================
-# PART 2 -- Interactive: review=True, click.confirm, human decides
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: Merge with Review")
-    print("=" * 60)
-    print()
-    print("  merge(review=True) returns a PendingMerge instead of committing")
-    print("  immediately. You inspect the preview and decide.")
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a helpful assistant. Keep answers to one sentence.")
-        t.chat("What is a variable?")
-
-        t.branch("feature")
-        t.chat("What is a constant?")
-
-        t.switch("main")
-
-        print(f"\n  main before merge:")
-        t.compile().pprint(style="compact")
-
-        # review=True returns PendingMerge for human approval
-        pending = t.merge("feature", review=True)
-
-        if not isinstance(pending, PendingMerge):
-            print(f"  Merge completed without review: {pending.merge_type}")
-            return
-
-        print(f"\n  PendingMerge returned:")
-        print(f"    merge_type:  {pending.merge_type}")
-        print(f"    conflicts:   {len(pending.conflicts)}")
-        pending.pprint()
-
-        if click.confirm("  Proceed with merge?", default=True):
-            result = pending.approve()
-            result.pprint()
-            print(f"\n  AFTER MERGE")
-            t.compile().pprint(style="compact")
-        else:
-            pending.reject("User declined merge.")
-            print("  Merge rejected.")
-
-
-# =============================================================================
 # PART 3 -- Automated: Hook auto-manages merge decisions
 # =============================================================================
 
@@ -248,7 +193,6 @@ def part3_automated():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_automated()
 
 

@@ -96,61 +96,8 @@ def part2_surgical_edits():
     t.close()
 
 
-# =============================================================================
-# Part 2b -- Interactive: Surgical Edits
-# =============================================================================
-# Walk verbose tool results interactively. For each result, show the content
-# and let the human decide whether to trim it, with click.edit() for editing.
-
-def part2b_interactive():
-    import click
-
-    print(f"\n{'=' * 60}")
-    print("PART 2b -- Interactive: SURGICAL EDITS")
-    print("=" * 60)
-    print()
-
-    t = Tract.open()
-    refs = build_agent_session(t)
-
-    ctx_before = t.compile()
-    print(f"  BEFORE: {ctx_before.token_count} tokens\n")
-
-    # Walk all tool results and let the human decide
-    results = t.find_tool_results()
-    for r in results:
-        content = t.get_content(r)
-        name = r.metadata.get("name", "?")
-        print(f"\n  [{name}] {r.token_count} tokens ({r.commit_hash[:8]}):")
-        lines = (content or "").split("\n")
-        for line in lines[:5]:
-            print(f"    {line}")
-        if len(lines) > 5:
-            print(f"    ... ({len(lines) - 5} more lines)")
-
-        if click.confirm(f"  Trim this {name} result?", default=False):
-            edited = click.edit(content)
-            if edited and edited.strip() != content:
-                ci = t.tool_result(
-                    r.metadata.get("call_id", ""),
-                    name,
-                    edited.strip(),
-                    edit=r.commit_hash,
-                )
-                print(f"    Edited: {r.token_count} -> {ci.token_count} tokens")
-            else:
-                print("    (no changes)")
-
-    ctx_after = t.compile()
-    saved = ctx_before.token_count - ctx_after.token_count
-    print(f"\n  AFTER: {ctx_after.token_count} tokens (saved {saved})")
-
-    t.close()
-
-
 def main():
     part2_surgical_edits()
-    part2b_interactive()
 
 
 if __name__ == "__main__":

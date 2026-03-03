@@ -19,8 +19,6 @@ Demonstrates: LLMConfig, 4-level resolution, LLMConfig.from_dict(),
 import sys
 from pathlib import Path
 
-import click
-
 from tract import LLMConfig, Tract
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -136,62 +134,5 @@ def part4_resolution_chain():
                 print(f"  {entry} | {entry.generation_config.to_dict()}")
 
 
-# =============================================================================
-# Part 2 -- Interactive: Review resolved config before each call
-# =============================================================================
-# Before each call, show the user what config will be used after resolution,
-# let them confirm or override a specific field.
-
-def part2_interactive():
-    """Part 2: Interactive -- review and override resolved config per call."""
-    print("=" * 60)
-    print("PART 2 -- Interactive: Review Resolved Config Before Each Call")
-    print("=" * 60)
-
-    tract_default = LLMConfig(model=MODEL_ID, temperature=0.5, top_p=0.95)
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        default_config=tract_default,
-    ) as t:
-        t.system("You are a helpful assistant. Be concise.")
-        t.configure_operations(chat=LLMConfig(temperature=0.8))
-
-        # Show resolved config before the call
-        print(f"\n  Resolved config for next chat call:")
-        print(f"    model:       {MODEL_ID}  (from tract default)")
-        print(f"    temperature: 0.8  (from chat operation config)")
-        print(f"    top_p:       0.95  (from tract default)")
-
-        if click.confirm("\n  Proceed with this config?", default=True):
-            override = click.prompt(
-                "  Override a field? (temperature=X / max_tokens=X / 'no')",
-                default="no",
-            )
-            kwargs = {}
-            if override.lower() != "no":
-                field, _, value = override.partition("=")
-                field = field.strip()
-                if field == "temperature":
-                    kwargs["temperature"] = float(value)
-                elif field == "max_tokens":
-                    kwargs["max_tokens"] = int(value)
-                print(f"  -> Applying per-call override: {field}={value}")
-
-            response = t.chat("What is Python's GIL?", **kwargs)
-            gc = response.generation_config
-            print(f"\n  Effective: model={gc.model}, temp={gc.temperature}, "
-                  f"top_p={gc.top_p}, max_tokens={gc.max_tokens}")
-            response.pprint()
-        else:
-            print("  Skipped -- no call made.")
-
-
-def main():
-    part4_resolution_chain()
-    part2_interactive()
-
-
 if __name__ == "__main__":
-    main()
+    part4_resolution_chain()

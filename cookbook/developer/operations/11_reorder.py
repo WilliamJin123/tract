@@ -1,24 +1,18 @@
 """Message Reordering
 
-Two tiers of message reordering -- manual compile(order=) and interactive
-hash selection.
-
 PART 1 -- Manual           compile(order=), ReorderWarning, deterministic
-PART 2 -- Interactive       Show order, click.prompt for new order
 
 Demonstrates: compile(order=), ReorderWarning, commit_hashes,
-              click.prompt, pprint(style="chat")
+              pprint(style="chat")
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Tract
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import cerebras as llm  
+from _providers import cerebras as llm
 
 MODEL_ID = llm.small
 
@@ -38,7 +32,7 @@ def _build_conversation(t):
 # PART 1 -- Manual: compile(order=), ReorderWarning, deterministic
 # =============================================================================
 
-def part1_manual():
+def main():
     print("=" * 60)
     print("PART 1 -- Manual: Message Reordering")
     print("=" * 60)
@@ -82,67 +76,6 @@ def part1_manual():
 
         print(f"\n  Reordering rearranges the compiled context for better LLM")
         print(f"  flow without changing the underlying commit history.")
-
-
-# =============================================================================
-# PART 2 -- Interactive: Show order, click.prompt for new order
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: Choose Your Order")
-    print("=" * 60)
-    print()
-    print("  View the current message order, then rearrange by entering")
-    print("  comma-separated indices.")
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-
-        ctx, hashes = _build_conversation(t)
-
-        print("\n  Current message order:")
-        for i, (h, msg) in enumerate(zip(hashes, ctx.messages)):
-            role = msg.get("role", "?")
-            content = str(msg.get("content", ""))[:50]
-            print(f"    [{i}] {h[:8]}  {role:10s}  {content}...")
-
-        # Prompt for new order
-        raw = click.prompt(
-            "\n  New order (comma-separated indices, e.g. 0,5,6,1,2,3,4)",
-            default=",".join(str(i) for i in range(len(hashes))),
-        )
-
-        try:
-            indices = [int(x.strip()) for x in raw.split(",")]
-            new_order = [hashes[i] for i in indices]
-        except (ValueError, IndexError):
-            print("  Invalid input. Using original order.")
-            new_order = list(hashes)
-
-        reordered, warnings = t.compile(order=new_order)
-
-        print(f"\n  Reordered context:\n")
-        reordered.pprint(style="chat")
-
-        if warnings:
-            print(f"\n  Warnings: {len(warnings)}")
-            for w in warnings:
-                print(f"    [{w.severity}] {w.warning_type}: {w.description}")
-        else:
-            print(f"\n  No warnings -- safe reorder.")
-
-
-# =============================================================================
-# main
-# =============================================================================
-
-def main():
-    part1_manual()
-    part2_interactive()
 
 
 if __name__ == "__main__":

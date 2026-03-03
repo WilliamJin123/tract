@@ -1,14 +1,11 @@
 """A/B testing: branch, compare configs, pick winner.
 
   PART 1 -- Manual:      Branch, chat with different configs, diff() + query_by_config()
-  PART 2 -- Interactive:  Human picks winner: side-by-side pprint, click.prompt("Better? (a/b)")
   PART 3 -- LLM / Agent:  Orchestrator compares branches, merges winner
 """
 
 import sys
 from pathlib import Path
-
-import click
 
 from tract import Tract
 
@@ -67,51 +64,6 @@ def part1_manual():
 
 
 # =====================================================================
-# PART 2 -- Interactive: human picks winner
-# =====================================================================
-
-def part2_interactive():
-    print("\n" + "=" * 60)
-    print("PART 2 -- Interactive: Human Picks Winner")
-    print("=" * 60)
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a creative writing assistant.")
-        t.user("Write an opening paragraph about exploring Mars.")
-
-        # Variant A
-        t.branch("style-a")
-        t.switch("style-a")
-        resp_a = t.chat("Continue with a vivid description of the Martian landscape.",
-                        temperature=0.3)
-
-        # Variant B
-        t.switch("main")
-        t.branch("style-b")
-        t.switch("style-b")
-        resp_b = t.chat("Continue with a vivid description of the Martian landscape.",
-                        temperature=0.8)
-
-        # Side-by-side display
-        print("\n  --- Variant A (temp=0.3) ---")
-        print(f"  {resp_a.text[:200]}")
-        print("\n  --- Variant B (temp=0.8) ---")
-        print(f"  {resp_b.text[:200]}")
-
-        choice = click.prompt("\n  Which is better? (a/b)", type=click.Choice(["a", "b"]))
-        winner = f"style-{choice}"
-
-        t.switch("main")
-        result = t.merge(winner)
-        print(f"\n  Merged '{winner}': {result.merge_type}")
-        print(f"  Main now has {len(t.log())} commits")
-
-
-# =====================================================================
 # PART 3 -- LLM / Agent: automated comparison
 # =====================================================================
 
@@ -162,7 +114,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

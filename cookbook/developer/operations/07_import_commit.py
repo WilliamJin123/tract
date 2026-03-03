@@ -1,25 +1,18 @@
 """Import Commit (Cherry-Pick Across Branches)
 
-Two tiers of import_commit usage -- manual cherry-pick and interactive
-confirmation with commit preview.
-
 PART 1 -- Manual           Direct import_commit(), inspect ImportResult
-PART 2 -- Interactive       show() preview, click.confirm before import
 
 Demonstrates: import_commit(), ImportResult, branch(), switch(),
-              show(), click.confirm,
-              pprint(style="compact"), pprint(style="chat")
+              show(), pprint(style="compact"), pprint(style="chat")
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Tract
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import groq as llm  
+from _providers import groq as llm
 
 MODEL_ID = llm.large
 
@@ -46,7 +39,7 @@ def _build_cherry_pick_scenario(t):
 # PART 1 -- Manual: Direct import_commit(), inspect ImportResult
 # =============================================================================
 
-def part1_manual():
+def main():
     print("=" * 60)
     print("PART 1 -- Manual: Import Commit (Cherry-Pick)")
     print("=" * 60)
@@ -91,52 +84,6 @@ def part1_manual():
         ctx.pprint(style="chat")
 
         print("\n  Key: new hashes, same content. deep-dive branch is untouched.")
-
-
-# =============================================================================
-# PART 2 -- Interactive: show() preview, click.confirm before import
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: Preview and Confirm Import")
-    print("=" * 60)
-    print()
-    print("  Show commit details before importing. User confirms each one.")
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-
-        deep_user_hash, deep_asst_hash = _build_cherry_pick_scenario(t)
-
-        for label, hash in [("user question", deep_user_hash), ("assistant answer", deep_asst_hash)]:
-            # Preview the commit
-            entry = t.show(hash)
-            print(f"\n  Commit {hash[:8]} ({label}):")
-            print(f"    role:    {entry.role}")
-            print(f"    content: {str(entry.content)[:80]}...")
-
-            if click.confirm(f"  Import commit {hash[:8]}?", default=True):
-                result = t.import_commit(hash)
-                print(f"  Imported: {result.original_commit.commit_hash[:8]} -> {result.new_commit.commit_hash[:8]}")
-                assert result.new_commit.commit_hash != result.original_commit.commit_hash
-            else:
-                print(f"  Skipped {hash[:8]}.")
-
-        print(f"\n  AFTER IMPORT:")
-        t.compile().pprint(style="compact")
-
-
-# =============================================================================
-# main
-# =============================================================================
-
-def main():
-    part1_manual()
-    part2_interactive()
 
 
 if __name__ == "__main__":

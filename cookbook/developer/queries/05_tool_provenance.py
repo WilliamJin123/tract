@@ -15,8 +15,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Priority, Tract, ToolCall
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -279,78 +277,8 @@ def part2_tool_provenance():
         t.compile().pprint(style="chat")
 
 
-def part2b_interactive():
-    """Part 2b: Interactive -- human approves each tool call and audits."""
-    print(f"\n{'=' * 60}")
-    print("PART 2 -- Interactive: TOOL PROVENANCE")
-    print("=" * 60)
-    print()
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.set_tools([PYTHON_EVAL_TOOL, SHELL_TOOL])
-        t.system(
-            "You are a helpful assistant with tools. "
-            "Use python_eval for math and run_shell for system commands."
-        )
-
-        # Human-in-the-loop tool execution
-        r = t.chat("What is 2**20 + 3**13? Also run 'echo hello world'.")
-
-        if r.tool_calls:
-            r.pprint()
-            for tc in r.tool_calls:
-                print(f"\n  Tool request: {tc.name}({tc.arguments})")
-                if click.confirm(f"  Execute {tc.name}?", default=True):
-                    result = execute_tool(tc.name, tc.arguments)
-                    print(f"    Result: {result}")
-                    t.tool_result(tc.id, tc.name, result)
-                else:
-                    t.tool_result(tc.id, tc.name, "(skipped by user)")
-                    print("    Skipped.")
-            t.generate().pprint()
-
-        # Offer to swap tools before continuing
-        if click.confirm("\n  Swap tools now? (keep only python_eval)", default=False):
-            t.set_tools([PYTHON_EVAL_TOOL])
-            print("  Tools updated: python_eval only\n")
-            r2 = t.chat("What is 12 * 12?")
-            if r2.tool_calls:
-                for tc in r2.tool_calls:
-                    result = execute_tool(tc.name, tc.arguments)
-                    t.tool_result(tc.id, tc.name, result)
-                t.generate().pprint()
-
-        # Interactive audit filter
-        print("\n  --- Tool provenance audit ---\n")
-        entries = t.log(limit=50)
-        tool_names_seen = set()
-        for entry in entries:
-            tools = t.get_commit_tools(entry.commit_hash)
-            if tools:
-                for d in tools:
-                    tool_names_seen.add(d["function"]["name"])
-
-        if tool_names_seen:
-            filter_name = click.prompt(
-                "  Filter audit by tool name",
-                type=click.Choice(sorted(tool_names_seen) + ["(all)"]),
-                default="(all)",
-            )
-            for entry in entries:
-                tools = t.get_commit_tools(entry.commit_hash)
-                names = [d["function"]["name"] for d in tools] if tools else []
-                if filter_name == "(all)" or filter_name in names:
-                    display = ", ".join(names) if names else "(none)"
-                    print(f"    {entry.commit_hash[:8]}  {entry.content_type:<12}  tools: {display}")
-
-
 def main():
     part2_tool_provenance()
-    part2b_interactive()
 
 
 if __name__ == "__main__":

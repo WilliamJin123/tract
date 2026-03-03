@@ -64,46 +64,6 @@ def part1_manual():
 
 
 # =============================================================================
-# Part 2: Interactive Compression Review
-# =============================================================================
-# compress(review=True) returns a PendingCompress for human review.
-# The human sees the proposed summary and approves or rejects it.
-
-def part2_interactive():
-    import click
-
-    print(f"\n{'=' * 60}")
-    print("Part 2: INTERACTIVE COMPRESSION REVIEW")
-    print("=" * 60)
-    print()
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a database architecture assistant.")
-        t.chat("Explain the difference between B-trees and LSM-trees.")
-        t.chat("When should I use PostgreSQL vs ClickHouse?")
-        t.chat("How does write-ahead logging work in crash recovery?")
-
-        print(f"  Before: {t.compile().token_count} tokens\n")
-
-        # review=True returns a pending compression for approval
-        pending = t.compress(target_tokens=200, review=True)
-        pending.pprint()
-
-        if click.confirm("\n  Does this summary look correct?", default=True):
-            result = pending.approve()
-            print(f"  Approved! {result.compressed_tokens} tokens")
-        else:
-            pending.reject()
-            print("  Rejected. Original content preserved.")
-
-        print(f"  After: {t.compile().token_count} tokens")
-
-
-# =============================================================================
 # Part 3: compress(validator=) — validate summary quality
 # =============================================================================
 # The validator ensures the LLM summary mentions specific technical terms.
@@ -266,8 +226,6 @@ def part5_guided_and_validated():
 def main():
     print("=== Part 1: Manual content check ===\n")
     part1_manual()
-
-    part2_interactive()
 
     print(f"\n=== Part 3: compress(validator=) ===\n")
     part3_compress_validator()

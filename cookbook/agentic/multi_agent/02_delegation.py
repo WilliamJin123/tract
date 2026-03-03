@@ -1,13 +1,10 @@
 """Sub-agent delegation: branch, delegate, compress, merge.
 
   PART 1 -- Manual:      Branch, child works, compress(content=...), parent.merge()
-  PART 2 -- Interactive:  Review child work, click.confirm("Accept findings?"), merge
 
 Session management (deploy, collapse, merge) is a developer-side concern --
-the Orchestrator does not handle it. This file is a 2-part tutorial.
+the Orchestrator does not handle it.
 """
-
-import click
 
 from tract import Session
 
@@ -68,58 +65,8 @@ def part1_manual():
     session.close()
 
 
-# =====================================================================
-# PART 2 -- Interactive: review before merge
-# =====================================================================
-
-def part2_interactive():
-    print("\n" + "=" * 60)
-    print("PART 2 -- Interactive: Review Before Merge")
-    print("=" * 60)
-
-    session = Session.open()
-    parent = session.create_tract(display_name="lead-engineer")
-
-    parent.system("You are a database architect.")
-    parent.user("Evaluate indexing strategies for our query patterns.")
-
-    child = session.deploy(
-        parent,
-        purpose="evaluate indexing strategies",
-        branch_name="indexing-research",
-    )
-    child._seed_base_tags()
-
-    child.user("Compare B-tree and hash indexes.")
-    child.assistant("B-tree supports range queries and ordering. Hash indexes "
-                    "are O(1) for equality lookups but cannot do range scans.")
-    child.user("When should we use composite indexes?")
-    child.assistant("Composite indexes help when queries filter on multiple "
-                    "columns. Column order matters: most selective first.")
-
-    # Review child's work
-    ctx = child.compile()
-    print(f"\n  Child context: {len(ctx.messages)} messages, {ctx.token_count} tokens")
-    for m in ctx.messages:
-        snippet = m.content[:65] + ("..." if len(m.content) > 65 else "")
-        print(f"    {m.role:>10}: {snippet}")
-
-    if click.confirm("\n  Accept child's indexing research?", default=True):
-        child.compress(
-            content="Indexing: B-tree for range/ordering, hash for equality. "
-                    "Composite indexes: most selective column first."
-        )
-        parent.merge("indexing-research")
-        print(f"  Merged. Parent commits: {len(parent.log())}")
-    else:
-        print("  Research rejected, branch not merged.")
-
-    session.close()
-
-
 def main():
     part1_manual()
-    part2_interactive()
 
 
 if __name__ == "__main__":

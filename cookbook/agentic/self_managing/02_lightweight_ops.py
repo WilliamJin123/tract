@@ -11,8 +11,6 @@ Demonstrates: ToolExecutor for tag/annotate/status, inline agent decisions,
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Tract, TractConfig, TokenBudgetConfig
 from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
 from tract.orchestrator import Orchestrator, OrchestratorConfig, AutonomyLevel
@@ -98,64 +96,6 @@ def part1_manual():
             "commit_hash": ci_res.commit_hash,
         })
         print(f"    tags on result commit: {result.output}")
-
-
-# =====================================================================
-# PART 2 -- Interactive: Agent suggests ops, human confirms
-# =====================================================================
-
-def part2_interactive():
-    """Agent analyzes conversation and suggests tag/pin operations."""
-    print(f"\n{'=' * 60}")
-    print("PART 2 -- Interactive: Agent Suggests, Human Confirms")
-    print("=" * 60)
-
-    with Tract.open() as t:
-        t.system("You are an AI debugging assistant.")
-
-        ci1 = t.user("The API returns 500 errors on POST /users.")
-        ci2 = t.assistant(
-            "Root cause: the users table has a NOT NULL constraint on "
-            "email, but the request body schema marks email as optional."
-        )
-        ci3 = t.user("Good find. Fix the schema to require email.")
-        ci4 = t.assistant(
-            "Fixed: updated the OpenAPI spec and Pydantic model to "
-            "require email. POST /users now returns 201."
-        )
-
-        executor = ToolExecutor(t)
-
-        # Simulate agent analysis: decide what to tag/pin
-        suggestions = [
-            ("tag", {
-                "commit_hash": ci1.commit_hash,
-                "tag": "observation",
-            }, "Tag bug report as 'observation'"),
-            ("tag", {
-                "commit_hash": ci2.commit_hash,
-                "tag": "reasoning",
-            }, "Tag root cause as 'reasoning'"),
-            ("annotate", {
-                "target_hash": ci4.commit_hash,
-                "priority": "pinned",
-                "reason": "Fix confirmation -- keep for regression tracking",
-            }, "Pin the fix confirmation"),
-        ]
-
-        print(f"\n  Agent suggests {len(suggestions)} inline operations:\n")
-        for tool_name, args, reason in suggestions:
-            print(f"  {reason}")
-            if click.confirm(f"    Execute {tool_name}?", default=True):
-                result = executor.execute(tool_name, args)
-                status = "OK" if result.success else "FAIL"
-                print(f"    [{status}] {result.output}\n")
-            else:
-                print(f"    [SKIPPED]\n")
-
-        # Status check
-        result = executor.execute("status", {})
-        print(f"  Final status: {result.output}")
 
 
 # =====================================================================
@@ -278,7 +218,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

@@ -1,17 +1,11 @@
 """Offline Tool Management
 
-Two tiers of offline tool management: manual error handling and queries,
-and interactive editing of tool results.
-
-PART 1 -- Manual           Direct API calls, no LLM, deterministic
-PART 2 -- Interactive       review=True, click.edit/confirm, human decides
+Manual error handling, query API, and surgical edits -- no LLM needed.
 
 Demonstrates: tool_result(is_error=True), drop_failed_tool_turns(),
               find_tool_turns(), find_tool_results(), tool_result(edit=),
-              pprint(), log(), click.confirm(), click.edit()
+              pprint(), log()
 """
-
-import click
 
 from tract import Tract
 
@@ -135,74 +129,11 @@ def part1_offline_management():
 
 
 # =============================================================================
-# Part 2: Interactive Tool Result Editing  (PART 2 — Interactive)
-# =============================================================================
-
-def part2_interactive_edit():
-    print("=" * 60)
-    print("Part 2: INTERACTIVE TOOL RESULT EDITING  [Interactive Tier]")
-    print("=" * 60)
-    print()
-    print("  Walk tool results with find_tool_results(). For each,")
-    print("  display content and offer to edit in $EDITOR.")
-    print()
-
-    with Tract.open() as t:
-        t.system("You are a deployment agent.")
-        t.user("Check all services.")
-
-        # Build some tool results
-        t.assistant(
-            "Checking services...",
-            metadata={"tool_calls": [
-                {"id": "call_a", "name": "health_check",
-                 "arguments": {"service": "api"}},
-                {"id": "call_b", "name": "health_check",
-                 "arguments": {"service": "worker"}},
-            ]},
-        )
-        t.tool_result("call_a", "health_check",
-                       "api: healthy, CPU 12%, Mem 34%, 200 req/s, "
-                       "uptime 30d, last deploy 2026-02-28")
-        t.tool_result("call_b", "health_check",
-                       "worker: healthy, CPU 45%, Mem 67%, 50 jobs/min, "
-                       "queue depth 12, uptime 15d, last restart 2026-02-25")
-
-        # Walk results interactively
-        for r in t.find_tool_results():
-            name = r.metadata.get("name", "unknown")
-            content = r.content_text or ""
-            print(f"  [{name}] {r.commit_hash[:8]}: {content[:60]}...")
-
-            if click.confirm("    Edit this result?", default=False):
-                edited = click.edit(content)
-                if edited and edited.strip() != content.strip():
-                    call_id = r.metadata.get("tool_call_id", "")
-                    t.tool_result(call_id, name, edited.strip(),
-                                  edit=r.commit_hash)
-                    print(f"    -> edited")
-                else:
-                    print(f"    -> no changes")
-            else:
-                print(f"    -> skipped")
-
-        print()
-        t.compile().pprint(style="compact")
-
-    print()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
-def main():
-    part1_offline_management()
-    part2_interactive_edit()
-    print("=" * 60)
-    print("Done -- both tiers of offline tool management demonstrated.")
-    print("=" * 60)
-
-
 if __name__ == "__main__":
-    main()
+    part1_offline_management()
+    print("=" * 60)
+    print("Done -- offline tool management demonstrated.")
+    print("=" * 60)

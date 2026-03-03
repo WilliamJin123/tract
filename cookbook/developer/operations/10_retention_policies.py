@@ -1,27 +1,22 @@
 """Retention Policies
 
-Three tiers of GC retention -- manual conservative/aggressive policies,
-interactive review with PendingGC, and automated GCTrigger with hooks.
+Two tiers of GC retention -- manual conservative/aggressive policies and
+automated GCTrigger with hooks.
 
 PART 1 -- Manual           gc() with archive_retention_days, no interaction
-PART 2 -- Interactive       gc(review=True), PendingGC, exclude(), click.confirm
 PART 3 -- Automated         GCTrigger with auto-approve hook
 
 Demonstrates: gc(), archive_retention_days, compress(),
-              gc(review=True), PendingGC, exclude(), approve(),
               GCTrigger, t.on("gc", handler)
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import GCTrigger, Priority, Tract
-from tract.hooks.gc import PendingGC
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import cerebras as llm  
+from _providers import cerebras as llm
 
 MODEL_ID = llm.small
 
@@ -66,62 +61,6 @@ def part1_manual():
 
         print(f"\n  In production, use archive_retention_days=30 (or similar)")
         print(f"  so you can still audit pre-compression history for a month.")
-
-
-# =============================================================================
-# PART 2 -- Interactive: gc(review=True), PendingGC, exclude(), click.confirm
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: GC with Review")
-    print("=" * 60)
-    print()
-    print("  gc(review=True) returns a PendingGC for human inspection.")
-    print("  You can exclude specific commits before approving.")
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        sys_ci = t.system("You are a concise chess coach.")
-        t.annotate(sys_ci.commit_hash, Priority.PINNED)
-
-        r1 = t.chat("What's the Sicilian Defense?")
-        r2 = t.chat("Explain the Queen's Gambit.")
-
-        # Save a hash we might want to protect
-        important_hash = r1.commit_info.commit_hash
-
-        t.compress(target_tokens=80)
-
-        # Review before gc
-        pending = t.gc(archive_retention_days=0, review=True)
-
-        if not isinstance(pending, PendingGC):
-            print(f"  GC completed without review.")
-            return
-
-        print(f"\n  PendingGC returned:")
-        print(f"    commits to remove: {pending.commits_to_remove}")
-        pending.pprint()
-
-        # Protect an important commit
-        print(f"\n  Excluding {important_hash[:8]} from GC...")
-        pending.exclude(important_hash)
-
-        if click.confirm("  Proceed with GC?", default=True):
-            gc_result = pending.approve()
-            print(f"\n  GC approved:")
-            print(f"    commits_removed: {gc_result.commits_removed}")
-            print(f"    tokens_freed:    {gc_result.tokens_freed}")
-        else:
-            pending.reject("User declined GC.")
-            print("  GC rejected.")
-
-        print(f"\n  Context after GC:")
-        t.compile().pprint(style="chat")
 
 
 # =============================================================================
@@ -185,7 +124,6 @@ def part3_automated():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_automated()
 
 

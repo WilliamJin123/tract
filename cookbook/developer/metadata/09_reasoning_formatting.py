@@ -1,18 +1,13 @@
 """Formatting
 
-Three parts: pprint styles, interactive toggle, and format output
-for API consumption.
+Two parts: pprint styles and format output for API consumption.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
-PART 2 -- Interactive       click.confirm(), human decides
 PART 3 -- API Formats       to_dicts(), to_openai() serialization
 
 Demonstrates: pprint() reasoning style (table, chat, compact),
-              compile(include_reasoning=True), click.confirm(),
-              to_dicts(), to_openai()
+              compile(include_reasoning=True), to_dicts(), to_openai()
 """
-
-import click
 
 from tract import Tract
 
@@ -45,34 +40,6 @@ def part1_formatting():
 
     print("\n  --- compact style ---\n")
     ctx.pprint(style="compact")
-
-    t.close()
-
-
-# =============================================================================
-# Part 2: Interactive Reasoning Toggle  (PART 2 — Interactive)
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("Part 2: INTERACTIVE REASONING TOGGLE  [Interactive Tier]")
-    print("=" * 60)
-    print()
-    print("  Choose whether to show reasoning traces in the output.\n")
-
-    t = Tract.open()
-    t.system("You are a helpful assistant.")
-    t.user("What is the speed of light?")
-    t.reasoning("The speed of light in vacuum is approximately 3 x 10^8 m/s.")
-    t.assistant("The speed of light is approximately 299,792,458 meters per second.")
-
-    if click.confirm("  Show reasoning traces?", default=True):
-        ctx = t.compile(include_reasoning=True)
-    else:
-        ctx = t.compile()
-
-    print()
-    ctx.pprint()
 
     t.close()
 
@@ -119,10 +86,9 @@ def part3_format_output():
 
 def main():
     part1_formatting()
-    part2_interactive()
     part3_format_output()
     print("=" * 60)
-    print("Done -- all 3 parts of formatting demonstrated.")
+    print("Done -- both parts of formatting demonstrated.")
     print("=" * 60)
 
 

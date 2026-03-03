@@ -95,61 +95,7 @@ def part3_selective_compression():
         ctx_after_both.pprint(style="compact")
 
 
-# =============================================================================
-# Part 2 -- Interactive: Selective Compression
-# =============================================================================
-# Show tool turns grouped by name. Let the human choose which tool types
-# to compress interactively.
-
-def part2_interactive():
-    import click
-
-    if not llm.api_key:
-        print(f"\n{'=' * 60}")
-        print("PART 2 -- Interactive: SKIPPED (no llm.api_key)")
-        print("=" * 60)
-        return
-
-    print(f"\n{'=' * 60}")
-    print("PART 2 -- Interactive: SELECTIVE COMPRESSION")
-    print("=" * 60)
-    print()
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        build_agent_session(t)
-
-        # Show tool turns grouped by name
-        all_turns = t.find_tool_turns()
-        tool_names = set()
-        for turn in all_turns:
-            tool_names.update(turn.tool_names)
-
-        print(f"  Tool types found: {sorted(tool_names)}\n")
-        for name in sorted(tool_names):
-            name_turns = t.find_tool_turns(name=name)
-            total = sum(turn.total_tokens for turn in name_turns)
-            print(f"    {name}: {len(name_turns)} turn(s), {total} tokens")
-
-        # Let human choose which to compress
-        for name in sorted(tool_names):
-            if click.confirm(f"\n  Compress all '{name}' tool turns?", default=False):
-                result = t.compress_tool_calls(
-                    name=name,
-                    instructions=f"Summarize {name} output in 1-2 lines.",
-                )
-                print(f"    Compressed: {result.original_tokens} -> "
-                      f"{result.compacted_tokens} tokens")
-
-        ctx = t.compile()
-        print(f"\n  Final: {ctx.token_count} tokens")
-
-
 def main():
-    part2_interactive()
     part3_selective_compression()
 
 

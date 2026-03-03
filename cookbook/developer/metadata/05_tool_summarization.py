@@ -1,22 +1,19 @@
 """Context-Aware Auto-Summarization (Noisy Tools)
 
-Three tiers of tool result management: manual surgical edit, interactive
-review of pending summaries, and LLM-powered auto-summarization.
+Two tiers of tool result management: manual surgical edit and
+LLM-powered auto-summarization.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
-PART 2 -- Interactive       review=True, click.edit/confirm, human decides
 PART 3 -- Auto-Summarize    configure_tool_summarization(), LLM-driven
 
 Demonstrates: tool_result(edit=), configure_tool_summarization(),
-              include_context=True, get_content(), pprint(), click.edit()
+              include_context=True, get_content(), pprint()
 """
 
 import os
 import sys
 from functools import partial
 from pathlib import Path
-
-import click
 
 from tract import Tract
 
@@ -84,69 +81,6 @@ def part1_manual_edit():
         saved = before_ctx.token_count - after_ctx.token_count
         print(f"  After edit:  {after_ctx.token_count} tokens (saved {saved})")
         print(f"  Original preserved at {original_ci.commit_hash[:8]} for audit.\n")
-
-    print()
-
-
-# =============================================================================
-# Part 2: Interactive Review  (PART 2 — Interactive)
-# =============================================================================
-
-def part2_interactive_review():
-    """Review and edit tool results interactively before committing."""
-    print("=" * 60)
-    print("Part 2: INTERACTIVE REVIEW  [Interactive Tier]")
-    print("=" * 60)
-    print()
-    print("  After a tool result is committed, open it in $EDITOR for")
-    print("  trimming, then apply the edit with confirmation.")
-    print()
-
-    with Tract.open() as t:
-        t.system("You are a deployment auditor.")
-        t.user("Show me the server health report.")
-
-        # Commit a verbose tool result
-        t.assistant(
-            "Running health check...",
-            metadata={"tool_calls": [
-                {"id": "call_1", "name": "health_check",
-                 "arguments": {}},
-            ]},
-        )
-        verbose_output = (
-            "Server: prod-web-01\n"
-            "CPU: 23%  Memory: 45%  Disk: 67%\n"
-            "Uptime: 42 days\n"
-            "Active connections: 1,247\n"
-            "Request rate: 340 req/s\n"
-            "Error rate: 0.02%\n"
-            "Last deploy: 2026-02-28T14:30:00Z\n"
-            "Docker containers: 12 running, 0 stopped\n"
-            "SSL cert expires: 2026-09-15\n"
-            "DNS resolution: 2.1ms avg"
-        )
-        ci = t.tool_result("call_1", "health_check", verbose_output)
-
-        # Show the content and offer to edit
-        content = t.get_content(ci.commit_hash)
-        print(f"  Tool result ({len(verbose_output)} chars):")
-        for line in verbose_output.split("\n")[:5]:
-            print(f"    {line}")
-        print(f"    ... ({len(verbose_output.splitlines())} lines total)\n")
-
-        edited = click.edit(verbose_output)
-        if edited and edited.strip() != verbose_output.strip():
-            if click.confirm("  Approve trimmed result?"):
-                t.tool_result(
-                    "call_1", "health_check", edited.strip(),
-                    edit=ci.commit_hash,
-                )
-                print(f"  Edit applied.\n")
-            else:
-                print(f"  Edit cancelled.\n")
-        else:
-            print(f"  No changes made.\n")
 
     print()
 
@@ -257,10 +191,9 @@ def part3_auto_summarization():
 
 def main():
     part1_manual_edit()
-    part2_interactive_review()
     part3_auto_summarization()
     print("=" * 60)
-    print("Done -- all 3 parts of tool result management demonstrated.")
+    print("Done -- both parts of tool result management demonstrated.")
     print("=" * 60)
 
 

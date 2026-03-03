@@ -1,15 +1,12 @@
 """Self-correcting agent: validation + retry + edit + provenance.
 
   PART 1 -- Manual:      generate() -> validate -> if fail: commit correction, retry loop
-  PART 2 -- Interactive:  Human reviews each retry, click.confirm("Retry?"), click.edit(steering)
   PART 3 -- LLM / Agent:  generate(validator=fn, max_retries=3, purify=True, provenance_note=True)
 """
 
 import json
 import sys
 from pathlib import Path
-
-import click
 
 from tract import Tract
 
@@ -53,51 +50,6 @@ def part1_manual():
                            "Please return ONLY a raw JSON array, no markdown.")
                 else:
                     print("  Max retries reached.")
-
-
-# =====================================================================
-# PART 2 -- Interactive: human reviews each retry
-# =====================================================================
-
-def part2_interactive():
-    print("\n" + "=" * 60)
-    print("PART 2 -- Interactive: Human-Reviewed Retries")
-    print("=" * 60)
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a data assistant. Respond with valid JSON only.")
-        t.user("Return a JSON object with keys: star, type, magnitude "
-               "for Sirius, Betelgeuse, and Vega.")
-
-        for attempt in range(1, 4):
-            response = t.generate()
-            print(f"\n  Attempt {attempt}:")
-            print(f"  Response: {response.text[:120]}")
-
-            try:
-                data = json.loads(response.text)
-                print(f"  Parsed OK: {type(data).__name__}")
-                if click.confirm("  Accept this response?", default=True):
-                    print("  Accepted.")
-                    break
-            except json.JSONDecodeError:
-                print("  JSON parse failed.")
-
-            if attempt < 3:
-                if click.confirm("  Retry with steering?", default=True):
-                    steering = click.edit("Please return valid JSON only. "
-                                         "No markdown code fences.")
-                    if steering:
-                        t.user(steering.strip())
-                    else:
-                        t.user("Please fix the JSON formatting.")
-                else:
-                    print("  Stopping retries.")
-                    break
 
 
 # =====================================================================
@@ -154,7 +106,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 

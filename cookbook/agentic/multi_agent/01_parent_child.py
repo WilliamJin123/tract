@@ -1,13 +1,10 @@
 """Parent-child tract relationships.
 
   PART 1 -- Manual:      session.spawn(), parent.children(), child.parent()
-  PART 2 -- Interactive:  click.confirm("Spawn child?"), click.confirm("Import findings?")
 
 Session management (spawn, deploy, collapse) is a developer-side concern --
-the Orchestrator does not handle it. This file is a 2-part tutorial.
+the Orchestrator does not handle it.
 """
-
-import click
 
 from tract import Session
 
@@ -61,58 +58,8 @@ def part1_manual():
     session.close()
 
 
-# =====================================================================
-# PART 2 -- Interactive: human confirms spawn and import
-# =====================================================================
-
-def part2_interactive():
-    print("\n" + "=" * 60)
-    print("PART 2 -- Interactive: Human-Gated Spawn and Import")
-    print("=" * 60)
-
-    session = Session.open()
-    parent = session.create_tract(display_name="supervisor")
-
-    parent.system("You are a stellar evolution researcher.")
-    parent.user("We need detailed analysis of red giant evolution.")
-    parent.assistant("I can delegate this to a focused sub-agent.")
-
-    if click.confirm("\n  Spawn child for red giant research?", default=True):
-        child = session.spawn(parent, purpose="red giant stellar evolution")
-        print(f"  Spawned child: {child.tract_id[:12]}")
-
-        # Child does research
-        child.user("Describe the helium flash in red giant stars.")
-        child.assistant("The helium flash is a brief thermal runaway in the "
-                        "degenerate helium core, lasting only seconds but "
-                        "releasing enormous energy.")
-
-        # Show child's compiled context
-        ctx = child.compile()
-        print(f"\n  Child context: {len(ctx.messages)} messages, {ctx.token_count} tokens")
-        for m in ctx.messages:
-            snippet = m.content[:60] + ("..." if len(m.content) > 60 else "")
-            print(f"    {m.role:>10}: {snippet}")
-
-        if click.confirm("\n  Import child's findings into parent?", default=True):
-            session.collapse(
-                child, into=parent,
-                content="Red giant evolution: helium flash is a brief thermal "
-                        "runaway in the degenerate core.",
-                auto_commit=True,
-            )
-            print(f"  Parent now has {len(parent.log())} commits")
-        else:
-            print("  Skipped import.")
-    else:
-        print("  Spawn declined.")
-
-    session.close()
-
-
 def main():
     part1_manual()
-    part2_interactive()
 
 
 if __name__ == "__main__":

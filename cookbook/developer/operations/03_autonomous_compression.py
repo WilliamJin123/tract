@@ -1,23 +1,19 @@
-"""Autonomous compression: toolkit, hooks, and trigger-driven automation.
+"""Autonomous compression: toolkit and trigger-driven automation.
 
-Three ways to automate compression in pipelines:
+Two ways to automate compression in pipelines:
 
   PART 1 -- Manual:      ToolExecutor(t).execute("compress", {...}) direct tool call
-  PART 2 -- Interactive:  t.on("compress", handler) with pending.pprint() + click.confirm
   PART 3 -- Trigger-Driven:  CompressTrigger(threshold=0.7) + budget auto-manages compression
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import CompressTrigger, Priority, TokenBudgetConfig, Tract, TractConfig
-from tract.hooks.compress import PendingCompress
 from tract.toolkit import ToolExecutor
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import cerebras as llm  
+from _providers import cerebras as llm
 
 MODEL_ID = llm.large
 
@@ -57,48 +53,6 @@ def part1_manual():
         print(f"\n  ToolResult:")
         print(f"    success: {result.success}")
         print(f"    output:  {result.output[:120]}...")
-
-        print("\n  AFTER compression:\n")
-        t.compile().pprint(style="compact")
-
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: hook handler with human approval")
-    print("=" * 60)
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-
-        sys_ci = t.system("You are a concise history tutor.")
-        t.annotate(sys_ci.commit_hash, Priority.PINNED)
-
-        t.chat("What caused the fall of Rome?")
-        t.chat("Explain the Renaissance.")
-        t.chat("What was the Space Race and who won?")
-
-        print("\n  BEFORE compression:\n")
-        t.compile().pprint(style="chat")
-
-        # Register a hook handler -- fires when compress() is called
-        def review_handler(pending: PendingCompress):
-            pending.pprint(verbose=True)
-            if click.confirm("\n  Approve compression?", default=True):
-                pending.approve()
-            else:
-                pending.reject("User declined")
-
-        t.on("compress", review_handler)
-
-        # Now compress() fires the handler instead of auto-committing
-        result = t.compress(target_tokens=200)
-
-        print(f"\n  Hook log ({len(t.hook_log)} events):")
-        for event in t.hook_log:
-            print(f"    {event.operation}: {event.outcome}")
 
         print("\n  AFTER compression:\n")
         t.compile().pprint(style="compact")
@@ -150,7 +104,6 @@ def part3_trigger_driven():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_trigger_driven()
 
 

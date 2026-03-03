@@ -1,22 +1,18 @@
 """LLM Integration
 
-Three tiers: manual reasoning commits, interactive approval of generated
-reasoning, and LLM-powered reasoning extraction via generate().
+Two tiers: manual reasoning commits and LLM-powered reasoning
+extraction via generate().
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
-PART 2 -- Interactive       review=True, click.edit/confirm, human decides
 PART 3 -- LLM-Powered       generate() with reasoning extraction
 
 Demonstrates: t.reasoning() manual, generate() with reasoning,
               ChatResponse.reasoning, ChatResponse.reasoning_commit,
-              generate(reasoning=False), click.confirm(),
-              Tract.open(commit_reasoning=False)
+              generate(reasoning=False), Tract.open(commit_reasoning=False)
 """
 
 import sys
 from pathlib import Path
-
-import click
 
 from tract import Tract
 
@@ -65,55 +61,6 @@ def part1_manual_reasoning():
 
     print()
     t.close()
-
-
-# =============================================================================
-# Part 2: Interactive Reasoning Approval  (PART 2 — Interactive)
-# =============================================================================
-
-def part2_interactive():
-    """After generate(), confirm whether to keep reasoning."""
-    if not llm.api_key:
-        print("=" * 60)
-        print("Part 2: SKIPPED (no llm.api_key)")
-        print("=" * 60)
-        return
-
-    print("=" * 60)
-    print("Part 2: INTERACTIVE REASONING APPROVAL  [Interactive Tier]")
-    print("=" * 60)
-    print()
-    print("  After generate(), inspect reasoning and decide whether to")
-    print("  keep it committed. Show generate(reasoning=False) as opt-out.")
-    print()
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("Think step by step before answering.")
-        t.user("What is 23 * 17?")
-
-        response = t.generate(reasoning_effort="high")
-
-        if response.reasoning:
-            print(f"  Reasoning extracted ({len(response.reasoning)} chars):")
-            preview = response.reasoning[:120].replace("\n", " ")
-            print(f"    {preview}...\n")
-
-            if click.confirm("  Keep this reasoning committed?", default=True):
-                print("  -> reasoning already committed by generate()")
-            else:
-                print("  -> To skip reasoning, use generate(reasoning=False)")
-                print("     The reasoning text is still in ChatResponse.reasoning")
-                print("     but won't be committed to history.")
-        else:
-            print("  (Model did not produce reasoning tokens)")
-
-        print(f"\n  Answer: {response.text[:80]}")
-
-    print()
 
 
 # =============================================================================
@@ -210,10 +157,9 @@ def part3_llm_integration():
 
 def main():
     part1_manual_reasoning()
-    part2_interactive()
     part3_llm_integration()
     print("=" * 60)
-    print("Done -- all 3 parts of LLM reasoning integration demonstrated.")
+    print("Done -- both parts of LLM reasoning integration demonstrated.")
     print("=" * 60)
 
 

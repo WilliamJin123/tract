@@ -1,21 +1,12 @@
 """Rollback
 
-Two tiers of rollback -- manual reset, and interactive numbered log
-with confirmation.
+Manual reset -- permanently rolls back, no interaction.
 
-PART 1 -- Manual           reset() permanently rolls back, no interaction
-PART 2 -- Interactive       Numbered log, click.prompt, click.confirm, reset
-
-Demonstrates: reset(), compile(), compile(at_commit=), compile(at_time=),
-              checkout(), status(), log(), show(),
-              click.prompt, click.confirm
+Demonstrates: reset(), compile(), pprint(style="chat")
 """
 
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
-
-import click
 
 from tract import Tract
 
@@ -63,93 +54,8 @@ def part1_manual():
         print(f"\n  {len(ctx.messages)} messages -- turns 2-3 are orphaned.")
 
 
-# =============================================================================
-# PART 2 -- Interactive: Numbered log, click.prompt, confirm, reset
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: Rollback with Log and Confirmation")
-    print("=" * 60)
-    print()
-    print("  Chat over several turns, then use a numbered log to pick")
-    print("  a rollback target. Confirm before resetting.")
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a concise geography tutor. One sentence answers.")
-
-        r1 = t.chat("What are the 3 largest countries by area?")
-        turn1_hash = r1.commit_info.commit_hash
-
-        midpoint = datetime.now(timezone.utc)
-
-        r2 = t.chat("Which of those has the highest population density?")
-        r3 = t.chat("What's the capital of that country?")
-
-        # Show the full conversation
-        print("\n  Full session:")
-        t.compile().pprint(style="chat")
-
-        # Time-travel: what did the LLM see after turn 1?
-        print(f"\n  Time-travel: context at turn 1 ({turn1_hash[:8]}):")
-        past_ctx = t.compile(at_commit=turn1_hash)
-        past_ctx.pprint(style="chat")
-
-        # Time-travel by timestamp
-        print(f"\n  Time-travel: context at midpoint timestamp:")
-        mid_ctx = t.compile(at_time=midpoint)
-        print(f"  {len(mid_ctx.messages)} messages (same as turn 1)")
-
-        # Show numbered log for rollback selection
-        entries = list(t.log(limit=20))
-        print(f"\n  Commit log:")
-        for i, entry in enumerate(entries):
-            print(f"    [{i}] {entry.commit_hash[:8]}  {entry.role:10s}  {str(entry.message or '')[:40]}")
-
-        choice = click.prompt(
-            "\n  Roll back to which commit? (number)",
-            type=int,
-            default=0,
-        )
-
-        if 0 <= choice < len(entries):
-            target = entries[choice]
-            # Preview the commit
-            preview = t.show(target.commit_hash)
-            print(f"\n  Target: {target.commit_hash[:8]}")
-            print(f"    role:    {preview.role}")
-            print(f"    content: {str(preview.content)[:80]}")
-
-            orphan_count = choice  # entries above the target get orphaned
-            if click.confirm(f"  Reset to {target.commit_hash[:8]}? This orphans {orphan_count} commits.", default=False):
-                t.reset(target.commit_hash)
-                print(f"\n  After reset:")
-                t.compile().pprint(style="chat")
-            else:
-                print("  Reset cancelled.")
-
-        # Checkout for non-destructive inspection
-        print(f"\n  Checkout (non-destructive) to turn 1:")
-        t.checkout(turn1_hash)
-        status = t.status()
-        print(f"  HEAD: {status.head_hash[:8]}, detached: {status.is_detached}")
-
-        # Return to main
-        t.checkout("main")
-        print(f"  Back on main: {t.current_branch}")
-
-
-# =============================================================================
-# main
-# =============================================================================
-
 def main():
     part1_manual()
-    part2_interactive()
 
 
 if __name__ == "__main__":

@@ -1,24 +1,21 @@
 """LLM-Driven Auto-Tagging via Orchestrator
 
-Three tiers of auto-tagging: manual heuristics, interactive confirmation,
-and fully autonomous LLM-driven tagging via the orchestrator.
+Two tiers of auto-tagging: manual heuristics and fully autonomous
+LLM-driven tagging via the orchestrator.
 
 PART 1 -- Manual           Direct API calls, no LLM, deterministic
-PART 2 -- Interactive       review=True, click.edit/confirm, human decides
 PART 3 -- LLM / Agent      Orchestrator, triggers, hooks auto-manage
 
 The key difference from 01_classify_and_query.py: here the focus is on
 *automated* tagging strategies rather than explicit tag management.
 
-Demonstrates: register_tag, role-based heuristics, click.confirm(),
+Demonstrates: register_tag, role-based heuristics,
               Orchestrator, OrchestratorConfig, AutonomyLevel,
               TAGGER_SYSTEM_PROMPT + build_tagger_task_prompt
 """
 
 import sys
 from pathlib import Path
-
-import click
 
 from tract import Tract
 from tract.formatting import pprint_log, pprint_tag_registry
@@ -76,65 +73,6 @@ def part1_manual_heuristics():
         label = (entry.message or "")[:50]
         print(f"    {entry.commit_hash[:8]}  {entry.role:9s}  tags={tags}  {label}")
 
-    print()
-    t.close()
-
-
-# =============================================================================
-# Part 2: Interactive Semi-Auto Tagging  (PART 2 — Interactive)
-# =============================================================================
-
-def part2_interactive():
-    """Suggest tags based on content, confirm with the user."""
-    print("=" * 60)
-    print("Part 2: INTERACTIVE SEMI-AUTO TAGGING  [Interactive Tier]")
-    print("=" * 60)
-    print()
-    print("  For each commit, suggest a tag based on role/content length.")
-    print("  The user confirms or skips each suggestion.")
-    print()
-
-    t = Tract.open()
-
-    t.register_tag("question", "A question from the user")
-    t.register_tag("answer", "An answer from the assistant")
-    t.register_tag("context", "Background context or status update")
-
-    t.system("You are a project manager AI tracking a sprint.")
-    t.user("What's the status of the auth migration?")
-    t.assistant(
-        "The OAuth2 migration is 70% complete. Token refresh "
-        "is done, but the session store hasn't been switched yet."
-    )
-    t.user("The legacy session store is blocking QA — they can't "
-           "test the new flow until it's gone.")
-    t.assistant("I recommend we prioritize the session store cutover.")
-
-    for entry in t.log():
-        if entry.role == "system":
-            continue
-
-        # Suggest based on role and content length
-        content = entry.content_text or ""
-        if entry.role == "user" and "?" in content:
-            suggested = "question"
-        elif entry.role == "user":
-            suggested = "context"
-        elif entry.role == "assistant" and len(content) > 80:
-            suggested = "context"
-        else:
-            suggested = "answer"
-
-        preview = content[:60].replace("\n", " ")
-        print(f"  {entry.commit_hash[:8]} [{entry.role}] {preview}...")
-        if click.confirm(f"    Tag as '{suggested}'?", default=True):
-            t.tag(entry.commit_hash, suggested)
-            print(f"    -> tagged '{suggested}'")
-        else:
-            print(f"    -> skipped")
-
-    print()
-    pprint_log(list(reversed(t.log())))
     print()
     t.close()
 
@@ -300,10 +238,9 @@ def part3_agent():
 
 def main():
     part1_manual_heuristics()
-    part2_interactive()
     part3_agent()
     print("=" * 60)
-    print("Done -- all 3 tiers of auto-tagging demonstrated.")
+    print("Done -- manual and agent tiers of auto-tagging demonstrated.")
     print("=" * 60)
 
 

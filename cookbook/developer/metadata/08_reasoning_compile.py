@@ -1,16 +1,10 @@
 """Compile Control
 
-Two tiers of compile control for reasoning: manual flag toggling and
-interactive priority management.
-
-PART 1 -- Manual           Direct API calls, no LLM, deterministic
-PART 2 -- Interactive       review=True, click.edit/confirm, human decides
+Manual flag toggling for reasoning visibility.
 
 Demonstrates: compile(include_reasoning=True), annotate() overrides,
-              Priority.PINNED, Priority.SKIP, click.prompt()
+              Priority.PINNED, Priority.SKIP
 """
-
-import click
 
 from tract import Priority, Tract
 
@@ -86,72 +80,11 @@ def part1_compile_control():
 
 
 # =============================================================================
-# Part 2: Interactive Priority for Reasoning  (PART 2 — Interactive)
-# =============================================================================
-
-def part2_interactive():
-    print("=" * 60)
-    print("Part 2: INTERACTIVE REASONING PRIORITY  [Interactive Tier]")
-    print("=" * 60)
-    print()
-    print("  Walk reasoning commits from log(). For each, let the user")
-    print("  change its visibility (NORMAL/SKIP/PINNED).")
-    print()
-
-    t = Tract.open()
-    t.system("You are a helpful assistant.")
-    t.user("Explain quantum entanglement.")
-    r1 = t.reasoning(
-        "Quantum entanglement is when two particles become correlated. "
-        "Measuring one instantly affects the other regardless of distance."
-    )
-    t.assistant("Quantum entanglement links two particles so measuring one "
-                "instantly determines the state of the other.")
-    t.user("Can it be used for communication?")
-    r2 = t.reasoning(
-        "No — entanglement doesn't allow faster-than-light communication. "
-        "The no-communication theorem proves this."
-    )
-    t.assistant("No, entanglement cannot transmit information faster than light.")
-
-    # Walk reasoning commits
-    reasoning_entries = [e for e in t.log() if e.content_type == "reasoning"]
-    for entry in reasoning_entries:
-        content = (entry.content_text or "")[:60].replace("\n", " ")
-        print(f"  {entry.commit_hash[:8]} [{entry.content_type}] {content}...")
-        choice = click.prompt(
-            "    Change visibility? (NORMAL/SKIP/PINNED, Enter to skip)",
-            type=click.Choice(["NORMAL", "SKIP", "PINNED", ""], case_sensitive=False),
-            default="",
-            show_default=False,
-        )
-        if choice:
-            t.annotate(entry.commit_hash, Priority[choice])
-            print(f"    -> set to {choice}")
-        else:
-            print(f"    -> kept default")
-
-    # Show final compiled context
-    print()
-    ctx = t.compile(include_reasoning=True)
-    print(f"  Final compiled: {ctx.commit_count} messages, {ctx.token_count} tokens")
-    ctx.pprint(style="compact")
-
-    print()
-    t.close()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
-def main():
-    part1_compile_control()
-    part2_interactive()
-    print("=" * 60)
-    print("Done -- both tiers of compile control demonstrated.")
-    print("=" * 60)
-
-
 if __name__ == "__main__":
-    main()
+    part1_compile_control()
+    print("=" * 60)
+    print("Done -- compile control demonstrated.")
+    print("=" * 60)

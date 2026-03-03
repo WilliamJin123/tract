@@ -1,28 +1,22 @@
 """Guided compression with priorities and retention guarantees.
 
-Two ways to ensure critical facts survive compression:
-
   PART 1 -- Manual:      annotate(IMPORTANT), compress(content=..., preserve=[h1,h2])
-  PART 2 -- Interactive:  compress(review=True), inspect retain_match, click.confirm
 """
 
 import sys
 from pathlib import Path
 
-import click
-
 from tract import Priority, Tract
-from tract.hooks.compress import PendingCompress
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from _providers import groq as llm  
+from _providers import groq as llm
 
 MODEL_ID = llm.large
 
 CONTRACT_PATH = Path(__file__).parent / "sample_contract.md"
 
 
-def part1_manual():
+def main():
     print("=" * 60)
     print("PART 1 -- Manual: IMPORTANT + preserve= keeps critical facts")
     print("=" * 60)
@@ -75,57 +69,6 @@ def part1_manual():
 
         print("\n  AFTER compression:\n")
         t.compile().pprint(style="compact")
-
-
-def part2_interactive():
-    print("=" * 60)
-    print("PART 2 -- Interactive: review=True with retention inspection")
-    print("=" * 60)
-
-    with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-
-        t.system("You are a contract review assistant. Be concise and precise.")
-
-        contract_text = CONTRACT_PATH.read_text(encoding="utf-8")
-        contract_msg = t.user(
-            f"Please review this contract:\n\n{contract_text}",
-            message="Full contract loaded for review",
-        )
-
-        t.chat("Summarize the key financial terms and deadlines.")
-        t.chat("What are the penalty clauses?")
-
-        # Annotate with IMPORTANT and retention patterns
-        t.annotate(
-            contract_msg.commit_hash,
-            Priority.IMPORTANT,
-            retain="Preserve all financial terms and dates",
-            retain_match=[r"\$2,847,000", r"Net[\s-]45", r"99\.95%"],
-            retain_match_mode="regex",
-        )
-
-        # review=True for human inspection before committing
-        pending: PendingCompress = t.compress(target_tokens=300, review=True)
-
-        pending.pprint(verbose=True)
-
-        # Human decides: are the retention patterns satisfied in the draft?
-        if click.confirm("\n  Retention patterns satisfied? Approve compression?", default=True):
-            result = pending.approve()
-            print(f"\n  Approved! {result.compression_ratio:.1%} compression ratio")
-            t.compile().pprint(style="compact")
-        else:
-            pending.reject("Retention criteria not met in draft")
-            print("  Rejected. Original context preserved.")
-
-
-def main():
-    part1_manual()
-    part2_interactive()
 
 
 if __name__ == "__main__":

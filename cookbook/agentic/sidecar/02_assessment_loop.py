@@ -1,14 +1,11 @@
 """Orchestrator loop: autonomous context management.
 
   PART 1 -- Manual:      Manual assessment: status() + if/else decision tree
-  PART 2 -- Interactive:  OrchestratorConfig(autonomy_ceiling=COLLABORATIVE) + hooks
   PART 3 -- LLM / Agent:  OrchestratorConfig(autonomy_ceiling=AUTONOMOUS, max_steps=20) + triggers
 """
 
 import sys
 from pathlib import Path
-
-import click
 
 from tract import (
     CompressTrigger,
@@ -21,8 +18,6 @@ from tract.orchestrator import (
     Orchestrator,
     OrchestratorConfig,
     AutonomyLevel,
-    ToolCallDecision,
-    ToolCallReview,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -66,56 +61,6 @@ def part1_manual():
         status = t.status()
         print(f"  After: {status.token_count}/{budget_max} tokens, "
               f"{status.commit_count} commits")
-
-
-# =====================================================================
-# PART 2 -- Interactive: collaborative orchestrator with hooks
-# =====================================================================
-
-def part2_interactive():
-    print("\n" + "=" * 60)
-    print("PART 2 -- Interactive: Collaborative Orchestrator")
-    print("=" * 60)
-
-    config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=300))
-    with Tract.open(
-        config=config,
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
-    ) as t:
-        t.system("You are a space exploration planner.")
-        for i in range(6):
-            t.user(f"Mission requirement {i}: radiation shielding specs.")
-
-        # Hook: user confirms compress operations
-        def compress_hook(pending):
-            if click.confirm(f"  Compress? reason={pending.reason}"):
-                pending.approve()
-            else:
-                pending.reject("user declined")
-
-        t.on("compress", compress_hook, name="interactive-compress")
-
-        # Collaborative orchestrator: on_tool_call reviews each action
-        def review_tool_call(tc):
-            label = f"{tc.name}({tc.arguments})"
-            if click.confirm(f"  Approve tool call: {label}?", default=True):
-                return ToolCallReview(decision=ToolCallDecision.APPROVED)
-            return ToolCallReview(
-                decision=ToolCallDecision.REJECTED,
-                reason="user declined",
-            )
-
-        orch_config = OrchestratorConfig(
-            autonomy_ceiling=AutonomyLevel.COLLABORATIVE,
-            max_steps=5,
-            on_tool_call=review_tool_call,
-        )
-        orch = Orchestrator(t, config=orch_config)
-        result = orch.run()
-        print(f"\n  Orchestrator completed: {result.total_tool_calls} tool calls, "
-              f"state={result.state.value}")
 
 
 # =====================================================================
@@ -170,7 +115,6 @@ def part3_agent():
 
 def main():
     part1_manual()
-    part2_interactive()
     part3_agent()
 
 
