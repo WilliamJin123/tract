@@ -42,6 +42,7 @@ def part1_manual():
     config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=600))
     with Tract.open(config=config) as t:
         # --- Build a realistic conversation with multiple operations ---
+        print()
 
         # System prompt
         sys_ci = t.system("You are a financial analysis assistant.")
@@ -85,6 +86,9 @@ def part1_manual():
         )
         t.tag(c6.commit_hash, "metrics-reference")
         t.annotate(c6.commit_hash, Priority.PINNED, reason="key formula")
+
+        print("\n  Context BEFORE compression (after edits + annotations):\n")
+        t.compile().pprint(style="chat")
 
         # Manual compression of early dialogue
         t.compress(
@@ -243,6 +247,11 @@ def part2_agent():
                 print(f"    Models used: {configs_seen}")
             else:
                 print(f"    (No generation configs recorded -- manual commits)")
+
+        # --- AUDIT: Final compiled context ---
+
+        print(f"\n  --- Final Compiled Context ---\n")
+        t.compile().pprint(style="compact")
 
         # --- AUDIT: Final state ---
 

@@ -113,6 +113,7 @@ def custom_routing() -> None:
         print(f"\n  Final context:")
         ctx: CompiledContext = t.compile()
         print(f"    {len(ctx.messages)} messages, {ctx.token_count} tokens")
+        ctx.pprint(style="compact")
 
         t.print_hooks()
 

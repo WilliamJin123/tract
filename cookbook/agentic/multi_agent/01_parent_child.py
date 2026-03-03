@@ -26,6 +26,9 @@ def manual():
     parent.user("We need to catalogue habitable zone exoplanets.")
     parent.assistant("I will organize research across multiple sub-topics.")
 
+    print("\n  Parent context:")
+    parent.compile().pprint(style="chat")
+
     print(f"\n  Parent tract: {parent.tract_id[:12]}")
     print(f"  Parent commits: {len(parent.log())}")
 
@@ -45,6 +48,9 @@ def manual():
     print(f"  Child commits after work: {len(child.log())}")
     print(f"  Parent commits (unchanged): {len(parent.log())}")
 
+    print("\n  Child context (after research):")
+    child.compile().pprint(style="compact")
+
     # Collapse child findings back into parent
     result = session.collapse(
         child, into=parent,
@@ -54,6 +60,9 @@ def manual():
     )
     print(f"\n  Collapsed: {result.summary_tokens} tokens into parent")
     print(f"  Parent commits now: {len(parent.log())}")
+
+    print("\n  Parent context after collapse:")
+    parent.compile().pprint(style="compact")
 
     session.close()
 

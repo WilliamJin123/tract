@@ -108,6 +108,9 @@ def declarative_config() -> None:
         print(f"    Original: v2.4.1")
         print(f"    Stored:   {_safe(stored4)}")
 
+        print(f"\n  Final context after all tool results:")
+        t.compile().pprint(style="compact")
+
         # Show all hook events for the session
         for evt in t.hook_log:
             ts = evt.timestamp.strftime("%H:%M:%S")

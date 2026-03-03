@@ -99,11 +99,16 @@ def ordering_basics() -> None:
         t.print_hooks()
 
         # --- Run compress to prove the firing order ---
+        print("\n  BEFORE compression:\n")
+        t.compile().pprint(style="compact")
+
         print("\n  Running compress()...")
         result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
 
         if isinstance(result, CompressResult):
             print(f"  Compressed: ratio={result.compression_ratio:.1%}")
+            print("\n  AFTER compression:\n")
+            t.compile().pprint(style="compact")
         else:
             result.pprint()
 
@@ -225,12 +230,17 @@ def conditional_middleware() -> None:
 
         print(f"\n  Pipeline: {t.hook_names}")
 
+        print("\n  BEFORE compression:\n")
+        t.compile().pprint(style="compact")
+
         result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
 
         if isinstance(result, CompressResult):
             print(f"\n  Compressed: ratio={result.compression_ratio:.1%}")
             print(f"  Original tokens:  {result.original_tokens}")
             print(f"  Compressed tokens: {result.compressed_tokens}")
+            print("\n  AFTER compression:\n")
+            t.compile().pprint(style="compact")
         else:
             print(f"\n  Rejected: {result.rejection_reason}")
             result.pprint()
@@ -380,12 +390,17 @@ def full_pipeline() -> None:
 
         print(f"\n  Registered pipeline: {t.hook_names}")
 
+        print("\n  BEFORE compression:\n")
+        t.compile().pprint(style="compact")
+
         # --- First compress ---
         result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
         last_compress["ts"] = time.time()
 
         if isinstance(result, CompressResult):
             print(f"\n  Result: APPROVED (ratio={result.compression_ratio:.1%})")
+            print("\n  AFTER compression:\n")
+            t.compile().pprint(style="compact")
         else:
             print(f"\n  Result: REJECTED ({result.rejection_reason})")
             result.pprint()

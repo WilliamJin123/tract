@@ -67,6 +67,9 @@ def part1_manual_heuristics():
 
     print(f"  Tagged {tagged} commits by role heuristic.\n")
 
+    print("  Conversation:")
+    t.compile().pprint(style="chat")
+
     # Show results
     for entry in reversed(t.log()):
         tags = t.get_tags(entry.commit_hash)
@@ -132,6 +135,9 @@ def part2_agent():
         print(f"  [{role:9s}] {text[:60]}...")
 
     print(f"\n  {len(commit_hashes)} messages committed, 0 custom tags.\n")
+
+    print("  Conversation before auto-tagging:")
+    t.compile().pprint(style="compact")
 
     # Show auto-classified tags before orchestrator runs
     print("  Auto-classified tags (built-in heuristics):")

@@ -42,6 +42,9 @@ def part1_manual():
             try:
                 data = json.loads(response.text)
                 print(f"  Valid JSON: {len(data)} items")
+
+                print("\n  Conversation after successful validation:\n")
+                t.compile().pprint(style="compact")
                 break
             except json.JSONDecodeError as e:
                 print(f"  Invalid JSON: {e}")
@@ -100,6 +103,9 @@ def part2_agent():
 
         # Check retry metadata on the commit
         print(f"\n  Retry metadata: {response.commit_info.metadata}")
+
+        print("\n  Final context (retries hidden):\n")
+        t.compile().pprint(style="compact")
 
 
 def main():

@@ -52,6 +52,9 @@ def part1_basic_deploy():
     parent.user("What topics should we research?")
     parent.assistant("I suggest three topics: caching, indexing, and replication.")
 
+    print("\n  Parent context:")
+    parent.compile().pprint(style="chat")
+
     parent_branch = parent.current_branch
 
     # Deploy a child for research
@@ -78,6 +81,9 @@ def part1_basic_deploy():
 
     print(f"  Child commits:  {len(child.log())} (added 2)")
     print(f"  Parent commits: {len(parent.log())} (unchanged)")
+
+    print("\n  Child context (diverged from parent):")
+    child.compile().pprint(style="compact")
 
     session.close()
 
@@ -118,6 +124,9 @@ def part2_curated_deploy_with_tags():
         tags = parent.get_tags(ci.commit_hash)
         label = ci.commit_hash[:8]
         print(f"    {label}: {tags or '(none)'}")
+
+    print("\n  Parent context (all commits):")
+    parent.compile().pprint(style="compact")
 
     # Deploy with keep_tags -- only instruction + hypothesis survive
     child = session.deploy(
@@ -162,6 +171,9 @@ def part3_drop_and_compact():
 
     print(f"  Parent has {len(parent.log())} commits")
     print(f"  Irrelevant commit: {irrelevant.commit_hash[:12]}")
+
+    print("\n  Parent context (before curation):")
+    parent.compile().pprint(style="compact")
 
     # --- Drop a specific commit ---
     child_drop = session.deploy(
@@ -238,6 +250,9 @@ def part4_merge_back():
 
     print(f"\n  Merge type: {result.merge_type}")
     print(f"  Parent now has {len(parent.log())} commits (includes child work)")
+
+    print("\n  Parent context after merge:")
+    parent.compile().pprint(style="compact")
 
     # --- Option B: Collapse (summarize child into one commit) ---
     # For a collapse demo, create a fresh parent+child pair.

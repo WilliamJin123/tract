@@ -149,6 +149,9 @@ def part1_manual():
         for tool in tools:
             print(f"    - {tool['function']['name']}")
 
+        print("\n  Conversation:")
+        t.compile().pprint(style="chat")
+
         # Log
         result = executor.execute("log", {"limit": 5})
         print(f"\n  log(limit=5):\n    {result.output[:200]}")
@@ -203,6 +206,9 @@ def part2_agent():
         t.user("And the capital of Japan?")
         t.assistant("The capital of Japan is Tokyo.")
 
+        print("  Conversation before agent acts:")
+        t.compile().pprint(style="chat")
+
         # Now ask the agent to investigate and fix
         print("  --- Task: Find and undo the bad information ---")
         run_agent_loop(
@@ -213,6 +219,9 @@ def part2_agent():
             "exchange. After resetting, check status to confirm."
         )
 
+        print("\n  After reset:")
+        t.compile().pprint(style="compact")
+
         # Ask it to recover
         print("\n  --- Task: Undo the reset ---")
         run_agent_loop(
@@ -220,6 +229,9 @@ def part2_agent():
             "Actually, I want all the history back. Use ORIG_HEAD to undo "
             "the reset you just did, then verify with status and compile."
         )
+
+        print("\n  After recovery:")
+        t.compile().pprint(style="compact")
 
 
 def main():

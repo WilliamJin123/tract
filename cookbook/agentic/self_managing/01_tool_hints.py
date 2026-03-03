@@ -184,6 +184,9 @@ def part2_agent():
                     print(f"    -> {tc.name}({tc.arguments})")
                     print(f"       {result.output[:80]}")
 
+        print(f"\n  Context after hint-driven generation:")
+        t.compile().pprint(style="compact")
+
         # Show provenance: which commits got which temperature
         print(f"  {'=' * 50}")
         print("  Generation Config Provenance:")

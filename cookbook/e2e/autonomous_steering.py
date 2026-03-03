@@ -65,6 +65,9 @@ def part1_manual():
                        "Composition: ~60% feldspar, 25% quartz, 15% mica.")
             print(f"  After compress: {t.status().token_count} tokens")
 
+        print("\n  Conversation after manual compression:\n")
+        t.compile().pprint(style="compact")
+
 
 # =====================================================================
 # PART 2 -- LLM / Agent: all triggers + autonomous orchestrator
@@ -123,6 +126,9 @@ def part2_agent():
         status = t.status()
         print(f"\n  After orchestrator: {status.token_count} tokens, "
               f"{status.commit_count} commits")
+
+        print("\n  Final compiled context after orchestrator:\n")
+        t.compile().pprint(style="compact")
 
 
 def main():

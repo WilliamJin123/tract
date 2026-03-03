@@ -131,6 +131,9 @@ def part2_agent():
             args_short = str(step.tool_call.arguments)[:60]
             print(f"    [{status}] {step.tool_call.name}({args_short})")
 
+        print("\n  Context after orchestrator:")
+        t.compile().pprint(style="compact")
+
         final = t.status()
         print(f"\n  Final: {final.token_count} tokens, {final.commit_count} commits")
 
@@ -249,6 +252,9 @@ def part3_agent_triggers():
                   f"priority={info['priority']})")
         if not t.list_triggers():
             print("    (none)")
+
+        print("\n  Context after agent-configured triggers:")
+        t.compile().pprint(style="compact")
 
         # Now the triggers will fire automatically on future operations
         print(f"\n  These triggers will now fire automatically on every")

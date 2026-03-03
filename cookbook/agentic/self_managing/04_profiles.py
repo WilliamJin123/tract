@@ -104,6 +104,9 @@ def part1_manual():
         t.user("Hello, world.")
         t.assistant("Hello! How can I help you today?")
 
+        print("\n  Conversation:")
+        t.compile().pprint(style="chat")
+
         # Compare all profiles
         profiles = {
             "self": SELF_PROFILE,
@@ -242,6 +245,9 @@ def part2_agent():
             status_label = "OK" if step.success else "FAIL"
             args_short = str(step.tool_call.arguments)[:60]
             print(f"    [{status_label}] {step.tool_call.name}({args_short})")
+
+        print("\n  Context (unchanged -- observer is read-only):")
+        t.compile().pprint(style="compact")
 
         # Verify the observer did not modify anything
         status_after = t.status()

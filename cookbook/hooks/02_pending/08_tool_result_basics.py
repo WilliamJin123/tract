@@ -73,6 +73,9 @@ def hook_basics() -> None:
         })
         t.tool_result("tc2", "read_file", snippet)
 
+        print(f"\n  Context after tool results committed:")
+        t.compile().pprint(style="compact")
+
         print(f"\n  Tool log: {len(tool_log)} results intercepted")
         for entry in tool_log:
             print(f"    {entry}")
@@ -111,6 +114,9 @@ def hook_basics() -> None:
         pending.reject("Contains secrets -- cannot enter context window")
         print(f"\n    After reject():")
         pending.pprint()
+
+        print(f"\n    Context (rejected tool result not included):")
+        t.compile().pprint(style="chat")
 
 
 if __name__ == "__main__":

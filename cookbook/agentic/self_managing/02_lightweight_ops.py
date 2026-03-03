@@ -80,6 +80,9 @@ def part1_manual():
         })
         print(f"    annotate pin: {result.output}")
 
+        print("\n  Conversation:")
+        t.compile().pprint(style="chat")
+
         # --- Status: check current state ---
         print(f"\n  Checking status:\n")
 
@@ -214,6 +217,9 @@ def part2_agent():
             if len(tags) > 1:  # More than just auto-classified
                 msg = (entry.message or entry.content_text or "")[:50]
                 print(f"    {entry.commit_hash[:8]}  tags={tags}  {msg}")
+
+        print("\n  Context after orchestrator tagging:")
+        t.compile().pprint(style="compact")
 
         # Quick summary of what the agent pinned
         pinned = t.pinned()

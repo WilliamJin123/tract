@@ -27,6 +27,9 @@ def part1_manual():
         c5 = t.assistant("Mars escape velocity is about 5.0 km/s, due to "
                          "its lower mass and radius.")
 
+        print("\n  Full conversation (including bad commit):\n")
+        t.compile().pprint(style="chat")
+
         # Walk the log to find the bad commit
         log = t.log()
         print(f"\n  Log has {len(log)} commits:")
@@ -58,6 +61,9 @@ def part1_manual():
         print(f"\n  Imported good commit onto clean branch: {new_hash[:10]}")
         print(f"  Clean branch: {len(t.log())} commits (bad one excluded)")
 
+        print("\n  Clean branch context (bad commit removed):\n")
+        t.compile().pprint(style="chat")
+
 
 # =====================================================================
 # PART 2 -- LLM / Agent: toolkit-driven forensics
@@ -76,6 +82,9 @@ def part2_agent():
         c4 = t.user("What about dark energy?")
         good = t.assistant("Dark energy drives the accelerating expansion, "
                            "comprising about 68% of the universe's energy.")
+
+        print("\n  Full conversation (including bad commit):\n")
+        t.compile().pprint(style="chat")
 
         executor = ToolExecutor(t)
 
@@ -96,6 +105,9 @@ def part2_agent():
         print(f"  Imported good commit: {result.output[:60]}...")
 
         print(f"\n  Forensic fix branch: {len(t.log())} commits (bad data excluded)")
+
+        print("\n  Forensic fix branch context:\n")
+        t.compile().pprint(style="compact")
 
 
 def main():

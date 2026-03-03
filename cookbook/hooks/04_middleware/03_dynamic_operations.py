@@ -33,6 +33,9 @@ def register_and_fire() -> None:
         t.user("Summarize findings from https://example.com and https://test.org")
         t.assistant("Based on the sources, here are the key findings...")
 
+        print("\n  Current conversation:\n")
+        t.compile().pprint(style="chat")
+
         # Define a "citation_check" operation
         spec = OperationSpec(
             name="citation_check",

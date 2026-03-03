@@ -63,6 +63,9 @@ def rebase_hooks() -> None:
         t.assistant("A 10-minute dynamic warmup before lifting and static stretching after works well.")
         t.switch("feature")
 
+        print("\n  Feature branch BEFORE rebase:")
+        t.compile().pprint(style="compact")
+
         # --- review=True: get PendingRebase ---
         pending: PendingRebase = t.rebase("main", review=True)
 
@@ -79,6 +82,9 @@ def rebase_hooks() -> None:
         result: Any = pending.approve()
         print(f"\n  Approved! Rebase complete")
         pending.pprint()
+
+        print("\n  Feature branch AFTER rebase:")
+        t.compile().pprint(style="compact")
 
     # --- Hook handler pattern ---
     print(f"\n  Hook pattern: warn-and-approve")
@@ -104,6 +110,9 @@ def rebase_hooks() -> None:
         t.assistant("Start by tracking protein intake — aim for 0.7-1g per pound of bodyweight daily.")
         t.switch("experiment")
 
+        print("\n  Experiment branch BEFORE hook-driven rebase:")
+        t.compile().pprint(style="compact")
+
         def warn_and_approve(pending: PendingRebase) -> None:
             """Log the replay plan, then approve."""
             pending.pprint()
@@ -114,6 +123,9 @@ def rebase_hooks() -> None:
 
         t.on("rebase", warn_and_approve, name="warn-and-approve")
         t.rebase("main")  # Handler fires
+
+        print("\n  Experiment branch AFTER hook-driven rebase:")
+        t.compile().pprint(style="compact")
 
         # hook_log shows the handler invocation and result
         for evt in t.hook_log:

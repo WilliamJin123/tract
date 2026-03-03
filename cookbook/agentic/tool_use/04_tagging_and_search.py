@@ -142,6 +142,9 @@ def part1_manual():
         for tool in tools:
             print(f"    - {tool['function']['name']}")
 
+        print("\n  Conversation:")
+        t.compile().pprint(style="chat")
+
         # Register and apply a tag
         executor.execute("register_tag", {"name": "biology", "description": "Biology topics"})
         commits = t.log(limit=4)
@@ -208,6 +211,9 @@ def part2_agent():
         for q, a in topics:
             t.user(q)
             t.assistant(a)
+
+        print("  Conversation to organize:")
+        t.compile().pprint(style="compact")
 
         # Ask the agent to organize
         print("  --- Task: Create taxonomy and tag everything ---")

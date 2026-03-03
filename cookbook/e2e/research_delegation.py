@@ -81,6 +81,9 @@ def part1_manual():
         children[branch_name] = child
         print(f"\n  {branch_name}: {len(child.log())} commits -> compressed")
 
+    print("\n  Parent context BEFORE merges:\n")
+    parent.compile().pprint(style="chat")
+
     # Parent merges each child
     for branch_name in children:
         result = parent.merge(branch_name)
@@ -89,6 +92,9 @@ def part1_manual():
     print(f"\n  Parent final: {len(parent.log())} commits")
     ctx = parent.compile()
     print(f"  Compiled: {len(ctx.messages)} messages, {ctx.token_count} tokens")
+
+    print("\n  Parent context AFTER merges:\n")
+    parent.compile().pprint(style="compact")
 
     session.close()
 
@@ -141,6 +147,9 @@ def part2_agent():
     ctx = parent.compile()
     print(f"\n  Parent context: {len(ctx.messages)} messages, {ctx.token_count} tokens")
     print(f"  All three research branches collapsed into parent.")
+
+    print("\n  Parent context after all collapses:\n")
+    parent.compile().pprint(style="compact")
 
     session.close()
 

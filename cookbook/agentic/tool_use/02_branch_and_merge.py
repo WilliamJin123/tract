@@ -128,6 +128,9 @@ def part1_manual():
         for tool in tools:
             print(f"    - {tool['function']['name']}")
 
+        print("\n  Conversation on main:")
+        t.compile().pprint(style="chat")
+
         # Create a branch
         result = executor.execute("branch", {"name": "wind-research", "switch": True})
         print(f"\n  branch('wind-research'):\n    {result.output}")
@@ -194,6 +197,9 @@ def part2_agent():
         print(f"  Branches: {result.output}")
         result = executor.execute("status", {})
         print(f"  Status: {result.output}")
+
+        print("\n  Final context after merge:")
+        t.compile().pprint(style="compact")
 
 
 def main():

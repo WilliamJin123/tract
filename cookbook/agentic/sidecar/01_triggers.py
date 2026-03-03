@@ -217,6 +217,7 @@ def hook_interception() -> None:
         ctx = t.compile()
         print(f"\n  Hook fired {len(intercepted)} time(s)")
         print(f"  Context: {ctx.token_count} tokens, {len(ctx.messages)} msgs")
+        ctx.pprint(style="compact")
 
         # Demonstrate rejection
         print("\n  -- Rejection demo --")

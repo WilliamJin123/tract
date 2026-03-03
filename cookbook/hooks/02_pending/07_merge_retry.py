@@ -60,6 +60,9 @@ def merge_retry_and_validate() -> None:
             text="Machine learning enables computers to improve through experience.",
         )
 
+        print("\n  Main branch BEFORE merge:")
+        t.compile().pprint(style="chat")
+
         # --- review=True: get PendingMerge ---
         pending: PendingMerge = t.merge("feature-ml", review=True)
 
@@ -100,6 +103,9 @@ def merge_retry_and_validate() -> None:
         print(f"\n  Approved! Merge complete")
         pending.pprint()
 
+        print("\n  Main branch AFTER merge:")
+        t.compile().pprint(style="chat")
+
     # -- auto_retry(): automated validate->retry loop --
     print(f"\n  --- auto_retry(): automated loop ---")
 
@@ -137,6 +143,9 @@ def merge_retry_and_validate() -> None:
         else:
             print(f"    Merge approved and complete")
             pending2.pprint()
+
+            print("\n  Main branch AFTER auto_retry merge:")
+            t.compile().pprint(style="compact")
 
     # -- HookRejection on exhausted retries --
     print(f"\n  --- HookRejection when retries exhaust ---")

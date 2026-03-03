@@ -75,6 +75,9 @@ def part1_manual():
             ))
 
             # Verify compression worked
+            print("\n  AFTER compression:")
+            t.compile().pprint(style="compact")
+
             status_after = t.status()
             new_pct = (status_after.token_count / budget_max * 100) if budget_max else 0
             print(f"  After compress: {status_after.token_count} tokens ({new_pct:.1f}%)")
@@ -193,6 +196,9 @@ def part2_agent():
         final_status = t.status()
         budget_max = final_status.token_budget_max or 1
         fill_pct = final_status.token_count / budget_max * 100
+
+        print("\n  Context after orchestrator:")
+        t.compile().pprint(style="compact")
 
         print(f"\n  {'=' * 50}")
         print(f"  After orchestrator:")

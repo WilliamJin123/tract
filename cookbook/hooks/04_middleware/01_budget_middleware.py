@@ -74,6 +74,9 @@ def basic_token_gate() -> None:
         t.on("compress", make_token_gate(max_tokens=150, tolerance=100))
         _seed_code_review(t)
 
+        print("\n  BEFORE compression:\n")
+        t.compile().pprint(style="compact")
+
         # token_tolerance=10000 disables built-in enforcement,
         # letting our hook be the sole gatekeeper
         result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
@@ -130,9 +133,13 @@ def auto_truncate() -> None:
         t.on("compress", make_truncator(max_tokens=200))
         _seed_code_review(t)
 
+        print("\n  BEFORE compression:\n")
+        t.compile().pprint(style="compact")
+
         result: CompressResult = t.compress(target_tokens=200, token_tolerance=10000)
         print(f"  Compressed: ratio={result.compression_ratio:.1%}")
 
+        print("\n  AFTER compression:\n")
         ctx: CompiledContext = t.compile()
         ctx.pprint(style="compact")
 
@@ -182,10 +189,15 @@ def middleware_and_enforcer() -> None:
         t.on("compress", budget_enforcer, name="enforcer")
         _seed_code_review(t)
 
+        print("\n  BEFORE compression:\n")
+        t.compile().pprint(style="compact")
+
         result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
 
         if isinstance(result, CompressResult):
             print(f"  Compressed: ratio={result.compression_ratio:.1%}")
+            print("\n  AFTER compression:\n")
+            t.compile().pprint(style="compact")
         else:
             result.pprint()
 
@@ -232,10 +244,15 @@ def dynamic_budget() -> None:
         t.on("compress", dynamic_tolerance)
         _seed_code_review(t)
 
+        print("\n  BEFORE compression:\n")
+        t.compile().pprint(style="compact")
+
         result: CompressResult | PendingCompress = t.compress(target_tokens=150, token_tolerance=10000)
 
         if isinstance(result, CompressResult):
             print(f"  Compressed: ratio={result.compression_ratio:.1%}")
+            print("\n  AFTER compression:\n")
+            t.compile().pprint(style="compact")
         else:
             result.pprint()
 

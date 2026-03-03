@@ -160,6 +160,9 @@ def main():
         )
 
         # --- Phase 1: Design question (should NOT branch) ---
+        print("  Initial context:")
+        t.compile().pprint(style="compact")
+
         print("=== Phase 1: Design question (on main, no branching) ===\n")
         run_agent_loop(
             t, executor,
@@ -169,6 +172,9 @@ def main():
             "What's your recommended URL structure?",
         )
         print(f"\n  Branch: {t.current_branch}")
+
+        print("\n  Context after Phase 1:")
+        t.compile().pprint(style="compact")
 
         # --- Phase 2: Conceptual tangent (full LLM-driven lifecycle) ---
         print("\n\n=== Phase 2: Conceptual tangent (full agent lifecycle) ===\n")

@@ -54,6 +54,9 @@ def edit_and_summarize() -> None:
         pending.approve()
         print("  Committed with redacted content.")
 
+        print("\n  Context after committing redacted result:")
+        t.compile().pprint(style="chat")
+
     # --- summarize(): LLM-driven summarization ---
     print(f"\n  summarize(): LLM compresses verbose tool output")
 
@@ -115,6 +118,9 @@ def edit_and_summarize() -> None:
         pending.pprint()
 
         pending.approve()
+
+        print("\n  Context after committing summarized result:")
+        t.compile().pprint(style="compact")
 
 
 if __name__ == "__main__":

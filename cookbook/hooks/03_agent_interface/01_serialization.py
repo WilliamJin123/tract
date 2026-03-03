@@ -77,6 +77,11 @@ def to_dict_demo() -> None:
         pending_tr: PendingToolResult = t.tool_result(
             "x1", "grep", "main.py:10: # TODO fix this", review=True,
         )
+
+        # Show the pending state via pprint before serializing
+        print("\n  PendingToolResult state:")
+        pending_tr.pprint()
+
         tr_dict: dict = pending_tr.to_dict()
         print(f"\n  PendingToolResult.to_dict():")
         print(json.dumps(tr_dict, indent=4))

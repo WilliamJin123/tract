@@ -143,6 +143,9 @@ def part1_manual():
         for tool in tools:
             print(f"    - {tool['function']['name']}")
 
+        print("\n  BEFORE edit:")
+        t.compile().pprint(style="chat")
+
         # Inspect own response
         result = executor.execute("get_commit", {"commit_hash": ci.commit_hash})
         print(f"\n  get_commit({ci.commit_hash[:8]}):\n    {result.output[:200]}")
@@ -166,6 +169,9 @@ def part1_manual():
         # Log edits
         result = executor.execute("log", {"limit": 5, "op_filter": "edit"})
         print(f"\n  log(op_filter='edit'):\n    {result.output[:200]}")
+
+        print("\n  AFTER edit:")
+        t.compile().pprint(style="chat")
 
         print()
 
@@ -223,6 +229,9 @@ def part2_agent():
             f"and edit_target='{original_hash}'. After editing, compile to "
             f"verify the improved version appears."
         )
+
+        print("\n  Context after agent edits:")
+        t.compile().pprint(style="compact")
 
         # Show the edit chain
         print("\n  --- Edit chain ---")

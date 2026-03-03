@@ -47,6 +47,9 @@ def manual():
     print(f"\n  Child commits: {len(child.log())}")
     print(f"  Parent commits: {len(parent.log())} (unchanged)")
 
+    print("\n  Child context BEFORE compression:")
+    child.compile().pprint(style="compact")
+
     # Compress child's work into a summary
     child.compress(
         content="Caching patterns: write-through (consistent, slower), "
@@ -55,11 +58,17 @@ def manual():
                 "Distributed invalidation via pub/sub or versioned keys."
     )
 
+    print("\n  Child context AFTER compression:")
+    child.compile().pprint(style="compact")
+
     # Merge child branch back to parent
     result = parent.merge("research-caching")
     print(f"\n  Merge type: {result.merge_type}")
     print(f"  Parent commits after merge: {len(parent.log())}")
     print(f"  10 child turns -> compressed into parent's history")
+
+    print("\n  Parent context after merge:")
+    parent.compile().pprint(style="compact")
 
     session.close()
 

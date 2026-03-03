@@ -50,6 +50,9 @@ def gc_hooks() -> None:
         t.delete_branch("throwaway", force=True)
         print(f"\n  Deleted 'throwaway' branch — {orphan_count} commits now orphaned")
 
+        print("\n  Main branch conversation BEFORE gc:")
+        t.compile().pprint(style="chat")
+
         # --- review=True: get PendingGC without executing ---
         # orphan_retention_days=0 makes them immediately eligible
         pending: PendingGC = t.gc(orphan_retention_days=0, review=True)
@@ -69,6 +72,9 @@ def gc_hooks() -> None:
         result: GCResult = pending.approve()
         print(f"\n  Approved! GC complete")
         pending.pprint()
+
+        print("\n  Main branch conversation AFTER gc:")
+        t.compile().pprint(style="chat")
 
     # --- Hook handler pattern: auto-exclude by token count ---
     print(f"\n  Hook pattern: protect high-value orphans")

@@ -67,6 +67,9 @@ def part1_manual():
         resp = t.chat("What allocation would you recommend between stocks and bonds?")
         print(f"  Chat response (large model): {resp.text[:80]}...")
 
+        print("\n  Context BEFORE compression:\n")
+        t.compile().pprint(style="compact")
+
         # Check what config was recorded
         log = t.log()
         for ci in log:
@@ -86,6 +89,9 @@ def part1_manual():
             "strategy and tax-advantaged accounts (401k, Roth IRA, HSA).",
         )
         print(f"\n  Compression (small model): {result.compression_ratio:.1%} ratio")
+
+        print("\n  Context AFTER compression:\n")
+        t.compile().pprint(style="compact")
 
     # --- Approach 2: configure_clients() ---
 

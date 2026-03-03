@@ -37,6 +37,11 @@ def describe_api_demo() -> None:
         t.delete_branch("temp", force=True)
 
         pending: PendingGC = t.gc(orphan_retention_days=0, review=True)
+
+        # Show the pending state before generating docs
+        print(f"\n  PendingGC state:")
+        pending.pprint()
+
         api_doc: str = pending.describe_api()
 
         print(f"\n  PendingGC.describe_api():\n")
@@ -59,6 +64,11 @@ def describe_api_demo() -> None:
         pending_tr: PendingToolResult = t.tool_result(
             "y1", "test", "test output", review=True,
         )
+
+        # Show the pending state before generating docs
+        print(f"\n  PendingToolResult state:")
+        pending_tr.pprint()
+
         api_doc_tr: str = pending_tr.describe_api()
         print(f"\n  PendingToolResult.describe_api():\n")
         print(api_doc_tr)

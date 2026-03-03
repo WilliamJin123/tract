@@ -76,6 +76,9 @@ def introspection_demo() -> None:
         t.user("Hello, how are you?")
         t.assistant("I'm doing well!")
 
+        print("\n  Current conversation:\n")
+        t.compile().pprint(style="chat")
+
         spec = _make_quality_spec()
         t.register_operation(spec)
 

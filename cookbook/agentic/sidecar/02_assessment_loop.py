@@ -63,6 +63,9 @@ def part1_manual():
         else:
             print("  Action: no maintenance needed")
 
+        print("\n  AFTER maintenance:")
+        t.compile().pprint(style="compact")
+
         status = t.status()
         print(f"  After: {status.token_count}/{budget_max} tokens, "
               f"{status.commit_count} commits")
@@ -113,6 +116,9 @@ def part2_agent():
             status = "OK" if step.success else "FAIL"
             print(f"    [{status}] {step.tool_call.name}: "
                   f"{(step.result_output or step.result_error or '')[:60]}")
+
+        print("\n  Context after orchestrator:")
+        t.compile().pprint(style="compact")
 
         status = t.status()
         print(f"\n  Final: {status.token_count} tokens, {status.commit_count} commits")

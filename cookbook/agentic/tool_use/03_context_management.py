@@ -139,6 +139,9 @@ def part1_manual():
         for tool in tools:
             print(f"    - {tool['function']['name']}")
 
+        print("\n  Conversation:")
+        t.compile().pprint(style="compact")
+
         # Status
         result = executor.execute("status", {})
         print(f"\n  status():\n    {result.output}")
@@ -201,6 +204,9 @@ def part2_agent():
         print(f"  Context filled: {t.status().token_count} tokens")
         print(f"  Budget: {t.status().token_budget_max} max")
 
+        print("\n  BEFORE maintenance:")
+        t.compile().pprint(style="compact")
+
         # Ask the agent to maintain the context
         print("\n  --- Task: Assess and maintain context ---")
         run_agent_loop(
@@ -214,6 +220,9 @@ def part2_agent():
         )
 
         # Show final state
+        print("\n  AFTER maintenance:")
+        t.compile().pprint(style="compact")
+
         status = t.status()
         print(f"\n  Final: {status.token_count} tokens, "
               f"{status.commit_count} commits")

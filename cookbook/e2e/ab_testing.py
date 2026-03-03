@@ -34,6 +34,9 @@ def part1_manual():
         t.user("Explain how black holes form.")
         baseline_hash = t.head
 
+        print("\n  Baseline context (shared seed):\n")
+        t.compile().pprint(style="chat")
+
         # Variant A: low temperature (precise, focused)
         t.branch("variant-a")
         t.switch("variant-a")
@@ -50,6 +53,16 @@ def part1_manual():
                         temperature=0.9)
         hash_b = t.head
         print(f"  Variant B (temp=0.9): {resp_b.text[:80]}...")
+
+        # Show Variant A context
+        t.switch("variant-a")
+        print("\n  Variant A context (temp=0.2):\n")
+        t.compile().pprint(style="compact")
+
+        # Show Variant B context
+        t.switch("variant-b")
+        print("\n  Variant B context (temp=0.9):\n")
+        t.compile().pprint(style="compact")
 
         # Compare with diff
         t.switch("main")
@@ -106,10 +119,16 @@ def part2_agent():
         else:
             winner_branch = "casual"
 
+        print("\n  Main branch BEFORE merge:\n")
+        t.compile().pprint(style="compact")
+
         result = t.merge(winner_branch)
         print(f"\n  LLM judged: '{winner_branch}' is better")
         print(f"  Merged: {result.merge_type}")
         print(f"  Final commits: {len(t.log())}")
+
+        print("\n  Main branch AFTER merge:\n")
+        t.compile().pprint(style="compact")
 
 
 def main():

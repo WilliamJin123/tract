@@ -129,6 +129,10 @@ def part2_agent():
                   f"{status.commit_count} commits")
 
         print(f"\n  Auto-compressions fired: {compress_count}")
+
+        print("\n  Final conversation after 50 turns + auto-maintenance:\n")
+        t.compile().pprint(style="compact")
+
         final = t.status()
         budget_max = final.token_budget_max or 1
         print(f"  Final: {final.token_count}/{budget_max} tokens "
@@ -260,6 +264,10 @@ def part3_self_configuring():
             t.assistant(f"Follow-up {i} recorded. Pattern consistent with prior data.")
 
         ctx = t.compile()
+
+        print("\n  Final context after agent-configured trigger maintenance:\n")
+        t.compile().pprint(style="compact")
+
         final = t.status()
         print(f"  After 10 more turns: {final.token_count}/{budget_max} tokens, "
               f"{compress_count} auto-compressions")

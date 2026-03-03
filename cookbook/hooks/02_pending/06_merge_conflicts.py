@@ -50,6 +50,9 @@ def merge_conflict_hooks() -> None:
             text="Python is a versatile language popular in data science and web development.",
         )
 
+        print("\n  Main branch BEFORE merge:")
+        t.compile().pprint(style="chat")
+
         # --- review=True: get PendingMerge ---
         pending: PendingMerge = t.merge("feature", review=True)
 
@@ -74,6 +77,9 @@ def merge_conflict_hooks() -> None:
         result: Any = pending.approve()
         print(f"\n  Approved! Merge complete")
         pending.pprint()
+
+        print("\n  Main branch AFTER merge:")
+        t.compile().pprint(style="chat")
 
     # --- Hook handler pattern: auto-resolve ---
     print(f"\n  Hook pattern: auto-pick incoming version")
@@ -107,8 +113,14 @@ def merge_conflict_hooks() -> None:
                     pending.set_resolution(key, conflict.content_b_text)
             pending.approve()
 
+        print("\n  Main branch BEFORE auto-resolve merge:")
+        t.compile().pprint(style="chat")
+
         t.on("merge", prefer_incoming, name="prefer-incoming")
         result: Any = t.merge("feature2")
+
+        print("\n  Main branch AFTER auto-resolve merge:")
+        t.compile().pprint(style="chat")
 
         t.print_hooks()
 
