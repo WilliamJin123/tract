@@ -44,14 +44,12 @@ def _is_hex_hash(s: str) -> bool:
 
 
 def _format_value_for_display(value: Any) -> str:
-    """Format a value for Rich table display, truncating long content."""
+    """Format a value for Rich table display."""
     if value is None:
         return "[dim]None[/dim]"
     if isinstance(value, str):
         if _is_hex_hash(value):
             return value[:8]
-        if len(value) > 80:
-            return value[:77] + "..."
         return value
     if isinstance(value, list):
         if len(value) == 0:
@@ -62,12 +60,11 @@ def _format_value_for_display(value: Any) -> str:
         # Single item: unwrap
         if len(value) == 1:
             return _format_value_for_display(value[0])
-        # Multiple strings: one per line, truncated
+        # Multiple strings: one per line
         if all(isinstance(v, str) for v in value):
             lines = []
             for i, v in enumerate(value):
-                preview = v[:100] + "..." if len(v) > 100 else v
-                lines.append(f"[{i}] {preview}")
+                lines.append(f"[{i}] {v}")
             return "\n".join(lines)
         # Mixed types
         return ", ".join(_format_value_for_display(v) for v in value)
