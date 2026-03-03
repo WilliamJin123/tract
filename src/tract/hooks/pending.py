@@ -38,33 +38,48 @@ class PendingStatus(str, Enum):
         return self.value
 
 
+def _is_hex_hash(s: str) -> bool:
+    """Check if a string looks like a commit hash (32+ hex chars)."""
+    return len(s) >= 32 and all(c in "0123456789abcdef" for c in s)
+
+
 def _format_value_for_display(value: Any) -> str:
     """Format a value for Rich table display, truncating long content."""
     if value is None:
         return "[dim]None[/dim]"
     if isinstance(value, str):
+        if _is_hex_hash(value):
+            return value[:8]
         if len(value) > 80:
-            return repr(value[:77] + "...")
-        return repr(value)
+            return value[:77] + "..."
+        return value
     if isinstance(value, list):
         if len(value) == 0:
             return "(empty)"
+        # All hashes: show as short hashes on one line
+        if all(isinstance(v, str) and _is_hex_hash(v) for v in value):
+            return ", ".join(v[:8] for v in value)
+        # Single item: unwrap
         if len(value) == 1:
             return _format_value_for_display(value[0])
-        if len(value) > 5:
-            return f"({len(value)} items)"
-        items = [_format_value_for_display(v) for v in value]
-        return ", ".join(items)
+        # Multiple strings: one per line, truncated
+        if all(isinstance(v, str) for v in value):
+            lines = []
+            for i, v in enumerate(value):
+                preview = v[:100] + "..." if len(v) > 100 else v
+                lines.append(f"[{i}] {preview}")
+            return "\n".join(lines)
+        # Mixed types
+        return ", ".join(_format_value_for_display(v) for v in value)
     if isinstance(value, dict):
         if len(value) == 0:
             return "{}"
-        if len(value) > 5:
-            return f"{{{len(value)} entries}}"
-        return repr(value)
+        items = [f"{k}: {_format_value_for_display(v)}" for k, v in value.items()]
+        return "\n".join(items)
     if isinstance(value, set):
         if len(value) == 0:
-            return "set()"
-        return repr(value)
+            return "(empty)"
+        return ", ".join(_format_value_for_display(v) for v in sorted(value, key=str))
     return repr(value)
 
 
