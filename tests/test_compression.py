@@ -168,10 +168,10 @@ class TestAutonomousMode:
         result = t.compress(target_tokens=100)
 
         assert isinstance(result, CompressResult)
-        # Verify the LLM was called with target tokens in prompt
+        # Verify the LLM was called with structural length hint
         assert mock.last_messages is not None
         user_msg = mock.last_messages[-1]["content"]
-        assert "100 tokens" in user_msg
+        assert "a few sentences" in user_msg
 
     def test_compress_with_instructions(self):
         """Custom instructions are included in the LLM prompt."""

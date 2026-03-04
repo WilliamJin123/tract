@@ -27,8 +27,7 @@ DEFAULT_SUMMARIZE_SYSTEM: str = (
     "and agreed-upon constraints.\n"
     "- Prioritize information that affects future interactions -- "
     "decisions made, preferences expressed, requirements established.\n"
-    "- Omit filler, pleasantries, and redundant phrasing.\n"
-    "- If a target token count is specified, you MUST keep your response within that limit."
+    "- Omit filler, pleasantries, and redundant phrasing."
 )
 
 # ---------------------------------------------------------------------------
@@ -47,7 +46,6 @@ CONVERSATION_SUMMARIZE_SYSTEM: str = (
     "decisions made, preferences expressed, requirements established.\n"
     "- Omit pleasantries, greetings, filler, and meta-conversation "
     "(e.g., 'the user then asked...' is fine, but 'the user said hello' is not).\n"
-    "- If a target token count is specified, you MUST keep your response within that limit.\n"
     '- Begin your summary with "Previously in this conversation:"'
 )
 
@@ -68,8 +66,7 @@ TOOL_SUMMARIZE_SYSTEM: str = (
     "- Preserve key findings: specific values, line numbers, file paths, "
     "error messages, and decisions made based on results.\n"
     "- If multiple tool calls were made, summarize the sequence of actions "
-    "and their cumulative result, not each call individually.\n"
-    "- If a target token count is specified, you MUST keep your response within that limit."
+    "and their cumulative result, not each call individually."
 )
 
 
@@ -122,7 +119,11 @@ def build_tool_compact_prompt(
     )
 
     if target_tokens is not None:
-        prompt += f"\n\nTarget approximately {target_tokens} tokens per summary."
+        prompt += f"\n\nTarget length: {target_tokens} tokens per summary."
+        if target_tokens <= 100:
+            prompt += " Keep each summary to a few sentences."
+        elif target_tokens <= 300:
+            prompt += " Keep each summary to one paragraph."
 
     if instructions is not None:
         prompt += f"\nAdditional instructions: {instructions}"
@@ -141,8 +142,7 @@ TOOL_CONTEXT_SUMMARIZE_SYSTEM: str = (
     "- Filter the tool result to ONLY relevant information.\n"
     "- Omit data with no bearing on the conversation goals.\n"
     "- Preserve specific details needed: names, numbers, paths, errors.\n"
-    "- If entirely irrelevant, say so in one line.\n"
-    "- If a target token count is specified, you MUST keep your response within that limit."
+    "- If entirely irrelevant, say so in one line."
 )
 
 
@@ -183,10 +183,11 @@ def build_summarize_prompt(
         prompt = f"Summarize the following conversation segment:\n\n{messages_text}"
 
     if target_tokens is not None:
-        prompt += (
-            f"\nIMPORTANT: Aim for approximately {target_tokens} tokens. "
-            f"Keep your summary concise and within this target."
-        )
+        prompt += f"\nTarget length: {target_tokens} tokens."
+        if target_tokens <= 100:
+            prompt += " Keep your summary to a few sentences."
+        elif target_tokens <= 300:
+            prompt += " Keep your summary to one paragraph."
 
     if retention_instructions:
         prompt += (
@@ -217,7 +218,6 @@ DEFAULT_COLLAPSE_SYSTEM: str = (
     "exact values, error messages.\n"
     "- Omit the subagent's internal reasoning process unless it contains "
     "important caveats or trade-off analysis.\n"
-    "- If a target token count is specified, you MUST keep your response within that limit.\n"
     'Begin with: "Subagent completed: [task summary]"'
 )
 
@@ -248,7 +248,11 @@ def build_collapse_prompt(
     )
 
     if target_tokens is not None:
-        prompt += f"\nTarget approximately {target_tokens} tokens."
+        prompt += f"\nTarget length: {target_tokens} tokens."
+        if target_tokens <= 100:
+            prompt += " Keep your summary to a few sentences."
+        elif target_tokens <= 300:
+            prompt += " Keep your summary to one paragraph."
 
     if instructions is not None:
         prompt += f"\nAdditional instructions: {instructions}"
