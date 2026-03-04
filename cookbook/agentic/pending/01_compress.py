@@ -13,8 +13,6 @@ import json
 import sys
 from pathlib import Path
 
-import httpx
-
 from tract import Priority, Tract
 from tract.hooks.compress import PendingCompress
 
@@ -93,15 +91,11 @@ def ask_agent(pending: PendingCompress, instruction: str, extra_context: str = "
         },
     ]
 
-    resp = httpx.post(
-        f"{llm.base_url}/chat/completions",
-        headers={"Authorization": f"Bearer {llm.api_key}"},
-        json={"model": MODEL_ID, "messages": messages, "tools": tools},
-        timeout=120,
-    )
-    resp.raise_for_status()
+    # Use tract's built-in LLM client (configured via Tract.open())
+    client = pending.tract._llm_client
+    resp = client.chat(messages, tools=tools)
 
-    choice = resp.json()["choices"][0]["message"]
+    choice = resp["choices"][0]["message"]
     tc_list = choice.get("tool_calls", [])
 
     if tc_list:

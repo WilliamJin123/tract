@@ -8,15 +8,13 @@ output to fit a token budget, and rejecting useless error results.
 Demonstrates: PendingToolResult lifecycle, to_dict()/to_tools() for LLM
               consumption, edit_result with original_content preservation,
               summarize with target_tokens, reject for error results,
-              httpx direct LLM calls for agentic decision-making
+              tract's built-in LLM client for agentic decision-making
 """
 
 import json
 import sys
 from pathlib import Path
 from typing import Any
-
-import httpx
 
 from tract import Tract
 from tract.hooks.tool_result import PendingToolResult
@@ -29,23 +27,12 @@ MODEL_ID = llm.large
 
 # -- helpers ---------------------------------------------------------
 
-def ask_llm(messages: list[dict], tools: list[dict] | None = None) -> dict:
-    """Single LLM call via httpx. Returns the raw response dict."""
-    body: dict[str, Any] = {
-        "model": MODEL_ID,
-        "messages": messages,
-        "max_tokens": 1024,
-    }
+def ask_llm(client, messages: list[dict], tools: list[dict] | None = None) -> dict:
+    """Single LLM call via tract's built-in client. Returns the raw response dict."""
+    kwargs: dict[str, Any] = {"max_tokens": 1024}
     if tools:
-        body["tools"] = tools
-    resp = httpx.post(
-        f"{llm.base_url}/chat/completions",
-        headers={"Authorization": f"Bearer {llm.api_key}"},
-        json=body,
-        timeout=120,
-    )
-    resp.raise_for_status()
-    return resp.json()
+        kwargs["tools"] = tools
+    return client.chat(messages, **kwargs)
 
 
 def extract_tool_call(raw: dict) -> dict[str, Any] | None:
@@ -134,7 +121,7 @@ def scenario_a_edit():
 
         # Agent loop: may need edit_result then approve (two tool calls)
         for turn in range(5):
-            raw_resp = ask_llm(decision_messages, tools)
+            raw_resp = ask_llm(t._llm_client, decision_messages, tools)
             decision = extract_tool_call(raw_resp)
 
             if not decision:
@@ -256,7 +243,7 @@ def scenario_b_summarize():
         ]
 
         for turn in range(5):
-            raw_resp = ask_llm(decision_messages, tools)
+            raw_resp = ask_llm(t._llm_client, decision_messages, tools)
             decision = extract_tool_call(raw_resp)
 
             if not decision:
@@ -387,7 +374,7 @@ def scenario_c_reject():
             )},
         ]
 
-        raw_resp = ask_llm(decision_messages, tools)
+        raw_resp = ask_llm(t._llm_client, decision_messages, tools)
         decision = extract_tool_call(raw_resp)
 
         if decision:

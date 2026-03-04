@@ -9,14 +9,12 @@ Part 1: PendingGC -- orphan cleanup with selective exclusion
 Part 2: PendingRebase -- replay plan review with commit skipping
 
 Demonstrates: to_dict() inspection, exclude() for selective control,
-              approve() for execution, httpx direct LLM calls
+              approve() for execution, tract's built-in LLM client
 """
 
 import json
 import sys
 from pathlib import Path
-
-import httpx
 
 from tract import Tract
 from tract.hooks.gc import PendingGC
@@ -32,7 +30,7 @@ def ask_agent(pending, instruction: str) -> dict:
     """Send a Pending's state to the LLM and get a structured decision back.
 
     Builds a prompt from to_dict() context and to_tools() schemas, sends
-    it via httpx, and returns the parsed decision dict.
+    it via tract's built-in LLM client, and returns the parsed decision dict.
     """
     state = pending.to_dict()
     tools = pending.to_tools()
@@ -55,15 +53,9 @@ def ask_agent(pending, instruction: str) -> dict:
         },
     ]
 
-    resp = httpx.post(
-        f"{llm.base_url}/chat/completions",
-        headers={"Authorization": f"Bearer {llm.api_key}"},
-        json={"model": MODEL_ID, "messages": messages, "tools": tools},
-        timeout=120,
-    )
-    resp.raise_for_status()
-
-    raw = resp.json()
+    # Use tract's built-in LLM client (configured via Tract.open())
+    client = pending.tract._llm_client
+    raw = client.chat(messages, tools=tools)
     tc_list = raw["choices"][0]["message"].get("tool_calls", [])
 
     if tc_list:

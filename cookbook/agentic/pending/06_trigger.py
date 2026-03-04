@@ -23,8 +23,6 @@ import json
 import sys
 from pathlib import Path
 
-import httpx
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from _providers import groq as llm
 
@@ -38,22 +36,19 @@ MODEL_ID = llm.large
 # Helper: ask the LLM a question and get a JSON decision
 # =====================================================================
 
-def ask_agent(client: httpx.Client, system_prompt: str, user_prompt: str) -> dict:
-    """Send a prompt to the LLM and parse a JSON decision from the response."""
-    response = client.post(
-        "/chat/completions",
-        json={
-            "model": MODEL_ID,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.0,
-            "max_tokens": 512,
-        },
+def ask_agent(client, system_prompt: str, user_prompt: str) -> dict:
+    """Send a prompt to the LLM via tract's built-in client and parse a JSON decision."""
+    from tract.llm.client import OpenAIClient
+
+    response = client.chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.0,
+        max_tokens=512,
     )
-    response.raise_for_status()
-    text = response.json()["choices"][0]["message"]["content"]
+    text = OpenAIClient.extract_content(response)
     # Extract JSON from the response (handle markdown code fences)
     text = text.strip()
     if text.startswith("```"):
@@ -98,13 +93,13 @@ def scenario_a_approve():
         return
 
     config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=200))
-    client = httpx.Client(
-        base_url=llm.base_url,
-        headers={"Authorization": f"Bearer {llm.api_key}"},
-        timeout=30.0,
-    )
 
-    with Tract.open(config=config) as t:
+    with Tract.open(
+        api_key=llm.api_key,
+        base_url=llm.base_url,
+        model=MODEL_ID,
+        config=config,
+    ) as t:
         # Track what the agent decided
         decisions: list[dict] = []
 
@@ -116,13 +111,13 @@ def scenario_a_approve():
             print(f"  [hook] Reason:        {pending.reason}")
             print(f"  [hook] Params:        {pending.action_params}")
 
-            # Ask the agent
+            # Use tract's built-in LLM client (configured via Tract.open())
             prompt = (
                 f"A trigger has fired. Here is the pending action:\n\n"
                 f"{json.dumps(info, indent=2)}\n\n"
                 f"What should we do?"
             )
-            decision = ask_agent(client, APPROVE_SYSTEM, prompt)
+            decision = ask_agent(pending.tract._llm_client, APPROVE_SYSTEM, prompt)
             decisions.append(decision)
             print(f"  [agent] Decision: {json.dumps(decision)}")
 
@@ -157,7 +152,6 @@ def scenario_a_approve():
         else:
             print("\n  (trigger did not fire -- threshold not reached)")
 
-    client.close()
     print()
 
 
@@ -197,13 +191,13 @@ def scenario_b_reject():
         return
 
     config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=200))
-    client = httpx.Client(
-        base_url=llm.base_url,
-        headers={"Authorization": f"Bearer {llm.api_key}"},
-        timeout=30.0,
-    )
 
-    with Tract.open(config=config) as t:
+    with Tract.open(
+        api_key=llm.api_key,
+        base_url=llm.base_url,
+        model=MODEL_ID,
+        config=config,
+    ) as t:
         rejections: list[dict] = []
 
         def agent_handler(pending: PendingTrigger) -> None:
@@ -213,14 +207,14 @@ def scenario_b_reject():
             print(f"  [hook] Action type:   {pending.action_type}")
             print(f"  [hook] Reason:        {pending.reason}")
 
-            # Ask the agent
+            # Use tract's built-in LLM client (configured via Tract.open())
             prompt = (
                 f"A compression trigger wants to fire:\n\n"
                 f"{json.dumps(info, indent=2)}\n\n"
                 f"The user is actively analyzing this experiment data. "
                 f"Should we compress?"
             )
-            decision = ask_agent(client, REJECT_SYSTEM, prompt)
+            decision = ask_agent(pending.tract._llm_client, REJECT_SYSTEM, prompt)
             rejections.append(decision)
             print(f"  [agent] Decision: {json.dumps(decision)}")
 
@@ -256,7 +250,6 @@ def scenario_b_reject():
         else:
             print("\n  (trigger did not fire)")
 
-    client.close()
     print()
 
 

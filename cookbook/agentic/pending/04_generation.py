@@ -9,7 +9,7 @@ Demonstrates:
 PendingGeneration is created internally by generate() when a validator is
 provided -- NOT via review=True. You intercept it by registering a handler
 on the "generate" hook. Inside the handler, the agent uses to_dict() +
-to_tools() + a SEPARATE httpx LLM call to decide what to do.
+to_tools() + tract's built-in LLM client to decide what to do.
 
 Scenario A: Quality gate agent
     Validator rejects short responses. The hook handler validates, retries
@@ -23,8 +23,6 @@ Scenario B: Agent-driven rejection
 import json
 import sys
 from pathlib import Path
-
-import httpx
 
 from tract import Tract
 from tract.exceptions import RetryExhaustedError
@@ -68,14 +66,9 @@ def _ask_agent(pending: PendingGeneration, instruction: str) -> dict:
         },
     ]
 
-    resp = httpx.post(
-        f"{llm.base_url}/chat/completions",
-        headers={"Authorization": f"Bearer {llm.api_key}"},
-        json={"model": MODEL_ID, "messages": messages, "tools": tools},
-        timeout=120,
-    )
-    resp.raise_for_status()
-    raw = resp.json()
+    # Use tract's built-in LLM client (configured via Tract.open())
+    client = pending.tract._llm_client
+    raw = client.chat(messages, tools=tools)
 
     tc_list = raw["choices"][0]["message"].get("tool_calls", [])
     if tc_list:
@@ -332,8 +325,8 @@ def main() -> None:
   2. Register t.on("generate", handler) to intercept. The handler receives
      the PendingGeneration directly.
 
-  3. Inside the handler, use to_dict() + to_tools() + httpx to ask a
-     SEPARATE LLM to decide (approve, reject, retry, validate).
+  3. Inside the handler, use to_dict() + to_tools() + tract's LLM client
+     to ask a SEPARATE LLM to decide (approve, reject, retry, validate).
 
   4. retry() commits a steering message, re-generates via LLM, and updates
      response_text in place. Failed attempts get SKIP-annotated on approve().
@@ -342,8 +335,8 @@ def main() -> None:
 
   6. Rejection from the hook raises RetryExhaustedError in the caller.
 
-  7. The agent LLM call (via httpx) is completely independent from the
-     tract generate() LLM call that produced the response.
+  7. The agent LLM call is completely independent from the tract generate()
+     LLM call that produced the response (same client, separate call).
 """)
 
 

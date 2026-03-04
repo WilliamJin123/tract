@@ -22,8 +22,6 @@ import json
 import sys
 from pathlib import Path
 
-import httpx
-
 from tract import Tract
 from tract.hooks.merge import PendingMerge
 from tract.models.commit import CommitInfo
@@ -65,14 +63,9 @@ def ask_agent(pending: PendingMerge, instruction: str) -> dict:
         },
     ]
 
-    resp = httpx.post(
-        f"{llm.base_url}/chat/completions",
-        headers={"Authorization": f"Bearer {llm.api_key}"},
-        json={"model": MODEL_ID, "messages": messages, "tools": tools},
-        timeout=120,
-    )
-    resp.raise_for_status()
-    raw = resp.json()
+    # Use tract's built-in LLM client (configured via Tract.open())
+    client = pending.tract._llm_client
+    raw = client.chat(messages, tools=tools)
 
     tc_list = raw["choices"][0]["message"].get("tool_calls", [])
     if tc_list:
