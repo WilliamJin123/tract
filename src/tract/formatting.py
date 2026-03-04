@@ -922,3 +922,66 @@ def pprint_tag_registry(entries: list[dict], *, file: Any = None) -> None:
         table.add_row(name, str(count), source_text, desc)
 
     console.print(table)
+
+
+def pprint_hooks(data: dict, *, file: Any = None) -> None:
+    """Pretty-print hook registrations and recent activity.
+
+    Args:
+        data: Dict from ``Tract.list_hooks()`` with ``handlers`` and ``log``.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    # -- Handlers table --
+    handlers = data.get("handlers", [])
+    h_table = Table(title="Registered Hooks", show_lines=False)
+    h_table.add_column("Operation", style="bold", no_wrap=True)
+    h_table.add_column("Handler", style="cyan", no_wrap=True)
+
+    if handlers:
+        for h in handlers:
+            h_table.add_row(h.get("operation", ""), h.get("name", ""))
+    else:
+        h_table.add_row(Text("(none)", style="dim"), Text("", style="dim"))
+
+    console.print(h_table)
+
+    # -- Log table --
+    log = data.get("log", [])
+    l_table = Table(title=f"Hook Log ({len(log)} events)", show_lines=False)
+    l_table.add_column("Time", style="dim", width=10, no_wrap=True)
+    l_table.add_column("Operation", style="bold", no_wrap=True)
+    l_table.add_column("Handler", style="cyan", no_wrap=True)
+    l_table.add_column("Result", no_wrap=True)
+
+    result_styles = {
+        "approved": "green",
+        "rejected": "red",
+        "unresolved": "yellow",
+        "skipped": "dim",
+        "auto-approved": "bright_green",
+    }
+
+    for evt in log:
+        ts = evt.get("timestamp", "")
+        if "T" in ts:
+            ts = ts.split("T")[1][:8]  # HH:MM:SS from ISO
+        result = evt.get("result", "")
+        style = result_styles.get(result, "white")
+        l_table.add_row(
+            ts,
+            evt.get("operation", ""),
+            evt.get("handler_name", ""),
+            Text(result, style=style),
+        )
+
+    if not log:
+        l_table.add_row(
+            Text("", style="dim"),
+            Text("(no events)", style="dim"),
+            Text("", style="dim"),
+            Text("", style="dim"),
+        )
+
+    console.print(l_table)

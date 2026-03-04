@@ -78,7 +78,7 @@ def hook_handler_patterns() -> None:
         ctx_after.pprint(style="compact")
 
         # print_hooks() shows registered handlers and recent hook log
-        t.print_hooks()
+        t.pprint_hooks()
 
     # --- Pattern B: Quality gate (reject) ---
     print("\n  Pattern B: Quality gate (reject if too long)")

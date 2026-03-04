@@ -115,7 +115,7 @@ def custom_routing() -> None:
         print(f"    {len(ctx.messages)} messages, {ctx.token_count} tokens")
         ctx.pprint(style="compact")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 if __name__ == "__main__":

@@ -140,7 +140,7 @@ pending.approve()
         except ValueError:
             print("  Correctly not hookable after unregister")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 if __name__ == "__main__":

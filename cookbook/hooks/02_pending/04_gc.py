@@ -110,7 +110,7 @@ def gc_hooks() -> None:
         t.gc(orphan_retention_days=0)
 
         # print_hooks shows registered handlers and recent hook_log
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 if __name__ == "__main__":

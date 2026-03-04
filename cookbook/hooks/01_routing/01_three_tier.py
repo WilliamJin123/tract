@@ -65,7 +65,7 @@ def three_tier_routing() -> None:
         print(f"  hook_log: handler={last_event.handler_name}, result={last_event.result}")
         print(f"  (No hook was called -- the system auto-approved silently.)")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
     # -----------------------------------------------------------------
     # Tier 2 (registered hook): compress with a handler
@@ -108,7 +108,7 @@ def three_tier_routing() -> None:
             pending.approve()
 
         t.on("compress", review_compress, name="review_compress")
-        t.print_hooks()
+        t.pprint_hooks()
 
         # Trigger compress -- the hook fires (tier 2)
         result: CompressResult = t.compress(target_tokens=200)
@@ -177,7 +177,7 @@ def three_tier_routing() -> None:
         print("\n  Context after manual approval:\n")
         t.compile().pprint(style="chat")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 if __name__ == "__main__":

@@ -96,7 +96,7 @@ def ordering_basics() -> None:
 
         # Show full hook table
         print()
-        t.print_hooks()
+        t.pprint_hooks()
 
         # --- Run compress to prove the firing order ---
         print("\n  BEFORE compression:\n")
@@ -313,7 +313,7 @@ def dynamic_insertion() -> None:
         print("\n  Step 4 -- t.off('compress', 'rate_limiter'):")
         print(f"    hook_names = {t.hook_names}")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 # =====================================================================
@@ -413,7 +413,7 @@ def full_pipeline() -> None:
             ts = evt.timestamp.strftime("%H:%M:%S")
             print(f"    [{ts}] {evt.operation} -> {evt.handler_name}: {evt.result}")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 # =====================================================================

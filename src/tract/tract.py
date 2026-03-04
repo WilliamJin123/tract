@@ -6253,18 +6253,47 @@ class Tract:
         """Hook activity log (copy)."""
         return list(self._hook_log)
 
-    def print_hooks(self) -> None:
-        """Print registered hooks and recent activity."""
-        print("=== Registered Hooks ===")
-        if not self._hooks:
-            print("  (none)")
+    def list_hooks(self) -> dict:
+        """Return structured hook registration and recent activity.
+
+        Returns a dict with two keys:
+
+        * ``handlers`` -- list of dicts with ``operation``, ``name`` for each
+          registered handler (sorted by operation).
+        * ``log`` -- list of dicts with ``timestamp``, ``operation``,
+          ``handler_name``, ``resolved``, ``result`` for the most recent
+          20 hook events.
+        """
+        handlers: list[dict[str, str]] = []
         for op, entries in sorted(self._hooks.items()):
             for e in entries:
-                print(f"  {op}: {e.name}")
-        print(f"\n=== Hook Log ({len(self._hook_log)} events) ===")
+                handlers.append({"operation": op, "name": e.name})
+
+        log: list[dict] = []
         for evt in self._hook_log[-20:]:
-            ts = evt.timestamp.strftime("%H:%M:%S")
-            print(f"  [{ts}] {evt.operation} -> {evt.handler_name}: {evt.result}")
+            log.append({
+                "timestamp": evt.timestamp.isoformat(),
+                "operation": evt.operation,
+                "handler_name": evt.handler_name,
+                "resolved": evt.resolved,
+                "result": evt.result,
+            })
+
+        return {"handlers": handlers, "log": log}
+
+    def pprint_hooks(self) -> None:
+        """Pretty-print registered hooks and recent activity using Rich."""
+        from tract.formatting import pprint_hooks
+        pprint_hooks(self.list_hooks())
+
+    def print_hooks(self) -> None:
+        """Print registered hooks and recent activity.
+
+        .. deprecated::
+            Use :meth:`pprint_hooks` for Rich-formatted output, or
+            :meth:`list_hooks` for structured data.
+        """
+        self.pprint_hooks()
 
     def _fire_hook(self, pending: Pending) -> None:
         """Route a Pending through the hook system.

@@ -450,13 +450,13 @@ class TestHookLogRecursionGuard:
 
 
 # ===========================================================================
-# 13. print_hooks() runs without error
+# 13. list_hooks() / pprint_hooks() / print_hooks() (deprecated alias)
 # ===========================================================================
 
 
-class TestPrintHooks:
-    def test_print_hooks_no_crash(self, capsys):
-        """print_hooks() runs without error and produces output."""
+class TestListHooks:
+    def test_list_hooks_with_handlers_and_log(self):
+        """list_hooks() returns structured handler and log data."""
         t = _make_compressible_tract()
 
         def my_handler(p):
@@ -465,19 +465,82 @@ class TestPrintHooks:
         t.on("compress", my_handler)
         t.compress(content="summary")
 
-        t.print_hooks()
+        data = t.list_hooks()
+        assert "handlers" in data
+        assert "log" in data
+
+        # Check handler entry
+        assert len(data["handlers"]) == 1
+        h = data["handlers"][0]
+        assert h["operation"] == "compress"
+        assert h["name"] == "my_handler"
+
+        # Check log entry
+        assert len(data["log"]) >= 1
+        evt = data["log"][0]
+        assert evt["operation"] == "compress"
+        assert evt["handler_name"] == "my_handler"
+        assert "timestamp" in evt
+        assert evt["resolved"] is True
+        assert evt["result"] in ("approved", "auto-approved")
+        t.close()
+
+    def test_list_hooks_empty(self):
+        """list_hooks() with no hooks returns empty lists."""
+        t = Tract.open(":memory:")
+        data = t.list_hooks()
+        assert data["handlers"] == []
+        assert data["log"] == []
+        t.close()
+
+    def test_list_hooks_multiple_operations(self):
+        """list_hooks() returns handlers sorted by operation."""
+        t = _make_compressible_tract()
+
+        t.on("compress", lambda p: p.approve(), name="handler_a")
+        t.on("gc", lambda p: p.approve(), name="handler_b")
+
+        data = t.list_hooks()
+        ops = [h["operation"] for h in data["handlers"]]
+        assert ops == sorted(ops)
+        assert len(data["handlers"]) == 2
+        t.close()
+
+
+class TestPprintHooks:
+    def test_pprint_hooks_with_handlers(self, capsys):
+        """pprint_hooks() produces Rich-formatted output."""
+        t = _make_compressible_tract()
+
+        def my_handler(p):
+            p.approve()
+
+        t.on("compress", my_handler)
+        t.compress(content="summary")
+
+        t.pprint_hooks()
         captured = capsys.readouterr()
         assert "Registered Hooks" in captured.out
         assert "Hook Log" in captured.out
         assert "compress" in captured.out
+        assert "my_handler" in captured.out
         t.close()
 
-    def test_print_hooks_empty(self, capsys):
-        """print_hooks() with no hooks shows '(none)'."""
+    def test_pprint_hooks_empty(self, capsys):
+        """pprint_hooks() with no hooks shows '(none)'."""
+        t = Tract.open(":memory:")
+        t.pprint_hooks()
+        captured = capsys.readouterr()
+        assert "(none)" in captured.out
+        t.close()
+
+    def test_print_hooks_delegates_to_pprint(self, capsys):
+        """print_hooks() (deprecated) delegates to pprint_hooks()."""
         t = Tract.open(":memory:")
         t.print_hooks()
         captured = capsys.readouterr()
-        assert "(none)" in captured.out
+        # Should produce the same Rich output as pprint_hooks()
+        assert "Registered Hooks" in captured.out
         t.close()
 
 

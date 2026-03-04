@@ -116,7 +116,7 @@ def guidance() -> None:
         print(f"      {len(ctx_after.messages)} messages, {ctx_after.token_count} tokens")
         ctx_after.pprint(style="chat")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 if __name__ == "__main__":

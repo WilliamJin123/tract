@@ -35,11 +35,12 @@ def to_tools_demo() -> None:
         t.annotate(sys_ci.commit_hash, Priority.PINNED)
         t.chat("What is DNA?", max_tokens=500)
         t.chat("How does DNA replication work?", max_tokens=500)
-        t.chat("What are the main enzymes involved?", max_tokens=500)
+        t.chat("What was the first user question verbatim?", max_tokens=500)
 
         pending: PendingCompress = t.compress(target_tokens=300, review=True)
 
         # Show pending state, then the tool schemas (the lesson)
+        t.compile().pprint()
         pending.pprint()
 
         tools: list[dict] = pending.to_tools()

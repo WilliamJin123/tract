@@ -122,7 +122,7 @@ def merge_conflict_hooks() -> None:
         print("\n  Main branch AFTER auto-resolve merge:")
         t.compile().pprint(style="chat")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 if __name__ == "__main__":

@@ -153,7 +153,7 @@ def catch_all() -> None:
         print(f"  specific log:  {specific_log}")
         print(f"  ('*' handled tool_result + gc, specific handler handled compress)")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
         print("\n  Final context:\n")
         t.compile().pprint(style="compact")

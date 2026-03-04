@@ -54,7 +54,7 @@ def declarative_config() -> None:
             include_context=True,
         )
 
-        t.print_hooks()
+        t.pprint_hooks()
 
         # --- Tool 1: list_directory (has specific instructions) ---
         t.assistant("Let me list the project.", metadata={

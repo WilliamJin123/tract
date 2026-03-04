@@ -87,7 +87,7 @@ def basic_token_gate() -> None:
             # result is PendingCompress (rejected by hook)
             result.pprint()
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 # =====================================================================
@@ -208,7 +208,7 @@ def middleware_and_enforcer() -> None:
             ts = evt.timestamp.strftime("%H:%M:%S")
             print(f"  [{ts}] {evt.operation} -> {evt.handler_name}: {evt.result}")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 # =====================================================================

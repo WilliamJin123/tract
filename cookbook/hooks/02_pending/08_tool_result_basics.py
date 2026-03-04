@@ -85,7 +85,7 @@ def hook_basics() -> None:
             ts = evt.timestamp.strftime("%H:%M:%S")
             print(f"  [{ts}] {evt.operation} -> {evt.handler_name}: {evt.result}")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
     # --- review=True: manual inspection ---
     print(f"\n  review=True returns PendingToolResult for manual inspection:")

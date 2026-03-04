@@ -94,7 +94,7 @@ def recursion_guard() -> None:
 
         t.on("tool_result", tool_result_hook, name="tool_result_hook")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
         # Trigger compress -- our hook fires, which triggers tool_result inside
         print("\n  Triggering compress...")

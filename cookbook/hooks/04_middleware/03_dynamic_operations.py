@@ -129,7 +129,7 @@ else:
         print(f"  Status: {pending.status}")
         print(f"  Verified: {pending.fields.get('verified')}")
 
-        t.print_hooks()
+        t.pprint_hooks()
 
 
 if __name__ == "__main__":
