@@ -60,6 +60,14 @@ Resolve the DAG into a linear sequence of messages. The read operation.
 Traverses the graph, resolves edits, applies priority filtering, respects
 active rules.
 
+Compile accepts a **strategy** that controls detail level:
+- `full` — all content (current default)
+- `messages` — commit messages only, no content bodies (free, no LLM)
+- `adaptive(k)` — last K commits at full detail, rest at messages-only
+
+Strategy is a compile-time parameter, not a mutation. The DAG is unchanged.
+The agent can set its compile strategy via rules (see RULES.md).
+
 ## Supporting Substrate
 
 These aren't operations but are substrate-level capabilities the rule
@@ -88,6 +96,20 @@ system depends on it for cross-stage data references.
 Rich querying (complex multi-field filters) starts as "search + compact"
 and graduates to query primitives via the promotion loop if repeatedly
 useful.
+
+### Structured Metadata (MetadataContent)
+Agent-maintained structured knowledge about its environment: file trees,
+dependency graphs, project plans, environment configs. Not conversation
+content — workspace state the agent updates as it works.
+
+- `compilable=False` (like RuleContent — never rendered as LLM messages)
+- Updated in-place via EDIT operations
+- Preserved across compression (engine treats like rules)
+- Optional `path` field for filesystem export/sync
+- Queryable by `kind` without full compile
+
+Bridges the gap between tract's SQL storage and agents' natural file-based
+state management. The source of truth is always tract; files are views.
 
 ## Classification Table
 

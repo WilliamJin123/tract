@@ -23,6 +23,9 @@ by a developer or LLM. None require special-cased code paths.
 | Fan-out / fan-in | Transition rule spawns N branches; merge rule consolidates on completion |
 | Urgent broadcast | Rule: on tag=urgent, cherry-pick commit to all active sibling branches |
 | Human approval gate | Rule: condition=requires_tag("approved"), block transition until present |
+| Context self-management | Rule: set compile_strategy based on token thresholds or task phase |
+| Living roadmap | PINNED metadata commit on root, auto-updated via LLM rule after significant commits |
+| Workspace metadata | MetadataContent commits (file trees, deps, env) — EDIT to update, query by kind |
 
 ## Concrete Schema Examples
 
@@ -217,6 +220,30 @@ stage: synthesize (branch off root)
 Multi-stage concurrency (ingest during organize): agent switches HEAD to
 ingest branch, works there with ingest rules, switches back. Or use a
 second agent on the ingest branch (fan-out pattern).
+
+## Example: Agent Self-Management Patterns
+
+```
+# Agent starts with full compile (short task)
+context_strategy: trigger=active, set(compile_strategy, full)
+
+# As context grows, switch to adaptive
+auto_slim: trigger=commit,
+    condition=threshold(total_tokens > 15000),
+    action=set_config(compile_strategy, adaptive, k=5)
+
+# For long-running research, start minimal
+context_strategy: trigger=active, set(compile_strategy, minimal)
+# Agent reads what it needs:
+#   t.log(limit=10)                              → recent commit messages
+#   t.compile(branch="experiments", detail="messages") → peek at other branch
+#   t.get_commit("abc123")                        → full content of one commit
+
+# Living roadmap — auto-updated after significant work
+roadmap_update: trigger=commit,
+    condition=llm("has the project plan materially changed?"),
+    action=llm("update the roadmap metadata commit with current state")
+```
 
 ## Key Insight
 

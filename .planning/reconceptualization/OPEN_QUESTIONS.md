@@ -31,6 +31,12 @@
   precedence (closer to HEAD wins). Name is stable identity for editing.
 - **Compile filter modes**: selective, summarized, same_context, new_agent
   with mode-specific params.
+- **Compile strategy**: full, minimal, adaptive(k). Agent controls its own
+  base context via active rules. Non-destructive read-time lens, orthogonal
+  to compression. compile() also exposed as read tool for cross-branch peeks.
+- **Structured metadata**: MetadataContent type (compilable=False, EDIT to
+  update, preserved across compression, optional path for file export).
+  Bridges tract SQL storage and agents' file-based state.
 
 ## Promotion Loop
 

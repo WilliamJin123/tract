@@ -1,7 +1,7 @@
 # Tract Reconceptualization: Substrate + Rules
 
 Date: 2026-03-04 (updated 2026-03-05)
-Status: Design exploration — substrate, rule schema, and engine conventions settled
+Status: Design exploration — substrate, rules, compile strategy, and metadata settled
 
 ## Motivation
 

@@ -202,6 +202,53 @@ the engine separates rule commits from content commits. Rules configure
 the compilation; content becomes the message list. Implemented via a
 `compilable=False` hint on the ContentTypeHints for the rule content type.
 
+## Compile Strategy (Agent Self-Management)
+
+The agent controls its own context window through the rule system. Compile
+strategy is an active rule that the orchestrator respects when building
+the base context:
+
+```python
+# Full compile (default — everything on the branch)
+RuleContent(name="context_strategy", trigger="active",
+    condition=None,
+    action={"type": "set_config", "key": "compile_strategy", "value": "full"})
+
+# Minimal base (GCC-style — agent reads more via tools as needed)
+RuleContent(name="context_strategy", trigger="active",
+    condition=None,
+    action={"type": "set_config", "key": "compile_strategy", "value": "minimal"})
+
+# Adaptive K-window (last K commits full, rest messages-only)
+RuleContent(name="context_strategy", trigger="active",
+    condition=None,
+    action={"type": "set_config", "key": "compile_strategy",
+            "value": "adaptive", "k": 5})
+```
+
+Strategies:
+- **full** — current behavior. Entire branch compiled to messages.
+- **minimal** — only latest commit summary + active rules in base context.
+  Agent uses read tools (log, get_commit, compile with branch/detail params)
+  to load more on demand. Best for long-running agents.
+- **adaptive(k)** — last K commits at full detail, everything before at
+  commit-messages-only. Non-destructive (no compression). Balances
+  orientation and context budget.
+
+The agent can change strategy mid-session via reactive rules:
+
+```python
+RuleContent(name="auto_slim", trigger="commit",
+    condition={"type": "threshold", "metric": "total_tokens", "op": ">", "value": 20000},
+    action={"type": "set_config", "key": "compile_strategy",
+            "value": "adaptive", "k": 3})
+```
+
+compile() is also exposed as a **read tool** with `branch` and `detail`
+parameters — for cross-branch exploration, not re-reading your own context.
+The agent calls `compile(branch="feature_x", detail="messages")` to peek
+at another branch's progress.
+
 ## Configs Are Rules
 
 Configs are rules with `trigger="active"` and `condition=None`:
