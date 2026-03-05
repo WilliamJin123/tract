@@ -46,9 +46,9 @@ def walk_ancestry(
     """
 ```
 
-This replaces the compiler's `_walk_chain` for rule collection. The compiler
-still uses its own `_walk_chain` for compilation (it needs the full chain for
-edit resolution).
+Used by `RuleIndex.build()` to collect rule commits from DAG ancestry.
+The compiler keeps its own `_walk_chain` for compilation (it needs the full
+chain for edit resolution) -- this function does NOT replace the compiler.
 
 ### Task 1.2: Rule Models (`rules/models.py`)
 
@@ -253,12 +253,22 @@ def evaluate_condition(
 
 ```python
 def _get_metric(name: str, ctx: EvalContext) -> float:
-    """Resolve a built-in metric value."""
+    """Resolve a built-in metric value.
+
+    IMPORTANT: Never call ctx.tract.compile() here -- this function may be
+    called during a "compile" event, which would cause infinite recursion.
+    All metrics must use pre-computed values from ctx.metrics or lightweight
+    queries (log length, commit fields).
+    """
+    # Check pre-computed metrics first (set by _fire_rules in tract.py)
+    if ctx.metrics and name in ctx.metrics:
+        return ctx.metrics[name]
     if name == "token_count" and ctx.commit:
         return ctx.commit.token_count or 0
     if name == "total_tokens":
-        compiled = ctx.tract.compile()
-        return compiled.token_count
+        # Pre-computed by _fire_rules() from cache or last known value.
+        # Falls back to 0 if not available (first compile, no cache).
+        return (ctx.metrics or {}).get("total_tokens", 0)
     if name == "commit_count":
         return len(ctx.tract.log())
     if name == "age_hours" and ctx.commit:

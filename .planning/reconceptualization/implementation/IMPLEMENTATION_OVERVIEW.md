@@ -25,9 +25,19 @@ Date: 2026-03-05
 
 Also deleted:
 - `src/tract/retry.py` (orchestrator dependency)
-- `src/tract/formatting.py` (hook display dependency, if exists)
 - Storage rows: HookWiringRow, TriggerLogRow, ConfigChangeRow, DynamicOpSpecRow
 - Related imports from `__init__.py` and `tract.py`
+
+**DO NOT DELETE** `src/tract/formatting.py` -- used by protocols.py, models/commit.py,
+models/merge.py, operations/diff.py, operations/history.py, cli/. Only remove
+`pprint_hooks()` and `list_hooks()` from it.
+
+**Note:** `src/tract/policy/` was already removed in a prior cleanup. Nothing to
+delete or keep.
+
+**Requires rewrite (not deletion):**
+- `src/tract/operations/compression.py` -- `compress_range()` returns `PendingCompress`
+  from hooks. Must be rewritten to return a plain `CompressResult` dataclass.
 
 ### What Gets Kept (untouched)
 
@@ -95,7 +105,7 @@ Strictly sequential -- each phase builds on the previous.
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | tract.py is 6,890 lines; surgery is error-prone | High | R0 does deletion only, R1-R3 add incrementally. Run surviving tests after each edit. |
-| Compile strategy changes break cache | Medium | Cache already invalidates on any param change. Strategy is a new param, not a new mechanism. |
+| Compile strategy changes break cache | Medium | Cache key must include `(head_hash, strategy, strategy_k)` as a composite key. Current cache is head_hash-only. Task 0.8 specifies the fix. |
 | Rule index rebuild on switch/merge is expensive | Low | Same invalidation pattern as compile cache. Already proven fast enough. |
 | Cheap models can't follow rule-heavy system prompts | Medium | Rules are evaluated by the engine, not the LLM. LLM conditions are opt-in. |
 | Cookbook rewrite scope is large (107 files) | Medium | Triage: rewrite 10 core cookbooks, delete the rest. New cookbooks for rules. |

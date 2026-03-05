@@ -68,7 +68,7 @@ def run_loop(
     config: LoopConfig | None = None,
     llm_client: LLMClient | None = None,
     tools: list[dict] | None = None,
-    on_step: callable | None = None,  # callback(step_num, response) for logging
+    on_step: Callable | None = None,  # callback(step_num, response) for logging
 ) -> LoopResult:
     """Run the default agent loop.
 

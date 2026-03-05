@@ -175,7 +175,9 @@ class RuleEngine:
         self._custom_conditions = custom_conditions or {}
         self._custom_actions = custom_actions or {}
         self._max_depth = max_depth
-        self._eval_depth: int = 0
+        # NOTE: _eval_depth lives on Tract, NOT on RuleEngine.
+        # RuleEngine is re-instantiated when rule_index goes stale,
+        # so a depth counter here would reset and defeat the guard.
 
     def process_event(
         self,
@@ -192,15 +194,18 @@ class RuleEngine:
 
         Returns EvalResult with blocked status and action results.
         """
-        # Recursion guard
-        if self._eval_depth >= self._max_depth:
+        # Recursion guard -- depth counter lives on Tract to survive
+        # engine re-instantiation (e.g., when a CreateRuleAction commits
+        # a new rule and the index goes stale).
+        depth = getattr(ctx.tract, '_rule_eval_depth', 0)
+        if depth >= self._max_depth:
             return EvalResult()
 
-        self._eval_depth += 1
+        ctx.tract._rule_eval_depth = depth + 1
         try:
             return self._process_event_inner(event, ctx)
         finally:
-            self._eval_depth -= 1
+            ctx.tract._rule_eval_depth = depth
 
     def _process_event_inner(self, event: str, ctx: EvalContext) -> EvalResult:
         # 1. Collect matching rules
@@ -335,12 +340,15 @@ class RuleEngine:
 
 **Modify `tract.py`:**
 
-Add `_rule_engine` property and event firing:
+Add `_rule_eval_depth` to Tract `__init__` and `_rule_engine` property:
 
 ```python
+# In __init__:
+self._rule_eval_depth: int = 0  # recursion guard, survives engine rebuild
+
 @property
 def _rule_engine(self) -> RuleEngine:
-    """Get the rule engine (lazy init)."""
+    """Get the rule engine (lazy init, re-created when index is stale)."""
     if self.__rule_engine is None or self._rule_index_stale:
         from tract.rules.engine import RuleEngine
         self.__rule_engine = RuleEngine(self.rule_index)
@@ -349,12 +357,25 @@ def _rule_engine(self) -> RuleEngine:
 def _fire_rules(self, event: str, commit: CommitInfo | None = None) -> EvalResult:
     """Fire rules for an event. Returns EvalResult."""
     from tract.rules.models import EvalContext
+
+    # Pre-compute metrics so condition evaluators never call compile().
+    # Use cached token count if available, else 0 (first compile).
+    metrics = {}
+    if self._cache_manager:
+        head = self.head
+        if head:
+            snapshot = self._cache_manager.get(head)
+            if snapshot:
+                metrics["total_tokens"] = snapshot.token_count
+    metrics.setdefault("total_tokens", 0)
+
     ctx = EvalContext(
         event=event,
         commit=commit,
         branch=self.current_branch or "",
         head=self.head or "",
         tract=self,
+        metrics=metrics,
         rule_index=self.rule_index,
     )
     return self._rule_engine.process_event(event, ctx)
@@ -438,10 +459,25 @@ def transition(self, target: str, **kwargs) -> CommitInfo | None:
             break
 
     # Build handoff payload
+    source = self.current_branch
     if compile_filter:
-        payload = self._build_transition_payload(compile_filter)
+        mode = compile_filter.get("mode", "full")
+        if mode == "selective":
+            # Compile with tag filtering
+            include_tags = compile_filter.get("include_tags", [])
+            compiled = self.compile()
+            # Filter messages to those from tagged commits
+            payload_text = "\n\n".join(
+                m.content for m in compiled.messages
+                if m.content  # simplified -- real impl filters by tag
+            )
+        elif mode == "same_context":
+            payload_text = self.compile().to_dicts()
+            payload_text = str(payload_text)  # serialize for handoff
+        else:
+            payload_text = str(self.compile().to_dicts())
     else:
-        payload = self.compile()  # default: full compile
+        payload_text = str(self.compile().to_dicts())
 
     # Switch to target branch (create if needed)
     if target not in [b.name for b in self.branches]:
@@ -452,9 +488,9 @@ def transition(self, target: str, **kwargs) -> CommitInfo | None:
     from tract.models.content import DialogueContent
     handoff_content = DialogueContent(
         role="system",
-        text=f"Transition handoff from previous stage.\n\n{self._format_payload(payload)}",
+        text=f"Transition handoff from {source}.\n\n{payload_text}",
     )
-    return self.commit(handoff_content, message=f"transition handoff from {target}",
+    return self.commit(handoff_content, message=f"transition handoff from {source} to {target}",
                        tags=["transition_handoff"])
 ```
 

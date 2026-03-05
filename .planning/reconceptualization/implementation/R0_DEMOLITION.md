@@ -28,6 +28,8 @@ works. Cookbooks and hook/orchestrator tests are deleted.
 - `src/tract/hooks/guidance.py`
 - `src/tract/hooks/introspection.py`
 - `src/tract/hooks/dynamic.py`
+- `src/tract/hooks/improve.py`
+- `src/tract/hooks/retry.py`
 - `src/tract/hooks/templates/` (entire dir)
 
 **Delete tests:**
@@ -108,12 +110,56 @@ works. Cookbooks and hook/orchestrator tests are deleted.
 - `tests/test_retry_compression.py`
 - `tests/test_dynamic_operations.py`
 - `tests/test_profile_switching.py`
+- `tests/test_improve.py` (entirely hooks-dependent)
 
 **Delete cookbooks that depend heavily on deleted systems:**
 - `cookbook/agentic/pending/` (entire dir, 6 files)
 - `cookbook/agentic/self_managing/` (entire dir, 4 files)
 - `cookbook/agentic/sidecar/` (entire dir, remaining files)
 - `cookbook/e2e/` (audit which survive -- most depend on orchestrator)
+
+### Task 0.4b: Rewrite `operations/compression.py`
+
+**Problem:** `compress_range()` imports, constructs, and returns `PendingCompress`
+from the hooks package. This is a substrate operation file that must survive, but
+its return type is a hook object.
+
+**Fix:** Create a plain frozen dataclass to replace `PendingCompress`:
+
+```python
+@dataclass(frozen=True)
+class CompressRangeResult:
+    """Result from compress_range() -- data needed to finalize compression."""
+    summary_text: str
+    summary_commits: list[str]  # hashes of new summary commits
+    replaced_hashes: list[str]  # hashes being compressed
+    pinned_hashes: list[str]    # preserved PINNED commits
+    token_count: int            # tokens in summary
+    generation_config: dict | None  # LLM config used (if any)
+```
+
+Modify `compress_range()` to return `CompressRangeResult` instead of
+`PendingCompress`. Remove the import of `PendingCompress`. The `Tract.compress()`
+method in `tract.py` will use `CompressRangeResult` directly to finalize
+(the approve/reject/validation workflow is deleted with hooks).
+
+### Task 0.4c: Fix Surviving Source File Imports
+
+These source files import from deleted packages and must be surgically modified
+in R0, not deferred to later phases:
+
+- `src/tract/toolkit/__init__.py` -- line 17: `from tract.orchestrator.models import ToolCall`.
+  Fix: Change to `from tract.protocols import ToolCall` (protocols.py already has
+  a ToolCall class). Verify the two ToolCall classes are compatible or merge them.
+
+- `src/tract/toolkit/definitions.py` -- line 997: `from tract.triggers.builtin import ...`.
+  Fix: Remove trigger-related tool definitions entirely. They will be replaced
+  by rule-based tool definitions in R3.
+
+- `src/tract/cli/commands/merge.py` -- line 46: `from tract.hooks.merge import PendingMerge`.
+  Fix: Remove the PendingMerge-based conflict review workflow. The merge CLI
+  command should directly return MergeResult (conflicts raise MergeError as before
+  the hook system existed).
 
 ### Task 0.5: Clean tract.py Facade
 
@@ -303,6 +349,12 @@ For "adaptive", split effective_commits into two groups:
 - `head = effective_commits[:-k]` -- messages only
 Build messages for each group with appropriate detail level.
 
+**Cache key change:** The compile cache in `engine/cache.py` is currently keyed
+on `head_hash` only. Strategy must be part of the key or different strategies
+at the same HEAD will return wrong cached results. Change `CacheManager.get()`
+and `CacheManager.put()` to use a composite key: `(head_hash, strategy, strategy_k)`.
+Update the `_cache` type to `OrderedDict[tuple[str, str, int], CompileSnapshot]`.
+
 **Modify `tract.py` compile():**
 
 Thread `strategy` and `strategy_k` through to compiler:
@@ -351,8 +403,6 @@ Remove only the affected test functions, keep the rest.
   (remove tests that use PendingCompress)
 - `test_operation_config.py` -- lines 551+: `from tract.orchestrator.*`
   (remove orchestrator-related config tests, ~80 lines)
-- `test_improve.py` -- entirely hooks-dependent, DELETE this file
-
 ### Surviving Tests (must pass)
 - `test_models/test_content.py` (+ new tests for RuleContent, MetadataContent)
 - `test_storage/test_schema.py`
