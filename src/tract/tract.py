@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from tract.toolkit.executor import ToolExecutor
     from tract.protocols import ToolTurn
     from tract.models.config import ToolSummarizationConfig
+    from tract.rules.index import RuleIndex
     from tract.storage.schema import CommitRow
 
 
@@ -177,6 +178,9 @@ class Tract:
         self._tool_summarization_config: ToolSummarizationConfig | None = None
         self._commit_reasoning: bool = True
         self._auto_message_enabled: bool = False
+
+        # Rule engine state
+        self._rule_index: RuleIndex | None = None
 
         # Persistence state
         self._db_path: str = ":memory:"
@@ -535,6 +539,31 @@ class Tract:
         return self._ref_repo.get_current_branch(self._tract_id)
 
     @property
+    def rule_index(self) -> RuleIndex:
+        """Get the current rule index (built/cached from DAG ancestry)."""
+        from tract.rules.index import RuleIndex as _RuleIndex
+
+        if self._rule_index is None or self._rule_index.is_stale:
+            head = self.head
+            if head is None:
+                return _RuleIndex()
+            self._rule_index = _RuleIndex.build(
+                self._commit_repo, self._blob_repo, head,
+                parent_repo=self._parent_repo,
+                annotation_repo=self._annotation_repo,
+            )
+        return self._rule_index
+
+    def get_config(self, key: str, default: object = None) -> object:
+        """Resolve a config value from active rules.
+
+        Uses DAG precedence: closest to HEAD wins.
+        """
+        from tract.rules.config import resolve_config
+
+        return resolve_config(self.rule_index, key, default=default)
+
+    @property
     def spawn_repo(self) -> SqliteSpawnPointerRepository | None:
         """Expose spawn repo for internal use by Session."""
         return self._spawn_repo
@@ -828,6 +857,84 @@ class Tract:
                 # Do NOT clear cache -- other entries at different HEADs remain valid
 
         return info
+
+    def rule(
+        self,
+        name: str,
+        *,
+        trigger: str,
+        condition: dict | None = None,
+        action: dict,
+        message: str | None = None,
+        tags: list[str] | None = None,
+    ) -> CommitInfo:
+        """Create a rule by committing a RuleContent to the current branch.
+
+        Args:
+            name: Stable identity for the rule (human-readable).
+            trigger: When the engine evaluates this rule
+                ("active", "commit", "compile", "compress", "merge",
+                 "gc", "transition", "transition:{target}").
+            condition: Condition dict or None (always fires).
+            action: Action dict (required).
+            message: Optional commit message. Defaults to "rule: {name}".
+            tags: Optional tags for the rule commit.
+
+        Returns:
+            CommitInfo for the rule commit.
+        """
+        from tract.models.content import RuleContent
+
+        content = RuleContent(
+            name=name,
+            trigger=trigger,
+            condition=condition,
+            action=action,
+        )
+        info = self.commit(
+            content,
+            message=message or f"rule: {name}",
+            tags=tags,
+        )
+        # Invalidate rule index after rule commit
+        if self._rule_index is not None:
+            self._rule_index.invalidate()
+        return info
+
+    def metadata(
+        self,
+        kind: str,
+        data: dict | str,
+        *,
+        path: str | None = None,
+        message: str | None = None,
+        tags: list[str] | None = None,
+    ) -> CommitInfo:
+        """Create or update a metadata entry.
+
+        Args:
+            kind: Freeform label ("file_tree", "project_plan", etc.).
+            data: Structured or text content.
+            path: Optional filesystem path for export/sync.
+            message: Optional commit message.
+            tags: Optional tags.
+
+        Returns:
+            CommitInfo for the metadata commit.
+        """
+        from tract.models.content import MetadataContent
+
+        # MetadataContent.data is dict; if str passed, wrap it
+        if isinstance(data, str):
+            data_dict = {"text": data}
+        else:
+            data_dict = data
+        content = MetadataContent(kind=kind, data=data_dict, path=path)
+        return self.commit(
+            content,
+            message=message or f"metadata: {kind}",
+            tags=tags,
+        )
 
     def system(
         self,
@@ -3396,6 +3503,8 @@ class Tract:
             target, self._tract_id, self._commit_repo, self._ref_repo
         )
         self._session.commit()
+        if self._rule_index is not None:
+            self._rule_index.invalidate()
         return commit_hash
 
     def branch(
@@ -3460,6 +3569,8 @@ class Tract:
             target, self._tract_id, self._commit_repo, self._ref_repo
         )
         self._session.commit()
+        if self._rule_index is not None:
+            self._rule_index.invalidate()
         return commit_hash
 
     def list_branches(self) -> list[BranchInfo]:
@@ -4068,6 +4179,8 @@ class Tract:
             self._session.commit()
 
         self._cache.clear()
+        if self._rule_index is not None:
+            self._rule_index.invalidate()
         return result
 
     def commit_merge(
@@ -4145,6 +4258,8 @@ class Tract:
 
         # Clear compile cache
         self._cache.clear()
+        if self._rule_index is not None:
+            self._rule_index.invalidate()
 
         return result
 
@@ -4264,6 +4379,8 @@ class Tract:
         )
         self._session.commit()
         self._cache.clear()
+        if self._rule_index is not None:
+            self._rule_index.invalidate()
         return result
 
     def compress(

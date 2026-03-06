@@ -87,6 +87,12 @@ from tract.llm.protocols import LLMClient, AgentLoop
 from tract.toolkit.models import ToolDefinition, ToolProfile, ToolConfig, ToolResult
 from tract.toolkit.executor import ToolExecutor
 
+# Rule engine
+from tract.rules.models import RuleEntry, EvalContext, ActionResult, EvalResult
+from tract.rules.index import RuleIndex
+from tract.rules.conditions import evaluate_condition, BUILTIN_CONDITIONS
+from tract.rules.config import resolve_config, resolve_all_configs
+
 # Tool tracking
 from tract.models.tools import hash_tool_schema
 
@@ -204,6 +210,16 @@ __all__ = [
     "SessionError",
     "TagNotRegisteredError",
     "CurationError",
+    # Rule engine
+    "RuleEntry",
+    "EvalContext",
+    "ActionResult",
+    "EvalResult",
+    "RuleIndex",
+    "evaluate_condition",
+    "BUILTIN_CONDITIONS",
+    "resolve_config",
+    "resolve_all_configs",
     # Tool tracking
     "hash_tool_schema",
     # Compression models
