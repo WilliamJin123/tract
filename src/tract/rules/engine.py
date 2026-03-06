@@ -201,9 +201,13 @@ class RuleEngine:
     def _check_condition(self, condition: dict | None, ctx: EvalContext) -> bool:
         from tract.rules.conditions import evaluate_condition
 
-        return evaluate_condition(
-            condition, ctx, custom_conditions=self._custom_conditions
-        )
+        try:
+            return evaluate_condition(
+                condition, ctx, custom_conditions=self._custom_conditions
+            )
+        except Exception:
+            # Malformed conditions fail closed (don't fire the rule)
+            return False
 
     def _execute_action(self, action: dict, ctx: EvalContext) -> ActionResult:
         action_type = action.get("type", "")
@@ -214,7 +218,12 @@ class RuleEngine:
             return ActionResult(
                 action_type, False, reason=f"Unknown action: {action_type!r}"
             )
-        return handler.execute(action, ctx)
+        try:
+            return handler.execute(action, ctx)
+        except Exception as exc:
+            return ActionResult(
+                action_type, False, reason=f"Action failed: {exc}"
+            )
 
     @staticmethod
     def _dedup_set_config(results: list[ActionResult]) -> list[ActionResult]:

@@ -87,6 +87,9 @@ from tract.llm.protocols import LLMClient, AgentLoop
 from tract.toolkit.models import ToolDefinition, ToolProfile, ToolConfig, ToolResult
 from tract.toolkit.executor import ToolExecutor
 
+# Default loop
+from tract.loop import LoopConfig, LoopResult, run_loop
+
 # Rule engine
 from tract.rules.models import RuleEntry, EvalContext, ActionResult, EvalResult
 from tract.rules.index import RuleIndex
@@ -122,6 +125,7 @@ from tract.exceptions import (
     SessionError,
     TagNotRegisteredError,
     CurationError,
+    BlockedByRuleError,
 )
 
 __all__ = [
@@ -210,6 +214,7 @@ __all__ = [
     "SessionError",
     "TagNotRegisteredError",
     "CurationError",
+    "BlockedByRuleError",
     # Rule engine
     "RuleEntry",
     "EvalContext",
@@ -246,4 +251,8 @@ __all__ = [
     "ToolConfig",
     "ToolResult",
     "ToolExecutor",
+    # Default loop
+    "LoopConfig",
+    "LoopResult",
+    "run_loop",
 ]

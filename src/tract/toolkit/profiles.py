@@ -15,7 +15,7 @@ from tract.toolkit.models import ToolConfig, ToolProfile
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# All 22 tool names (must match definitions.py)
+# All 26 tool names (must match definitions.py)
 # ---------------------------------------------------------------------------
 _ALL_TOOL_NAMES = [
     "commit",
@@ -40,6 +40,10 @@ _ALL_TOOL_NAMES = [
     "register_tag",
     "get_tags",
     "list_tags",
+    "create_rule",
+    "create_metadata",
+    "get_config",
+    "transition",
 ]
 
 # ---------------------------------------------------------------------------
@@ -138,6 +142,22 @@ SELF_PROFILE = ToolProfile(
         "configure_model": ToolConfig(
             enabled=True,
             description="Change the LLM model or temperature for your operations.",
+        ),
+        "create_rule": ToolConfig(
+            enabled=True,
+            description="Create a rule on your branch to automate context management.",
+        ),
+        "create_metadata": ToolConfig(
+            enabled=True,
+            description="Store structured data (file trees, plans) alongside your context.",
+        ),
+        "get_config": ToolConfig(
+            enabled=True,
+            description="Check a config value set by your active rules.",
+        ),
+        "transition": ToolConfig(
+            enabled=True,
+            description="Transition to another branch using your rules.",
         ),
     },
 )
@@ -280,6 +300,22 @@ SUPERVISOR_PROFILE = ToolProfile(
         "list_tags": ToolConfig(
             enabled=True,
             description="List all registered tags in the managed agent's context.",
+        ),
+        "create_rule": ToolConfig(
+            enabled=True,
+            description="Create a rule on the managed agent's branch.",
+        ),
+        "create_metadata": ToolConfig(
+            enabled=True,
+            description="Store structured data in the managed agent's context.",
+        ),
+        "get_config": ToolConfig(
+            enabled=True,
+            description="Check a config value from the managed agent's active rules.",
+        ),
+        "transition": ToolConfig(
+            enabled=True,
+            description="Transition the managed agent to another branch using rules.",
         ),
     },
 )

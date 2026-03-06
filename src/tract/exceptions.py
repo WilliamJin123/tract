@@ -177,9 +177,6 @@ class TriggerConfigError(TraceError):
     """Raised when trigger configuration is invalid."""
 
 
-class OrchestratorError(TraceError):
-    """Raised when the orchestrator encounters an unrecoverable error."""
-
 
 class RetryExhaustedError(TraceError):
     """All retry attempts failed."""
@@ -209,3 +206,18 @@ class TagNotRegisteredError(TraceError):
 
 class CurationError(TraceError):
     """Raised when a curation operation fails during deploy()."""
+
+
+class BlockedByRuleError(TraceError):
+    """Raised when a rule blocks an operation.
+
+    Attributes:
+        event: The event that was blocked (e.g. "compile", "compress").
+        reasons: List of human-readable block reasons from rules.
+    """
+
+    def __init__(self, event: str, reasons: list[str]) -> None:
+        self.event = event
+        self.reasons = reasons
+        reason_str = "; ".join(reasons) if reasons else "Blocked by rule"
+        super().__init__(f"{event} blocked: {reason_str}")

@@ -26,6 +26,7 @@ from tract.models.commit import CommitInfo, CommitMetadata, CommitOperation
 from tract.models.config import LLMConfig, Operator, OperationClients, OperationConfigs, OperationPrompts, TractConfig
 from tract.models.content import validate_content
 from tract.exceptions import (
+    BlockedByRuleError,
     BranchNotFoundError,
     CommitNotFoundError,
     ContentValidationError,
@@ -583,43 +584,51 @@ class Tract:
         """
         from tract.rules.models import EvalContext, EvalResult
 
+        # Guard: prevent re-entrant rule firing (commit -> _fire_rules ->
+        # deferred rule() -> commit -> _fire_rules loop)
+        if getattr(self, "_firing_rules", False):
+            return EvalResult()
         # If no rules exist at all, short-circuit
         if len(self.rule_index) == 0:
             return EvalResult()
 
-        # Pre-compute metrics so condition evaluators never call compile()
-        metrics: dict = {}
-        if self._cache:
-            head = self.head
-            if head:
-                snapshot = self._cache.get(head)
-                if snapshot:
-                    metrics["total_tokens"] = snapshot.token_count
-        metrics.setdefault("total_tokens", 0)
+        self._firing_rules = True
+        try:
+            # Pre-compute metrics so condition evaluators never call compile()
+            metrics: dict = {}
+            if self._cache:
+                head = self.head
+                if head:
+                    snapshot = self._cache.get(head)
+                    if snapshot:
+                        metrics["total_tokens"] = snapshot.token_count
+            metrics.setdefault("total_tokens", 0)
 
-        ctx = EvalContext(
-            event=event,
-            commit=commit,
-            branch=self.current_branch or "",
-            head=self.head or "",
-            tract=self,
-            metrics=metrics,
-            rule_index=self.rule_index,
-        )
-        result = self._rule_engine.process_event(event, ctx)
+            ctx = EvalContext(
+                event=event,
+                commit=commit,
+                branch=self.current_branch or "",
+                head=self.head or "",
+                tract=self,
+                metrics=metrics,
+                rule_index=self.rule_index,
+            )
+            result = self._rule_engine.process_event(event, ctx)
 
-        # Post-process: commit deferred create_rule actions
-        for ar in result.action_results:
-            if ar.action_type == "create_rule" and ar.success and ar.data.get("deferred"):
-                template = ar.data["template"]
-                self.rule(
-                    name=template["name"],
-                    trigger=template["trigger"],
-                    condition=template.get("condition"),
-                    action=template["action"],
-                )
+            # Post-process: commit deferred create_rule actions
+            for ar in result.action_results:
+                if ar.action_type == "create_rule" and ar.success and ar.data.get("deferred"):
+                    template = ar.data["template"]
+                    self.rule(
+                        name=template["name"],
+                        trigger=template["trigger"],
+                        condition=template.get("condition"),
+                        action=template["action"],
+                    )
 
-        return result
+            return result
+        finally:
+            self._firing_rules = False
 
     def _fire_transition_rules(self, target: str) -> EvalResult:
         """Collect rules from both 'transition' and 'transition:{target}'
@@ -1001,6 +1010,9 @@ class Tract:
                         if patched is not None:
                             self._cache.put(info.commit_hash, patched)
                 # Do NOT clear cache -- other entries at different HEADs remain valid
+
+        # Fire post-commit rules (informational: deferred actions, no blocking)
+        self._fire_rules("commit", commit=info)
 
         return info
 
@@ -2185,79 +2197,40 @@ class Tract:
 
     def run(
         self,
-        task: str,
+        task: str | None = None,
         *,
-        executor: object | None = None,
-        tools: list | None = None,
-        max_turns: int = 10,
-        on_tool_call: Callable | None = None,
-        **generate_kwargs: object,
-    ) -> ChatResponse:
-        """Run an agent loop: user task -> generate -> execute tools -> repeat.
+        max_steps: int = 50,
+        system_prompt: str | None = None,
+        tools: list[dict] | None = None,
+        llm_client: object | None = None,
+        on_step: Callable | None = None,
+    ) -> LoopResult:
+        """Run the default agent loop on this tract.
 
-        Commits the user task, then loops: generate an LLM response, execute
-        any tool calls via the executor, commit tool results, and repeat
-        until the LLM responds with text (no tool calls) or max_turns is
-        reached.
+        Convenience wrapper around :func:`tract.loop.run_loop`.
 
         Args:
-            task: The user message / task to accomplish.
-            executor: A :class:`ToolExecutor` (or any object with an
-                ``execute(name, args) -> ToolResult`` method). Required
-                if the LLM may produce tool calls.
-            tools: Optional list of tool definitions (OpenAI format) to
-                pass to the LLM. If not provided and executor has
-                ``_tools``, they are auto-extracted.
-            max_turns: Maximum generate-execute round trips (default 10).
-            on_tool_call: Optional callback ``(name, args, result) -> None``
-                called after each tool execution, for logging/visibility.
-            **generate_kwargs: Extra keyword arguments passed through to
-                :meth:`generate` (e.g. model, temperature, max_tokens).
+            task: Task description (committed as user message).
+            max_steps: Maximum loop iterations.
+            system_prompt: System prompt prepended to context.
+            tools: Tool definitions (OpenAI format). Falls back to as_tools().
+            llm_client: LLM client override.
+            on_step: Step callback ``(step_num, response) -> None``.
 
         Returns:
-            The final :class:`ChatResponse` (the one without tool calls,
-            or the last response if max_turns is exhausted).
-
-        Raises:
-            LLMConfigError: If no LLM client is configured.
-            RuntimeError: If the LLM produces tool calls but no executor
-                is provided.
+            LoopResult with status, reason, steps, and tool_calls.
         """
-        from tract.toolkit.executor import ToolExecutor as _TE
+        from tract.loop import LoopConfig, LoopResult, run_loop
 
-        self.user(task)
-
-        # Auto-extract tool definitions from executor if not provided
-        if tools is None and executor is not None and isinstance(executor, _TE):
-            tools = [td.to_openai() for td in executor._tools.values()]
-
-        last_response: ChatResponse | None = None
-        for _turn in range(max_turns):
-            # Pass tools to generate via kwargs if available
-            gen_kw = dict(generate_kwargs)
-            if tools:
-                gen_kw["tools"] = tools
-
-            response = self.generate(**gen_kw)
-            last_response = response
-
-            if not response.tool_calls:
-                return response
-
-            if executor is None:
-                raise RuntimeError(
-                    "LLM produced tool calls but no executor was provided. "
-                    "Pass executor= to run()."
-                )
-
-            for tc in response.tool_calls:
-                result = executor.execute(tc.name, tc.arguments)
-                self.tool_result(tc.id, tc.name, str(result))
-                if on_tool_call is not None:
-                    on_tool_call(tc.name, tc.arguments, result)
-
-        # max_turns exhausted
-        return last_response
+        config = LoopConfig(max_steps=max_steps, system_prompt=system_prompt)
+        return run_loop(
+            self,
+            task=task,
+            config=config,
+            llm_client=llm_client,
+            tools=tools,
+            on_step=on_step,
+        )
 
     def revise(
         self,
@@ -2471,6 +2444,11 @@ class Tract:
             if order is not None:
                 return empty, []
             return empty
+
+        # Pre-compile rule check (blockable)
+        compile_eval = self._fire_rules("compile")
+        if compile_eval.blocked:
+            raise BlockedByRuleError("compile", compile_eval.block_reasons)
 
         # Strategy kwargs to forward to the compiler
         _strategy_kw = dict(strategy=strategy, strategy_k=strategy_k)
@@ -4286,6 +4264,11 @@ class Tract:
                     max_tokens=merge_config.get("max_tokens", 2048),
                 )
 
+        # Pre-merge rule check (blockable)
+        merge_eval = self._fire_rules("merge")
+        if merge_eval.blocked:
+            raise BlockedByRuleError("merge", merge_eval.block_reasons)
+
         result = merge_branches(
             tract_id=self._tract_id,
             source_branch=source_branch,
@@ -4643,6 +4626,11 @@ class Tract:
         if effective_system_prompt is None and self._operation_prompts.compress is not None:
             effective_system_prompt = self._operation_prompts.compress
 
+        # Pre-compress rule check (blockable)
+        compress_eval = self._fire_rules("compress")
+        if compress_eval.blocked:
+            raise BlockedByRuleError("compress", compress_eval.block_reasons)
+
         # Step 1: Generate summaries via compress_range
         range_result = compress_range(
             tract_id=self._tract_id,
@@ -4931,6 +4919,11 @@ class Tract:
 
         if self._parent_repo is None:
             raise CompressionError("Parent repository not available")
+
+        # Pre-GC rule check (blockable)
+        gc_eval = self._fire_rules("gc")
+        if gc_eval.blocked:
+            raise BlockedByRuleError("gc", gc_eval.block_reasons)
 
         # Plan phase: determine which commits to remove
         commits_to_remove, tokens_to_free = plan_gc(

@@ -441,7 +441,7 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
                     },
                     "operation": {
                         "type": "string",
-                        "enum": ["chat", "merge", "compress", "orchestrate", "message"],
+                        "enum": ["chat", "merge", "compress", "message"],
                         "description": "Operation to configure. Omit to set tract-wide default.",
                     },
                     "temperature": {
@@ -581,6 +581,111 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
                 "properties": {},
             },
             handler=lambda: _handle_list_tags(tract),
+        ),
+        # 23. create_rule
+        ToolDefinition(
+            name="create_rule",
+            description=(
+                "Create a rule on the current branch. Rules fire automatically "
+                "on events (commit, compile, compress, merge, gc, transition) "
+                "and can set config, require/block actions, or trigger operations."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Human-readable rule name.",
+                    },
+                    "trigger": {
+                        "type": "string",
+                        "description": (
+                            "When the rule fires: 'active', 'commit', 'compile', "
+                            "'compress', 'merge', 'gc', 'transition', 'transition:{target}'."
+                        ),
+                    },
+                    "action": {
+                        "type": "object",
+                        "description": "Action dict (e.g. {type: 'set_config', key: 'model', value: 'gpt-4o'}).",
+                    },
+                    "condition": {
+                        "type": "object",
+                        "description": "Optional condition dict (e.g. {token_budget_exceeded: true}).",
+                    },
+                },
+                "required": ["name", "trigger", "action"],
+            },
+            handler=lambda name, trigger, action, condition=None: _handle_create_rule(
+                tract, name, trigger, action, condition
+            ),
+        ),
+        # 24. create_metadata
+        ToolDefinition(
+            name="create_metadata",
+            description=(
+                "Create or update a metadata entry. Metadata stores structured "
+                "data (file trees, project plans, configs) alongside the context."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "description": "Freeform label (e.g. 'file_tree', 'project_plan').",
+                    },
+                    "data": {
+                        "type": "object",
+                        "description": "Structured content dict.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional filesystem path for export/sync.",
+                    },
+                },
+                "required": ["kind", "data"],
+            },
+            handler=lambda kind, data, path=None: _handle_create_metadata(
+                tract, kind, data, path
+            ),
+        ),
+        # 25. get_config
+        ToolDefinition(
+            name="get_config",
+            description=(
+                "Resolve a config value from active rules. Uses DAG precedence "
+                "(closest rule to HEAD wins). Returns the value or null."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Config key to resolve.",
+                    },
+                },
+                "required": ["key"],
+            },
+            handler=lambda key: _handle_get_config(tract, key),
+        ),
+        # 26. transition
+        ToolDefinition(
+            name="transition",
+            description=(
+                "Transition to a target branch using rules. Evaluates gate "
+                "conditions, runs pre-transition actions, builds a handoff "
+                "payload, and switches to the target branch."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Target branch name to transition to.",
+                    },
+                },
+                "required": ["target"],
+            },
+            handler=lambda target: _handle_transition(tract, target),
         ),
     ]
 
@@ -886,5 +991,40 @@ def _handle_query_by_tags(tract: Tract, tags: list[str], match: str) -> str:
         return f"No commits found with tags {tags} (match={match})"
     short = [r.commit_hash[:8] for r in results]
     return f"Found {len(results)} commits: {', '.join(short)}"
+
+
+def _handle_create_rule(
+    tract: Tract,
+    name: str,
+    trigger: str,
+    action: dict,
+    condition: dict | None,
+) -> str:
+    info = tract.rule(name=name, trigger=trigger, condition=condition, action=action)
+    return f"Created rule '{name}' ({info.commit_hash[:8]})"
+
+
+def _handle_create_metadata(
+    tract: Tract,
+    kind: str,
+    data: dict,
+    path: str | None,
+) -> str:
+    info = tract.metadata(kind, data, path=path)
+    return f"Created metadata '{kind}' ({info.commit_hash[:8]})"
+
+
+def _handle_get_config(tract: Tract, key: str) -> str:
+    value = tract.get_config(key)
+    if value is None:
+        return f"Config '{key}': not set"
+    return f"Config '{key}': {value}"
+
+
+def _handle_transition(tract: Tract, target: str) -> str:
+    result = tract.transition(target)
+    if result is None:
+        return f"Transition to '{target}' blocked by rules"
+    return f"Transitioned to '{target}' ({result.commit_hash[:8]})"
 
 
