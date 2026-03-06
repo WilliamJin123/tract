@@ -82,6 +82,21 @@ class NotCondition:
         return not evaluate_condition(condition, ctx)
 
 
+class LLMCondition:
+    """LLM-evaluated condition. Expensive, evaluated last.
+
+    Placeholder: passes through (True) when no LLM client is available.
+    Real implementation deferred to R4.
+    """
+
+    def evaluate(self, params: dict, ctx: EvalContext) -> bool:
+        llm = getattr(ctx.tract, "_llm_client", None)
+        if llm is None:
+            return True
+        # Real implementation: send instruction + context to LLM, parse bool
+        return True
+
+
 # Registry of built-in condition evaluators
 BUILTIN_CONDITIONS: dict[str, ConditionEvaluator] = {
     "tag": TagCondition(),
@@ -90,6 +105,7 @@ BUILTIN_CONDITIONS: dict[str, ConditionEvaluator] = {
     "all": AllCondition(),
     "any": AnyCondition(),
     "not": NotCondition(),
+    "llm": LLMCondition(),
 }
 
 

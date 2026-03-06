@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from tract.toolkit.executor import ToolExecutor
     from tract.protocols import ToolTurn
     from tract.models.config import ToolSummarizationConfig
+    from tract.rules.engine import RuleEngine
     from tract.rules.index import RuleIndex
     from tract.storage.schema import CommitRow
 
@@ -181,6 +182,8 @@ class Tract:
 
         # Rule engine state
         self._rule_index: RuleIndex | None = None
+        self._rule_eval_depth: int = 0  # recursion guard, survives engine rebuild
+        self.__rule_engine: RuleEngine | None = None
 
         # Persistence state
         self._db_path: str = ":memory:"
@@ -562,6 +565,149 @@ class Tract:
         from tract.rules.config import resolve_config
 
         return resolve_config(self.rule_index, key, default=default)
+
+    @property
+    def _rule_engine(self) -> RuleEngine:
+        """Get the rule engine (lazy init, re-created when index is stale)."""
+        if self.__rule_engine is None or self._rule_index is None or self._rule_index.is_stale:
+            from tract.rules.engine import RuleEngine as _RuleEngine
+
+            self.__rule_engine = _RuleEngine(self.rule_index)
+        return self.__rule_engine
+
+    def _fire_rules(self, event: str, commit: CommitInfo | None = None) -> EvalResult:
+        """Fire rules for an event. Returns EvalResult.
+
+        Post-processes deferred actions (e.g., create_rule commits) after the
+        event pipeline completes.
+        """
+        from tract.rules.models import EvalContext, EvalResult
+
+        # If no rules exist at all, short-circuit
+        if len(self.rule_index) == 0:
+            return EvalResult()
+
+        # Pre-compute metrics so condition evaluators never call compile()
+        metrics: dict = {}
+        if self._cache:
+            head = self.head
+            if head:
+                snapshot = self._cache.get(head)
+                if snapshot:
+                    metrics["total_tokens"] = snapshot.token_count
+        metrics.setdefault("total_tokens", 0)
+
+        ctx = EvalContext(
+            event=event,
+            commit=commit,
+            branch=self.current_branch or "",
+            head=self.head or "",
+            tract=self,
+            metrics=metrics,
+            rule_index=self.rule_index,
+        )
+        result = self._rule_engine.process_event(event, ctx)
+
+        # Post-process: commit deferred create_rule actions
+        for ar in result.action_results:
+            if ar.action_type == "create_rule" and ar.success and ar.data.get("deferred"):
+                template = ar.data["template"]
+                self.rule(
+                    name=template["name"],
+                    trigger=template["trigger"],
+                    condition=template.get("condition"),
+                    action=template["action"],
+                )
+
+        return result
+
+    def _fire_transition_rules(self, target: str) -> EvalResult:
+        """Collect rules from both 'transition' and 'transition:{target}'
+        triggers and process through a SINGLE gates->work->handoff->post pipeline."""
+        from tract.rules.models import EvalContext, EvalResult
+
+        if len(self.rule_index) == 0:
+            return EvalResult()
+
+        metrics: dict = {}
+        if self._cache:
+            head = self.head
+            if head:
+                snapshot = self._cache.get(head)
+                if snapshot:
+                    metrics["total_tokens"] = snapshot.token_count
+        metrics.setdefault("total_tokens", 0)
+
+        ctx = EvalContext(
+            event=f"transition:{target}",
+            commit=None,
+            branch=self.current_branch or "",
+            head=self.head or "",
+            tract=self,
+            metrics=metrics,
+            rule_index=self.rule_index,
+        )
+        return self._rule_engine.process_transition(target, ctx)
+
+    def transition(self, target: str, **kwargs: object) -> CommitInfo | None:
+        """Transition to a target branch/stage using rules.
+
+        Evaluates transition rules on the current branch:
+        1. Gates: require/block rules
+        2. Work: pre-transition actions
+        3. Handoff: compile_filter to build payload
+        4. Switch to / create target branch
+        5. Commit handoff payload on target
+
+        Args:
+            target: Target branch name.
+
+        Returns:
+            CommitInfo of the handoff commit on the target, or None if blocked.
+        """
+        eval_result = self._fire_transition_rules(target)
+        if eval_result.blocked:
+            return None
+
+        # Extract compile_filter from handoff results
+        compile_filter = None
+        for ar in eval_result.action_results:
+            if ar.action_type == "compile_filter":
+                compile_filter = ar.data
+                break
+
+        source = self.current_branch
+
+        # Build handoff payload
+        if compile_filter:
+            mode = compile_filter.get("mode", "full")
+            if mode == "same_context":
+                return None  # rules already applied, no handoff needed
+            else:
+                payload_text = str(self.compile().to_dicts())
+        else:
+            payload_text = str(self.compile().to_dicts())
+
+        # Switch to target branch (create if needed)
+        existing = [b.name for b in self.list_branches()]
+        if target not in existing:
+            from tract.operations.branch import create_branch
+
+            create_branch(target, self._tract_id, self._ref_repo, self._commit_repo)
+            self._session.commit()
+        self.switch(target)
+
+        # Commit handoff payload
+        from tract.models.content import DialogueContent
+
+        handoff_content = DialogueContent(
+            role="system",
+            text=f"Transition handoff from {source}.\n\n{payload_text}",
+        )
+        return self.commit(
+            handoff_content,
+            message=f"transition handoff from {source} to {target}",
+        )
 
     @property
     def spawn_repo(self) -> SqliteSpawnPointerRepository | None:
