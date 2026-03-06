@@ -261,6 +261,12 @@ class RebaseResult(BaseModel):
         head = (self.new_head or "")[:8]
         return f"rebase: {n} commits replayed, head={head}"
 
+    def pprint(self) -> None:
+        """Pretty-print this rebase result using rich formatting."""
+        from tract.formatting import pprint_rebase_result
+
+        pprint_rebase_result(self)
+
 
 class ImportResult(BaseModel):
     """Result of an import-commit operation."""
@@ -281,3 +287,9 @@ class ImportResult(BaseModel):
         orig = str(self.original_commit) if self.original_commit else "?"
         new = str(self.new_commit) if self.new_commit else "?"
         return f"import {orig} -> {new}"
+
+    def pprint(self) -> None:
+        """Pretty-print this import result using rich formatting."""
+        from tract.formatting import pprint_import_result
+
+        pprint_import_result(self)

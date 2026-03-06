@@ -157,7 +157,7 @@ BUILTIN_CONTENT_TYPES: set[str] = {
 
 
 def validate_content(
-    data: dict,
+    data: dict[str, Any],
     *,
     custom_registry: dict[str, type[BaseModel]] | None = None,
 ) -> BaseModel:

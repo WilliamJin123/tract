@@ -50,7 +50,7 @@ def main():
 
     # Drop failed turns (SKIP-annotates error turn)
     drop = t.drop_failed_tool_turns()
-    print(f"\ndropped: {drop.turns_dropped} turns, {drop.tokens_freed} tokens freed")
+    drop.pprint()
 
     # Query tools: find_tool_turns, find_tool_results
     turns = t.find_tool_turns()

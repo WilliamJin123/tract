@@ -1,8 +1,11 @@
-"""Validation reference: chat(validator=), compress(validator=), retain_match.
+"""Validation reference: chat(validator=), retain_match, RetryExhaustedError.
 
 Covers: validator signature, chat/generate validation with hide_retries,
-compress validation with retain_match, RetryExhaustedError.
+retain_match for compression safety, RetryExhaustedError.
 All validation features require an LLM -- patterns shown with comments.
+
+Note: compress() does not support validator=/max_retries= directly.
+Use retain_match= on annotate() for deterministic compression safety.
 """
 
 import json
@@ -74,8 +77,10 @@ def main():
     print("3. RetryExhaustedError: attempts, last_diagnosis, last_result")
 
     # =================================================================
-    # 4. compress(validator=) -- validate summaries (requires LLM)
+    # 4. compress + retain_match -- deterministic compression safety
     # =================================================================
+    # Note: compress() does not accept validator=/max_retries= directly.
+    # Use annotate(retain_match=) for hard pattern requirements.
 
     required = ["B-tree", "LSM", "write-ahead"]
 
@@ -87,13 +92,14 @@ def main():
             return (False, "Too short")
         return (True, None)
 
-    # result = t.compress(
-    #     target_tokens=200,
-    #     validator=validate_db,
-    #     max_retries=3,
+    # Instead of validator on compress(), use retain_match on annotate:
+    # t.annotate(commit_hash, Priority.IMPORTANT,
+    #     retain_match=["B-tree", "LSM", "write-ahead"],
+    #     retain_match_mode="substring",
     # )
+    # t.compress(target_tokens=200)  # retain_match enforced automatically
 
-    print("4. compress(validator=, max_retries=)")
+    print("4. compress + retain_match: deterministic compression safety")
 
     # =================================================================
     # 5. retain_match= -- regex retention layer (requires LLM)
@@ -109,16 +115,12 @@ def main():
     #     retain_match_mode="regex",
     # )
     #
-    # result = t.compress(
-    #     target_tokens=200,
-    #     validator=validate_actionable,  # semantic check on top
-    #     max_retries=4,
-    # )
+    # t.compress(target_tokens=200)  # retain_match patterns enforced automatically
 
     print("5. retain_match: regex patterns for compression safety")
 
     # =================================================================
-    # 6. instructions= + validator= -- guided + validated (requires LLM)
+    # 6. instructions= + retain_match -- guided + validated (requires LLM)
     # =================================================================
 
     def validate_security(text: str) -> tuple[bool, str | None]:
@@ -130,14 +132,17 @@ def main():
             return (False, f"Missing: {missing}")
         return (True, None)
 
-    # result = t.compress(
+    # t.annotate(commit_hash, Priority.IMPORTANT,
+    #     retain="Organize by: auth, encryption, access control.",
+    #     retain_match=[r"(?i)(jwt|token)", r"(?i)(aes|tls)", r"(?i)(rbac|role)"],
+    #     retain_match_mode="regex",
+    # )
+    # t.compress(
     #     target_tokens=150,
     #     instructions="Organize by: auth, encryption, access control.",
-    #     validator=validate_security,
-    #     max_retries=3,
     # )
 
-    print("6. instructions + validator: guided compression with validation")
+    print("6. instructions + retain_match: guided compression with validation")
     print("\nDone.")
 
 

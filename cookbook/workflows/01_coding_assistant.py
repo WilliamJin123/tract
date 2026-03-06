@@ -118,14 +118,7 @@ def main():
             on_step=lambda step, _resp: print(f"  step {step}..."),
         )
 
-        print(f"\n=== Result ===\n")
-        print(f"  Status:     {result.status}")
-        print(f"  Reason:     {result.reason}")
-        print(f"  Steps:      {result.steps}")
-        print(f"  Tool calls: {result.tool_calls}")
-
-        if result.final_response:
-            print(f"\n  Response:\n  {result.final_response[:300]}")
+        result.pprint()
 
         # =============================================================
         # Show final state

@@ -146,12 +146,8 @@ def main():
             "What's your recommended URL structure?",
             max_steps=15, on_step=_log_step,
         )
-        if result.final_response:
-            text = result.final_response
-            print(f"\n  Agent: {text[:400]}")
-            if len(text) > 400:
-                print(f"         ...({len(text)} chars total)")
-        print(f"\n  Branch: {t.current_branch}")
+        result.pprint()
+        print(f"  Branch: {t.current_branch}")
 
         print("\n  Context after Phase 1:")
         t.compile().pprint(style="compact")
@@ -163,12 +159,8 @@ def main():
             "the term but I don't fully understand the principles behind it.",
             max_steps=15, on_step=_log_step,
         )
-        if result.final_response:
-            text = result.final_response
-            print(f"\n  Agent: {text[:400]}")
-            if len(text) > 400:
-                print(f"         ...({len(text)} chars total)")
-        print(f"\n  Branch: {t.current_branch}")
+        result.pprint()
+        print(f"  Branch: {t.current_branch}")
         print(f"  Branches: {[b.name for b in t.list_branches()]}")
 
         # --- Phase 3: Resume design ---
@@ -182,11 +174,7 @@ def main():
             "endpoint return? And should we version the API?",
             max_steps=15, on_step=_log_step,
         )
-        if result.final_response:
-            text = result.final_response
-            print(f"\n  Agent: {text[:400]}")
-            if len(text) > 400:
-                print(f"         ...({len(text)} chars total)")
+        result.pprint()
 
         # --- Final state ---
         print("\n\n=== Final context on main ===\n")

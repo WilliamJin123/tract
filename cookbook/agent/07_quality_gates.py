@@ -158,7 +158,12 @@ def main():
             trigger="transition:implementation",
             action={
                 "type": "require",
-                "threshold": 3,
+                "condition": {
+                    "type": "threshold",
+                    "metric": "commit_count",
+                    "op": ">=",
+                    "value": 3,
+                },
                 "message": "Need at least 3 research commits before implementation",
             },
         )
@@ -191,10 +196,7 @@ def main():
             "After completing the research, try the transition again.",
             max_steps=15, on_step=_log_step,
         )
-        print(f"\n  Result: {result.status} ({result.steps} steps, "
-              f"{result.tool_calls} tool calls)")
-        if result.final_response:
-            print(f"  Agent: {result.final_response[:300]}")
+        result.pprint()
 
         # --- Phase 3: Show final state ---
         print("\n\n=== Final State ===\n")

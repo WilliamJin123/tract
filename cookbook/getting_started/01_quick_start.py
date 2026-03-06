@@ -48,11 +48,8 @@ def main():
             max_steps=5,
             on_step=lambda step, _resp: print(f"  step {step}..."),
         )
-
-        print(f"\nStatus:  {result.status}")
-        print(f"Steps:   {result.steps}")
-        if result.final_response:
-            print(f"\n{result.final_response}")
+        result.pprint()
+        t.compile().pprint(style="chat")
 
 
 if __name__ == "__main__":
@@ -62,4 +59,4 @@ if __name__ == "__main__":
 # --- See also ---
 # Rules in depth: getting_started/02_rules.py
 # Custom tools:   getting_started/03_custom_tools.py
-# Agent patterns: agentic/tool_use/
+# Agent patterns: agent/

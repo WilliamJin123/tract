@@ -116,13 +116,7 @@ def main():
             on_step=lambda step, _resp: print(f"  step {step}..."),
         )
 
-        print(f"\n=== Result ===\n")
-        print(f"  Status:     {result.status}")
-        print(f"  Steps:      {result.steps}")
-        print(f"  Tool calls: {result.tool_calls}")
-
-        if result.final_response:
-            print(f"\n  Synthesis:\n  {result.final_response[:400]}")
+        result.pprint()
 
         # =============================================================
         # Show final state
@@ -156,4 +150,4 @@ if __name__ == "__main__":
 # --- See also ---
 # Coding workflow:       workflows/01_coding_assistant.py
 # Customer support:      workflows/03_customer_support.py
-# Tagging patterns:      agentic/tool_use/04_tagging_and_search.py
+# Tagging patterns:      agent/04_knowledge_organization.py

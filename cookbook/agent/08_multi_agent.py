@@ -141,18 +141,17 @@ def main():
     parent_tract = session.create_tract(display_name="coordinator")
 
     # Configure LLM on the parent tract
-    parent_tract._default_config = __import__(
-        "tract.models.config", fromlist=["LLMConfig"]
-    ).LLMConfig(
-        model=MODEL_ID,
-    )
     from tract.llm.client import OpenAIClient
-    parent_tract._llm_client = OpenAIClient(
+    from tract.models.config import LLMConfig
+
+    parent_client = OpenAIClient(
         api_key=llm.api_key,
         base_url=llm.base_url,
         default_model=MODEL_ID,
     )
+    parent_tract.configure_llm(parent_client)
     parent_tract._owns_llm_client = True
+    parent_tract._default_config = LLMConfig(model=MODEL_ID)
 
     # Set up parent context
     parent_tract.system(
@@ -187,15 +186,14 @@ def main():
     )
 
     # Configure LLM on child
-    child._default_config = __import__(
-        "tract.models.config", fromlist=["LLMConfig"]
-    ).LLMConfig(model=MODEL_ID)
-    child._llm_client = OpenAIClient(
+    child_client = OpenAIClient(
         api_key=llm.api_key,
         base_url=llm.base_url,
         default_model=MODEL_ID,
     )
+    child.configure_llm(child_client)
     child._owns_llm_client = True
+    child._default_config = LLMConfig(model=MODEL_ID)
 
     # Set child tools
     child_tools = child.as_tools(profile=CHILD_PROFILE)
@@ -212,10 +210,7 @@ def main():
         "tool with content='<your summary>'.",
         max_steps=12, on_step=_log_step,
     )
-    print(f"\n  Child result: {result.status} ({result.steps} steps, "
-          f"{result.tool_calls} tool calls)")
-    if result.final_response:
-        print(f"  Child agent: {result.final_response[:200]}")
+    result.pprint()
 
     print(f"\n  Child commits: {len(child.log())}")
     print("\n  Child context (after research + compression):")
@@ -224,8 +219,7 @@ def main():
     # --- Step 3: Parent merges results ---
     print("\n=== Step 3: Parent merges child work ===\n")
     merge_result = parent_tract.merge("research-caching")
-    print(f"  Merge type: {merge_result.merge_type}")
-    print(f"  Parent commits after merge: {len(parent_tract.log())}")
+    merge_result.pprint()
 
     print("\n  Parent context after merge:")
     parent_tract.compile().pprint(style="compact")
@@ -244,9 +238,7 @@ def main():
         "which caching strategy to use and why.",
         max_steps=8, on_step=_log_step,
     )
-    print(f"\n  Synthesis result: {result.status} ({result.steps} steps)")
-    if result.final_response:
-        print(f"  Parent: {result.final_response[:300]}")
+    result.pprint()
 
     # --- Final state ---
     print("\n\n=== Final State ===\n")

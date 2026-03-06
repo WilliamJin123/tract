@@ -156,13 +156,7 @@ def main():
             on_step=lambda step, _resp: print(f"  step {step}..."),
         )
 
-        print(f"\n=== Result ===\n")
-        print(f"  Status:     {result.status}")
-        print(f"  Steps:      {result.steps}")
-        print(f"  Tool calls: {result.tool_calls}")
-
-        if result.final_response:
-            print(f"\n  Agent summary:\n  {result.final_response[:400]}")
+        result.pprint()
 
         # =============================================================
         # Show final state
@@ -192,4 +186,4 @@ if __name__ == "__main__":
 # --- See also ---
 # Coding workflow:       workflows/01_coding_assistant.py
 # Research pipeline:     workflows/02_research_pipeline.py
-# Branch patterns:       agentic/tool_use/06_branch_workflows.py
+# Branch patterns:       agent/06_tangent_isolation.py

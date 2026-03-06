@@ -11,7 +11,10 @@ from __future__ import annotations
 import enum
 import types
 from dataclasses import dataclass, field, fields as dc_fields
-from typing import Callable, Literal, Optional
+from typing import TYPE_CHECKING, Callable, Literal, Optional
+
+if TYPE_CHECKING:
+    from tract.llm.protocols import LLMClient
 
 # Supported comparison operators for query_by_config.
 # "between" / "not between" take a 2-element [low, high] value for inclusive range.
@@ -225,11 +228,11 @@ class OperationClients:
         ))
     """
 
-    chat: object | None = None
-    merge: object | None = None
-    compress: object | None = None
-    orchestrate: object | None = None
-    message: object | None = None
+    chat: LLMClient | None = None
+    merge: LLMClient | None = None
+    compress: LLMClient | None = None
+    orchestrate: LLMClient | None = None
+    message: LLMClient | None = None
 
 
 @dataclass(frozen=True)

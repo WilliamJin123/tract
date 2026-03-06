@@ -20,6 +20,8 @@ from tract.models.merge import (
 from tract.operations.dag import find_merge_base, get_all_ancestors, get_branch_commits
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from tract.engine.commit import CommitEngine
     from tract.llm.protocols import ResolverCallable
     from tract.storage.repositories import (
@@ -35,7 +37,7 @@ if TYPE_CHECKING:
 from tract.operations import row_to_info as _row_to_info
 
 
-def _load_content_model(blob_repo: BlobRepository, content_hash: str) -> object | None:
+def _load_content_model(blob_repo: BlobRepository, content_hash: str) -> BaseModel | None:
     """Load content from a blob and return a validated Pydantic model.
 
     Returns None if the blob cannot be found or parsed.

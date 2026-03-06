@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from tract.llm.protocols import LLMClient
     from tract.rules.models import ActionResult, EvalContext
 
 
@@ -227,7 +228,7 @@ ACTION_CATEGORIES: dict[str, str] = {
 }
 
 
-def _extract_llm_text(response: object, client: object = None) -> str:
+def _extract_llm_text(response: object, client: LLMClient | None = None) -> str:
     """Extract text content from an LLM response (provider-agnostic)."""
     if client is not None and hasattr(client, "extract_content"):
         try:

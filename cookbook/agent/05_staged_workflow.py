@@ -154,9 +154,7 @@ def main():
             "and check status.",
             max_steps=20, on_step=_log_step,
         )
-        print(f"\n  Setup result: {result.status} ({result.steps} steps)")
-        if result.final_response:
-            print(f"  Agent: {result.final_response[:200]}")
+        result.pprint()
 
         # --- Phase 2: Work through the stages ---
         print("\n\n=== Phase 2: Design stage ===\n")
@@ -171,9 +169,7 @@ def main():
             "is committed, check status.",
             max_steps=10, on_step=_log_step,
         )
-        print(f"\n  Design result: {result.status} ({result.steps} steps)")
-        if result.final_response:
-            print(f"  Agent: {result.final_response[:200]}")
+        result.pprint()
 
         print("\n  Design stage context:")
         t.compile().pprint(style="compact")
@@ -188,9 +184,7 @@ def main():
             "their responsibilities. Check status when done.",
             max_steps=10, on_step=_log_step,
         )
-        print(f"\n  Implementation result: {result.status} ({result.steps} steps)")
-        if result.final_response:
-            print(f"  Agent: {result.final_response[:200]}")
+        result.pprint()
 
         # --- Phase 4: Validation stage ---
         print("\n\n=== Phase 4: Validation stage ===\n")
@@ -203,9 +197,7 @@ def main():
             "status when done.",
             max_steps=10, on_step=_log_step,
         )
-        print(f"\n  Validation result: {result.status} ({result.steps} steps)")
-        if result.final_response:
-            print(f"  Agent: {result.final_response[:200]}")
+        result.pprint()
 
         # --- Final state ---
         print("\n\n=== Final State ===\n")

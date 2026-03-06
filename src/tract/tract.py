@@ -53,22 +53,27 @@ from tract.storage.sqlite import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from typing import Any
 
     from sqlalchemy import Engine
     from sqlalchemy.orm import Session
 
+    from tract.llm.protocols import LLMClient, ResolverCallable
+    from tract.loop import LoopResult
     from tract.models.branch import BranchInfo
     from tract.models.compression import CompressResult, GCResult, ReorderWarning, ToolCompactResult, ToolDropResult
     from tract.models.merge import ImportResult, MergeResult, RebaseResult
     from tract.models.session import SpawnInfo
     from tract.operations.diff import DiffResult
     from tract.operations.history import StatusInfo
+    from tract.rules.engine import RuleEngine
+    from tract.rules.index import RuleIndex
+    from tract.rules.models import EvalResult
+    from tract.rules.registries import ActionHandler, ConditionEvaluator, MetricProvider
+    from tract.storage.schema import CommitRow
     from tract.toolkit.executor import ToolExecutor
     from tract.protocols import ToolTurn
     from tract.models.config import ToolSummarizationConfig
-    from tract.rules.engine import RuleEngine
-    from tract.rules.index import RuleIndex
-    from tract.storage.schema import CommitRow
 
 
 # ------------------------------------------------------------------
@@ -138,7 +143,7 @@ class Tract:
         parent_repo: SqliteCommitParentRepository | None = None,
         event_repo: SqliteOperationEventRepository | None = None,
         compile_record_repo: SqliteCompileRecordRepository | None = None,
-        tool_schema_repo: object | None = None,
+        tool_schema_repo: SqliteToolSchemaRepository | None = None,
         verify_cache: bool = False,
     ) -> None:
         self._engine = engine
@@ -210,7 +215,7 @@ class Tract:
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        llm_client: object | None = None,
+        llm_client: LLMClient | None = None,
         default_config: LLMConfig | None = None,
         operations: OperationConfigs | None = None,
         operation_configs: dict[str, LLMConfig] | None = None,  # deprecated: use operations=
@@ -468,10 +473,10 @@ class Tract:
         tract_id: str,
         config: TractConfig | None = None,
         verify_cache: bool = False,
-        llm_client: object | None = None,
+        llm_client: LLMClient | None = None,
         event_repo: SqliteOperationEventRepository | None = None,
         compile_record_repo: SqliteCompileRecordRepository | None = None,
-        tool_schema_repo: object | None = None,
+        tool_schema_repo: SqliteToolSchemaRepository | None = None,
     ) -> Tract:
         """Create a ``Tract`` from pre-built components.
 
@@ -562,7 +567,7 @@ class Tract:
             )
         return self._rule_index
 
-    def get_config(self, key: str, default: object = None) -> object:
+    def get_config(self, key: str, default: Any = None) -> Any:
         """Resolve a config value from active rules.
 
         Uses DAG precedence: closest to HEAD wins.
@@ -571,18 +576,18 @@ class Tract:
 
         return resolve_config(self.rule_index, key, default=default)
 
-    def register_condition(self, name: str, evaluator: object) -> None:
+    def register_condition(self, name: str, evaluator: ConditionEvaluator) -> None:
         """Register a custom condition type for the rule engine."""
         self._registry.register_condition(name, evaluator)
         # Invalidate engine so it picks up new custom conditions
         self.__rule_engine = None
 
-    def register_action(self, name: str, handler: object) -> None:
+    def register_action(self, name: str, handler: ActionHandler) -> None:
         """Register a custom action type for the rule engine."""
         self._registry.register_action(name, handler)
         self.__rule_engine = None
 
-    def register_metric(self, name: str, provider: object) -> None:
+    def register_metric(self, name: str, provider: MetricProvider) -> None:
         """Register a custom metric for threshold conditions."""
         self._registry.register_metric(name, provider)
 
@@ -599,7 +604,7 @@ class Tract:
             )
         return self.__rule_engine
 
-    def _fire_rules(self, event: str, commit: CommitInfo | None = None) -> EvalResult:
+    def _fire_rules(self, event: str, commit: CommitInfo | None = None) -> EvalResult:  # noqa: F821
         """Fire rules for an event. Returns EvalResult.
 
         Post-processes deferred actions (e.g., create_rule commits) after the
@@ -681,7 +686,7 @@ class Tract:
         )
         return self._rule_engine.process_transition(target, ctx)
 
-    def transition(self, target: str, **kwargs: object) -> CommitInfo | None:
+    def transition(self, target: str, **kwargs: Any) -> CommitInfo | None:
         """Transition to a target branch/stage using rules.
 
         Evaluates transition rules on the current branch:
@@ -1721,7 +1726,7 @@ class Tract:
         max_tokens: int | None = None,
         llm_config: LLMConfig | None = None,
         include_sources: bool = False,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> dict:
         """Resolve effective LLM config: sugar > llm_config > operation > tract default.
 
@@ -1835,7 +1840,7 @@ class Tract:
             config["model"] = response["model"]
         return config
 
-    def _extract_content(self, response: dict, *, client: object | None = None) -> str:
+    def _extract_content(self, response: dict, *, client: LLMClient | None = None) -> str:
         """Extract content from LLM response, dispatching to the client's method.
 
         Falls back to OpenAI-format extraction for duck-typed clients that
@@ -1860,7 +1865,7 @@ class Tract:
                 f"Implement extract_content() on your client for custom formats."
             ) from exc
 
-    def _extract_usage(self, response: dict, *, client: object | None = None) -> dict | None:
+    def _extract_usage(self, response: dict, *, client: LLMClient | None = None) -> dict | None:
         """Extract usage from LLM response, dispatching to the client's method.
 
         Falls back to OpenAI-format extraction for duck-typed clients that
@@ -1891,7 +1896,7 @@ class Tract:
         max_retries: int = 3,
         hide_retries: bool = True,
         retry_prompt: str | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> ChatResponse:
         """Compile context, call LLM, commit assistant response, record usage.
 
@@ -2026,7 +2031,7 @@ class Tract:
         message: str | None = None,
         metadata: dict | None = None,
         reasoning: bool = True,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> ChatResponse:
         """Single generate attempt (no retry). Internal helper.
 
@@ -2154,7 +2159,7 @@ class Tract:
         max_retries: int = 3,
         hide_retries: bool = True,
         retry_prompt: str | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> ChatResponse:
         """Send a user message and get an LLM response in one call.
 
@@ -2225,9 +2230,9 @@ class Tract:
         max_steps: int = 50,
         system_prompt: str | None = None,
         tools: list[dict] | None = None,
-        llm_client: object | None = None,
+        llm_client: LLMClient | None = None,
         on_step: Callable | None = None,
-    ) -> LoopResult:
+    ) -> LoopResult:  # noqa: F821
         """Run the default agent loop on this tract.
 
         Convenience wrapper around :func:`tract.loop.run_loop`.
@@ -2266,7 +2271,7 @@ class Tract:
         llm_config: LLMConfig | None = None,
         message: str | None = None,
         reasoning: bool = True,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> ChatResponse:
         """Ask the LLM to revise a previous commit and apply as an EDIT.
 
@@ -3476,9 +3481,9 @@ class Tract:
         self,
         field_or_config: str | LLMConfig | None = None,
         operator: Operator | None = None,
-        value: object = None,
+        value: Any = None,
         *,
-        conditions: list[tuple[str, Operator, object]] | None = None,
+        conditions: list[tuple[str, Operator, Any]] | None = None,
     ) -> list[CommitInfo]:
         """Query commits by generation config values.
 
@@ -3771,7 +3776,7 @@ class Tract:
         self._session.commit()
 
     @property
-    def llm_client(self) -> object:
+    def llm_client(self) -> LLMClient:
         """The configured LLM client for direct access.
 
         Use this for advanced agent patterns that need raw LLM calls
@@ -3796,9 +3801,9 @@ class Tract:
 
     def configure_llm(
         self,
-        client: object,
+        client: LLMClient,
         *,
-        resolver: object | None = None,
+        resolver: ResolverCallable | None = None,
     ) -> None:
         """Configure the LLM client for semantic operations.
 
@@ -3904,7 +3909,7 @@ class Tract:
         self,
         _clients: OperationClients | None = None,
         /,
-        **operation_clients: object,
+        **operation_clients: LLMClient,
     ) -> None:
         """Set per-operation LLM client overrides.
 
@@ -4108,7 +4113,7 @@ class Tract:
                 result[f.name] = val
         return _json.dumps(result) if result else None
 
-    def _resolve_llm_client(self, operation: str) -> object:
+    def _resolve_llm_client(self, operation: str) -> LLMClient:
         """Resolve the LLM client for a given operation.
 
         Two-level lookup: per-operation client > tract-level default.
@@ -4144,8 +4149,8 @@ class Tract:
         return hasattr(self, "_llm_client")
 
     def _resolve_resolver(
-        self, resolver: object | None, operation: str = "merge",
-    ) -> object | None:
+        self, resolver: ResolverCallable | str | None, operation: str = "merge",
+    ) -> ResolverCallable | None:
         """Resolve a resolver argument to a callable.
 
         Handles three cases:
@@ -4228,7 +4233,7 @@ class Tract:
         self,
         source_branch: str,
         *,
-        resolver: object | None = None,
+        resolver: ResolverCallable | str | None = None,
         strategy: str = "auto",
         no_ff: bool = False,
         auto_commit: bool = False,
@@ -4419,7 +4424,7 @@ class Tract:
         self,
         commit_hash: str,
         *,
-        resolver: object | None = None,
+        resolver: ResolverCallable | str | None = None,
     ) -> ImportResult:
         """Import a commit onto the current branch (replaces cherry-pick).
 
@@ -4472,7 +4477,7 @@ class Tract:
         self,
         target_branch: str,
         *,
-        resolver: object | None = None,
+        resolver: ResolverCallable | str | None = None,
     ) -> RebaseResult:
         """Rebase the current branch onto a target branch.
 

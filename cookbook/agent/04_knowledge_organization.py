@@ -153,10 +153,7 @@ def main():
             "final taxonomy.",
             max_steps=15, on_step=_log_step,
         )
-        print(f"\n  Loop result: {result.status} ({result.steps} steps, "
-              f"{result.tool_calls} tool calls)")
-        if result.final_response:
-            print(f"  Agent: {result.final_response[:200]}")
+        result.pprint()
 
 
 if __name__ == "__main__":

@@ -138,10 +138,7 @@ def main():
             on_step=lambda step, _resp: print(f"  step {step}..."),
         )
 
-        print(f"\nStatus: {result.status} ({result.steps} steps, "
-              f"{result.tool_calls} tool calls)")
-        if result.final_response:
-            print(f"\n{result.final_response}")
+        result.pprint()
 
 
 if __name__ == "__main__":
@@ -151,4 +148,4 @@ if __name__ == "__main__":
 # --- See also ---
 # Quick start:      getting_started/01_quick_start.py
 # Rules:            getting_started/02_rules.py
-# Agent patterns:   agentic/tool_use/
+# Agent patterns:   agent/

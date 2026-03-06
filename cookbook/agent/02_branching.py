@@ -122,10 +122,7 @@ def main():
             "and merge 'postgres-research' into main with a descriptive message.",
             max_steps=12, on_step=_log_step,
         )
-        print(f"\n  Loop result: {result.status} ({result.steps} steps, "
-              f"{result.tool_calls} tool calls)")
-        if result.final_response:
-            print(f"  Agent: {result.final_response[:200]}")
+        result.pprint()
 
         # Verify final state
         print("\n  --- Final state ---")

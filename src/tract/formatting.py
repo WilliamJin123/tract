@@ -924,3 +924,245 @@ def pprint_tag_registry(entries: list[dict], *, file: Any = None) -> None:
     console.print(table)
 
 
+# ---------------------------------------------------------------------------
+# LoopResult display
+# ---------------------------------------------------------------------------
+
+
+_LOOP_STATUS_STYLES: dict[str, str] = {
+    "completed": "bold green",
+    "blocked": "bold yellow",
+    "max_steps": "bold yellow",
+    "error": "bold red",
+}
+
+
+def pprint_loop_result(result: Any, *, file: Any = None) -> None:
+    """Pretty-print a LoopResult.
+
+    Args:
+        result: A LoopResult instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    status_style = _LOOP_STATUS_STYLES.get(result.status, "bold")
+
+    body_parts: list[str] = []
+    body_parts.append(f"[bold]Status:[/bold]     [{status_style}]{result.status}[/{status_style}]")
+    if result.reason:
+        body_parts.append(f"[bold]Reason:[/bold]     {result.reason}")
+    body_parts.append(f"[bold]Steps:[/bold]      {result.steps}")
+    body_parts.append(f"[bold]Tool calls:[/bold] {result.tool_calls}")
+
+    border = "green" if result.status == "completed" else ("red" if result.status == "error" else "yellow")
+
+    panel = Panel(
+        "\n".join(body_parts),
+        title="[bold]Loop Result[/bold]",
+        border_style=border,
+    )
+    console.print(panel)
+
+    if result.final_response:
+        console.print(Panel(
+            Markdown(result.final_response),
+            title="[bold]Response[/bold]",
+            border_style="green",
+        ))
+
+
+# ---------------------------------------------------------------------------
+# Compression result displays
+# ---------------------------------------------------------------------------
+
+
+def pprint_compress_result(result: Any, *, file: Any = None) -> None:
+    """Pretty-print a CompressResult.
+
+    Args:
+        result: A CompressResult instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    saved = result.original_tokens - result.compressed_tokens
+    ratio_pct = (1.0 - result.compression_ratio) * 100
+
+    body_parts: list[str] = []
+    body_parts.append(f"[bold]Compression ID:[/bold] {result.compression_id[:12]}")
+    body_parts.append(
+        f"[bold]Tokens:[/bold]         {result.original_tokens} -> {result.compressed_tokens} "
+        f"([green]-{saved}[/green], {ratio_pct:.0f}% reduction)"
+    )
+    body_parts.append(f"[bold]Source commits:[/bold] {len(result.source_commits)}")
+    body_parts.append(f"[bold]Summaries:[/bold]      {len(result.summary_commits)}")
+    body_parts.append(f"[bold]Preserved:[/bold]      {len(result.preserved_commits)}")
+    body_parts.append(f"[bold]New HEAD:[/bold]       {result.new_head[:8]}")
+
+    console.print(Panel(
+        "\n".join(body_parts),
+        title="[bold]Compress Result[/bold]",
+        border_style="cyan",
+    ))
+
+
+def pprint_tool_compact_result(result: Any, *, file: Any = None) -> None:
+    """Pretty-print a ToolCompactResult.
+
+    Args:
+        result: A ToolCompactResult instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    saved = result.original_tokens - result.compacted_tokens
+
+    body_parts: list[str] = []
+    body_parts.append(
+        f"[bold]Tokens:[/bold]     {result.original_tokens} -> {result.compacted_tokens} "
+        f"([green]-{saved}[/green])"
+    )
+    body_parts.append(f"[bold]Turns:[/bold]      {result.turn_count}")
+    body_parts.append(f"[bold]Tools:[/bold]      {', '.join(result.tool_names)}")
+    body_parts.append(f"[bold]Edits:[/bold]      {len(result.edit_commits)}")
+
+    console.print(Panel(
+        "\n".join(body_parts),
+        title="[bold]Tool Compact Result[/bold]",
+        border_style="cyan",
+    ))
+
+
+def pprint_tool_drop_result(result: Any, *, file: Any = None) -> None:
+    """Pretty-print a ToolDropResult.
+
+    Args:
+        result: A ToolDropResult instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    body_parts: list[str] = []
+    body_parts.append(f"[bold]Turns dropped:[/bold]    {result.turns_dropped}")
+    body_parts.append(f"[bold]Commits skipped:[/bold]  {result.commits_skipped}")
+    body_parts.append(f"[bold]Tokens freed:[/bold]     [green]{result.tokens_freed}[/green]")
+    body_parts.append(f"[bold]Tools:[/bold]            {', '.join(result.tool_names)}")
+
+    console.print(Panel(
+        "\n".join(body_parts),
+        title="[bold]Tool Drop Result[/bold]",
+        border_style="cyan",
+    ))
+
+
+def pprint_gc_result(result: Any, *, file: Any = None) -> None:
+    """Pretty-print a GCResult.
+
+    Args:
+        result: A GCResult instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    body_parts: list[str] = []
+    body_parts.append(f"[bold]Commits removed:[/bold] {result.commits_removed}")
+    body_parts.append(f"[bold]Blobs removed:[/bold]   {result.blobs_removed}")
+    body_parts.append(f"[bold]Tokens freed:[/bold]    [green]{result.tokens_freed}[/green]")
+    body_parts.append(f"[bold]Source removed:[/bold]  {result.source_commits_removed}")
+    body_parts.append(f"[bold]Duration:[/bold]        {result.duration_seconds:.2f}s")
+
+    console.print(Panel(
+        "\n".join(body_parts),
+        title="[bold]GC Result[/bold]",
+        border_style="cyan",
+    ))
+
+
+# ---------------------------------------------------------------------------
+# Rebase / Import result displays
+# ---------------------------------------------------------------------------
+
+
+def pprint_rebase_result(result: Any, *, file: Any = None) -> None:
+    """Pretty-print a RebaseResult.
+
+    Args:
+        result: A RebaseResult instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    n_replayed = len(result.replayed_commits)
+    n_warnings = len(result.warnings)
+    head = (result.new_head or "")[:8]
+
+    body_parts: list[str] = []
+    body_parts.append(f"[bold]Replayed:[/bold]  {n_replayed} commits")
+    body_parts.append(f"[bold]Warnings:[/bold]  {n_warnings}")
+    if head:
+        body_parts.append(f"[bold]New HEAD:[/bold]  {head}")
+
+    border = "green" if n_warnings == 0 else "yellow"
+    console.print(Panel(
+        "\n".join(body_parts),
+        title="[bold]Rebase Result[/bold]",
+        border_style=border,
+    ))
+
+    for w in result.warnings:
+        console.print(Text(f"  ! {w}", style="yellow"))
+
+
+def pprint_import_result(result: Any, *, file: Any = None) -> None:
+    """Pretty-print an ImportResult.
+
+    Args:
+        result: An ImportResult instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    body_parts: list[str] = []
+    if result.original_commit:
+        body_parts.append(f"[bold]Original:[/bold] {result.original_commit}")
+    if result.new_commit:
+        body_parts.append(f"[bold]Imported:[/bold] {result.new_commit}")
+    n_issues = len(result.issues)
+    body_parts.append(f"[bold]Issues:[/bold]   {n_issues}")
+
+    border = "green" if n_issues == 0 else "yellow"
+    console.print(Panel(
+        "\n".join(body_parts),
+        title="[bold]Import Result[/bold]",
+        border_style=border,
+    ))
+
+
+def pprint_collapse_result(result: Any, *, file: Any = None) -> None:
+    """Pretty-print a CollapseResult.
+
+    Args:
+        result: A CollapseResult instance.
+        file: Optional file-like object for output (used in tests).
+    """
+    console = _make_console(file)
+
+    body_parts: list[str] = []
+    body_parts.append(f"[bold]Child tract:[/bold]  {result.child_tract_id[:12]}")
+    body_parts.append(f"[bold]Purpose:[/bold]      {result.purpose}")
+    body_parts.append(
+        f"[bold]Tokens:[/bold]       {result.source_tokens} -> {result.summary_tokens}"
+    )
+    if result.parent_commit_hash:
+        body_parts.append(f"[bold]Commit:[/bold]       {result.parent_commit_hash[:8]}")
+    else:
+        body_parts.append(f"[bold]Commit:[/bold]       [dim](not auto-committed)[/dim]")
+
+    console.print(Panel(
+        "\n".join(body_parts),
+        title="[bold]Collapse Result[/bold]",
+        border_style="cyan",
+    ))
+
+

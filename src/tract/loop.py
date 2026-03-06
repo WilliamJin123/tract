@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from tract.exceptions import BlockedByRuleError
 
@@ -26,11 +26,17 @@ logger = logging.getLogger(__name__)
 class LoopResult:
     """Result of a loop execution."""
 
-    status: str  # "completed" | "blocked" | "max_steps" | "error"
+    status: Literal["completed", "blocked", "max_steps", "error"]
     reason: str | None
     steps: int
     tool_calls: int
     final_response: str | None = None
+
+    def pprint(self) -> None:
+        """Pretty-print this loop result using rich formatting."""
+        from tract.formatting import pprint_loop_result
+
+        pprint_loop_result(self)
 
 
 @dataclass

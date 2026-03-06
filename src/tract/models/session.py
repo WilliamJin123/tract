@@ -69,3 +69,9 @@ class CollapseResult:
     summary_tokens: int
     source_tokens: int
     purpose: str
+
+    def pprint(self) -> None:
+        """Pretty-print this collapse result using rich formatting."""
+        from tract.formatting import pprint_collapse_result
+
+        pprint_collapse_result(self)

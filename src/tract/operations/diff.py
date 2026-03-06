@@ -129,7 +129,7 @@ def _compute_generation_config_changes(
     Returns a dict mapping field names to (old_value, new_value) tuples
     for fields that differ between the two configs.
     """
-    def _to_dict(c: object) -> dict:
+    def _to_dict(c: object) -> dict[str, Any]:
         if c is None:
             return {}
         if isinstance(c, dict):

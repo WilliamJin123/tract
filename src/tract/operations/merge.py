@@ -18,6 +18,10 @@ from tract.operations.dag import find_merge_base, get_branch_commits, is_ancesto
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from typing import Any
+
+    from pydantic import BaseModel
+
     from tract.engine.commit import CommitEngine
     from tract.llm.protocols import ResolverCallable
     from tract.protocols import TokenCounter
@@ -402,12 +406,12 @@ def merge_branches(
 def create_merge_commit(
     commit_engine: CommitEngine,
     parent_repo: CommitParentRepository,
-    content: object,
+    content: BaseModel,
     parent_hashes: list[str],
     *,
     message: str | None = None,
-    metadata: dict | None = None,
-    generation_config: dict | None = None,
+    metadata: dict[str, Any] | None = None,
+    generation_config: dict[str, Any] | None = None,
 ) -> CommitInfo:
     """Create a merge commit with multiple parents.
 
@@ -431,7 +435,7 @@ def create_merge_commit(
     # Create the commit using the engine
     # The engine will use HEAD as parent_hash and update HEAD
     info = commit_engine.create_commit(
-        content=content,  # type: ignore[arg-type]
+        content=content,
         operation=CommitOperation.APPEND,
         message=message,
         metadata=metadata,

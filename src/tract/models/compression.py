@@ -29,6 +29,12 @@ class CompressResult:
     effective compression; values > 1.0 indicate the summary expanded tokens."""
     new_head: str
 
+    def pprint(self) -> None:
+        """Pretty-print this compress result using rich formatting."""
+        from tract.formatting import pprint_compress_result
+
+        pprint_compress_result(self)
+
 
 @dataclass(frozen=True)
 class ToolCompactResult:
@@ -57,6 +63,12 @@ class ToolCompactResult:
     turn_count: int
     """Number of tool turns that were compacted."""
 
+    def pprint(self) -> None:
+        """Pretty-print this tool compact result using rich formatting."""
+        from tract.formatting import pprint_tool_compact_result
+
+        pprint_tool_compact_result(self)
+
 
 @dataclass(frozen=True)
 class ToolDropResult:
@@ -78,6 +90,12 @@ class ToolDropResult:
     tool_names: tuple[str, ...]
     """Unique tool names involved in the dropped turns."""
 
+    def pprint(self) -> None:
+        """Pretty-print this tool drop result using rich formatting."""
+        from tract.formatting import pprint_tool_drop_result
+
+        pprint_tool_drop_result(self)
+
 
 @dataclass(frozen=True)
 class GCResult:
@@ -91,6 +109,12 @@ class GCResult:
     tokens_freed: int
     source_commits_removed: int
     duration_seconds: float
+
+    def pprint(self) -> None:
+        """Pretty-print this GC result using rich formatting."""
+        from tract.formatting import pprint_gc_result
+
+        pprint_gc_result(self)
 
 
 @dataclass(frozen=True)

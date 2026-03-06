@@ -18,12 +18,12 @@ if TYPE_CHECKING:
     from tract.models.compression import CompressResult
     from tract.models.merge import MergeResult
     from tract.operations.diff import DiffResult
+    from tract.operations.history import StatusInfo
 
 
 def format_short_hash(commit_hash: str) -> str:
     """Format a commit hash as a short yellow-highlighted string."""
     return f"[yellow]{commit_hash[:8]}[/yellow]"
-    from tract.operations.history import StatusInfo
 
 
 def get_console() -> Console:
@@ -97,8 +97,10 @@ def format_log_verbose(entries: list[CommitInfo], console: Console) -> None:
         if entry.message:
             console.print(f"  Message:   {escape(entry.message)}")
         if entry.generation_config:
-            config_parts = [f"{k}={v}" for k, v in entry.generation_config.items()]
-            console.print(f"  Config:    {escape(', '.join(config_parts))}")
+            fields = entry.generation_config.non_none_fields() if hasattr(entry.generation_config, 'non_none_fields') else {}
+            if fields:
+                config_parts = [f"{k}={v}" for k, v in fields.items()]
+                console.print(f"  Config:    {escape(', '.join(config_parts))}")
 
 
 def format_status(info: StatusInfo, console: Console) -> None:
