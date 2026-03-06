@@ -1,13 +1,12 @@
 """Custom Extensions with Middleware
 
 Middleware is the escape hatch for custom logic. Any Python code can run
-on any event. This replaces the old register_condition/register_action/
-register_metric pattern with plain functions.
+on any event — just plain functions, no framework to learn.
 
 Patterns shown:
   1. Custom validation  -- pre_commit checks with arbitrary logic
   2. Custom counters    -- post_commit tracking with closures
-  3. Custom gates       -- pre_transition with domain rules
+  3. Custom gates       -- pre_transition with domain logic
   4. Composable guards  -- multiple middleware on the same event
 
 Demonstrates: t.use() for custom logic, closures as state,

@@ -1,18 +1,19 @@
 """Agent-Driven Staged Workflow
 
 An LLM agent navigates a multi-stage task (design -> implementation ->
-validation) using rules and transitions. Rules set stage-specific config
-(temperature, compile_strategy) and transition gates enforce that the
-agent completes enough work before advancing.
+validation) using config, directives, and middleware. Each stage lives
+on its own branch with stage-specific config (temperature, strategy)
+and middleware gates enforce that the agent completes enough work
+before advancing.
 
 The agent decides when to transition between stages based on its own
 assessment of readiness, not hardcoded triggers.
 
-Tools exercised: create_rule, get_config, transition, commit, compile,
+Tools exercised: configure, get_config, transition, commit, compile,
                  status, log, branch
 
-Demonstrates: Rule-based stage configuration, agent-managed transitions,
-              gate conditions, stage-specific LLM settings
+Demonstrates: Config-based stage settings, directive-based instructions,
+              middleware transition gates, agent-managed stage progression
 """
 
 import io
@@ -23,7 +24,7 @@ from pathlib import Path
 # Windows console encoding fix
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from tract import Tract
+from tract import Tract, BlockedError
 from tract.toolkit import ToolConfig, ToolExecutor, ToolProfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -36,29 +37,28 @@ MODEL_ID = llm.large
 STAGE_PROFILE = ToolProfile(
     name="stage-navigator",
     tool_configs={
-        "create_rule": ToolConfig(
+        "configure": ToolConfig(
             enabled=True,
             description=(
-                "Create a rule on the current branch. Rules fire on events "
-                "(commit, compile, transition) and can set config, require/block "
-                "actions, or trigger operations. Use this to set up stage-specific "
-                "configuration and transition gates."
+                "Set config key-value pairs on the DAG. Use to store "
+                "stage-specific settings like temperature, compile_strategy, "
+                "or custom keys like 'stage'."
             ),
         ),
         "get_config": ToolConfig(
             enabled=True,
             description=(
-                "Resolve a config value from active rules. Returns the value "
-                "set by the closest rule to HEAD. Use to check current stage "
-                "settings like temperature or compile_strategy."
+                "Resolve a config value from the DAG. Returns the value "
+                "set by the closest config commit to HEAD. Use to check "
+                "current stage settings."
             ),
         ),
         "transition": ToolConfig(
             enabled=True,
             description=(
-                "Transition to a target branch/stage. Evaluates gate conditions "
-                "(require/block rules), runs pre-transition actions, and switches "
-                "to the target branch. Returns None if blocked by gates."
+                "Transition to a target branch/stage. Middleware gates may "
+                "block with BlockedError if requirements aren't met. "
+                "Returns None if blocked."
             ),
         ),
         "commit": ToolConfig(
@@ -85,7 +85,7 @@ STAGE_PROFILE = ToolProfile(
             enabled=True,
             description=(
                 "Create a new branch for a stage. Each stage of the workflow "
-                "lives on its own branch with stage-specific rules."
+                "lives on its own branch with stage-specific config."
             ),
         ),
     },
@@ -106,8 +106,8 @@ def main():
     print("Agent-Driven Staged Workflow: design -> implementation -> validation")
     print("=" * 70)
     print()
-    print("  The agent navigates a multi-stage task using rules and transitions.")
-    print("  Each stage has its own branch with stage-specific config rules.")
+    print("  The agent navigates a multi-stage task using config and transitions.")
+    print("  Each stage has its own branch with stage-specific configuration.")
     print("  The agent decides when it's ready to transition to the next stage.")
     print()
 
@@ -123,32 +123,26 @@ def main():
         t.system(
             "You are a software architect working on a staged project.\n\n"
             "WORKFLOW PROTOCOL:\n"
-            "1. You start on 'main'. Set up stage branches with rules.\n"
+            "1. You start on 'main'. Set up stage branches with config.\n"
             "2. Each stage has its own branch: 'design', 'implementation', 'validation'.\n"
-            "3. Create rules on each branch for stage-specific config.\n"
+            "3. Use configure() on each branch for stage-specific settings.\n"
             "4. Use transition() to move between stages when ready.\n"
             "5. Work through all three stages to complete the task.\n\n"
-            "For setup, create the branches and rules first, then transition."
+            "For setup, create the branches and configure them, then transition."
         )
 
         # --- Phase 1: Set up the workflow ---
-        print("=== Phase 1: Set up stage branches and rules ===\n")
+        print("=== Phase 1: Set up stage branches with config ===\n")
         result = t.run(
             "Set up a three-stage workflow for building a REST API:\n\n"
-            "1. Create branch 'design' and switch to it. Add a rule:\n"
-            "   - name: 'design-config'\n"
-            "   - trigger: 'active'\n"
-            "   - action: {type: 'set_config', key: 'stage', value: 'design'}\n"
+            "1. Create branch 'design' and switch to it. Configure it:\n"
+            "   - settings: {stage: 'design', temperature: 0.9}\n"
             "Then switch back to main.\n\n"
-            "2. Create branch 'implementation' and switch to it. Add a rule:\n"
-            "   - name: 'impl-config'\n"
-            "   - trigger: 'active'\n"
-            "   - action: {type: 'set_config', key: 'stage', value: 'implementation'}\n"
+            "2. Create branch 'implementation' and switch to it. Configure it:\n"
+            "   - settings: {stage: 'implementation', temperature: 0.3}\n"
             "Then switch back to main.\n\n"
-            "3. Create branch 'validation' and switch to it. Add a rule:\n"
-            "   - name: 'validation-config'\n"
-            "   - trigger: 'active'\n"
-            "   - action: {type: 'set_config', key: 'stage', value: 'validation'}\n"
+            "3. Create branch 'validation' and switch to it. Configure it:\n"
+            "   - settings: {stage: 'validation', temperature: 0.5}\n"
             "Then switch back to main.\n\n"
             "After setup, use get_config to verify the stage config on main "
             "and check status.",

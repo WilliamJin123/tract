@@ -1,7 +1,6 @@
 """Config and Directives: Behavior as Data
 
-Config and directives replace the old rule system. Instead of declarative
-rule triggers, you get three clean primitives:
+Three clean primitives for controlling LLM behavior:
 
   1. t.configure()  -- commit key-value settings to the DAG
   2. t.directive()  -- commit named instructions (compiled, deduplicated)
