@@ -11,6 +11,8 @@ Three patterns:
 
 Demonstrates: t.rule(), t.get_config(), resolve_all_configs(), conditions,
               actions, DAG precedence
+
+No LLM required.
 """
 
 from tract import Tract, Priority, resolve_all_configs
@@ -101,3 +103,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# --- See also ---
+# Quick start:       getting_started/01_quick_start.py
+# Custom tools:      getting_started/03_custom_tools.py
+# Workflow rules:    workflows/01_coding_assistant.py
