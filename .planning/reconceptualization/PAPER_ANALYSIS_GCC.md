@@ -1,5 +1,7 @@
 # Analysis: Git Context Controller (GCC) vs Tract
 
+> **Status: SUPERSEDED by Phase 14 (Config + Directives + Middleware).** Rule engine was implemented (R0-R4, commit 7a86b94) then replaced (commit 23a89eb). Kept as historical reference.
+
 Paper: "Git Context Controller: Manage the Context of Agents by Agentic Git"
 (Wu et al., arxiv 2508.00031v2, May 2025)
 

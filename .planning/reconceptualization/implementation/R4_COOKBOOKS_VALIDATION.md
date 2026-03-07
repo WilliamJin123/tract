@@ -1,5 +1,7 @@
 # Phase R4: Cookbooks + Validation + Registries
 
+> **Status: SUPERSEDED by Phase 14 (Config + Directives + Middleware).** Rule engine was implemented (R0-R4, commit 7a86b94) then replaced (commit 23a89eb). Kept as historical reference.
+
 ## Goal
 
 Rewrite core cookbooks for the new API, validate on cheap models (Cerebras/Groq),

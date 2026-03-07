@@ -84,29 +84,36 @@ from tract.operations.diff import DiffResult, MessageDiff, DiffStat
 from tract.operations.config_index import ConfigIndex
 from tract.middleware import MiddlewareContext, MiddlewareEvent
 
-# LLM protocol
+# LLM protocol (always available — these are just Protocol definitions)
 from tract.llm.protocols import LLMClient, AgentLoop
 
-# LLM clients
-from tract.llm.client import OpenAIClient
-from tract.llm.anthropic_client import (
-    AnthropicClient,
-    StreamEvent,
-    TextDelta,
-    ToolCallStart,
-    ToolCallDelta,
-    ThinkingDelta,
-    UsageEvent,
-    MessageDone,
-)
+# Runner components (require optional dependencies: pip install tract-ai[runner])
+try:
+    from tract.llm.client import OpenAIClient
+    from tract.llm.anthropic_client import (
+        AnthropicClient,
+        StreamEvent,
+        TextDelta,
+        ToolCallStart,
+        ToolCallDelta,
+        ThinkingDelta,
+        UsageEvent,
+        MessageDone,
+    )
+except ImportError:
+    pass
 
-# Agent toolkit
-from tract.toolkit.models import ToolDefinition, ToolName, ToolProfile, ToolConfig, ToolResult
-from tract.toolkit.profiles import ProfileName
-from tract.toolkit.executor import ToolExecutor
+try:
+    from tract.toolkit.models import ToolDefinition, ToolName, ToolProfile, ToolConfig, ToolResult
+    from tract.toolkit.profiles import ProfileName
+    from tract.toolkit.executor import ToolExecutor
+except ImportError:
+    pass
 
-# Default loop
-from tract.loop import LoopConfig, LoopResult, run_loop
+try:
+    from tract.loop import LoopConfig, LoopResult, run_loop
+except ImportError:
+    pass
 
 # Type aliases for IDE autocomplete
 from tract.tract import CompileStrategy

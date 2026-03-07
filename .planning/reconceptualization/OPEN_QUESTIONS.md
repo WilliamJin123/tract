@@ -1,5 +1,7 @@
 # Open Questions
 
+> **Status: SUPERSEDED by Phase 14 (Config + Directives + Middleware).** Rule engine was implemented (R0-R4, commit 7a86b94) then replaced (commit 23a89eb). Kept as historical reference.
+
 ## Resolved
 
 - **Rule storage**: Rules are first-class commits (RuleContent type) on

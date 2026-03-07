@@ -1,5 +1,7 @@
 # Phase R2: Event Processing + Actions
 
+> **Status: SUPERSEDED by Phase 14 (Config + Directives + Middleware).** Rule engine was implemented (R0-R4, commit 7a86b94) then replaced (commit 23a89eb). Kept as historical reference.
+
 ## Goal
 
 Build the event processing mode of the rule engine: triggers fire on events

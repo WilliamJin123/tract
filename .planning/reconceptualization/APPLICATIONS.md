@@ -1,5 +1,7 @@
 # Applications: Patterns Built from Substrate
 
+> **Status: SUPERSEDED by Phase 14 (Config + Directives + Middleware).** Rule engine was implemented (R0-R4, commit 7a86b94) then replaced (commit 23a89eb). Kept as historical reference.
+
 Applications are common workflow patterns expressed as rules over the commit
 DAG. They ship as pre-built rule templates but could be authored from scratch
 by a developer or LLM. None require special-cased code paths.

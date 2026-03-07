@@ -1,5 +1,7 @@
 # Phase R0: Demolition + Content Types + Compile Strategy
 
+> **Status: SUPERSEDED by Phase 14 (Config + Directives + Middleware).** Rule engine was implemented (R0-R4, commit 7a86b94) then replaced (commit 23a89eb). Kept as historical reference.
+
 ## Goal
 
 Remove the old hook/orchestrator/trigger systems and add the new content types

@@ -1,5 +1,7 @@
 # Substrate: Fundamental Graph Primitives
 
+> **Status: SUPERSEDED by Phase 14 (Config + Directives + Middleware).** Rule engine was implemented (R0-R4, commit 7a86b94) then replaced (commit 23a89eb). Kept as historical reference.
+
 The substrate is the minimal set of operations that cannot be decomposed
 further. Everything else is built from these via rules.
 

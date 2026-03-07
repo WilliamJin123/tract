@@ -1,5 +1,7 @@
 # The Unified Rule System
 
+> **Status: SUPERSEDED by Phase 14 (Config + Directives + Middleware).** Rule engine was implemented (R0-R4, commit 7a86b94) then replaced (commit 23a89eb). Kept as historical reference.
+
 ## Core Concept
 
 A rule is: **trigger + condition + action**, scoped by where it lives in
