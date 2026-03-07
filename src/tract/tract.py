@@ -443,7 +443,7 @@ class Tract:
                 client = AnthropicClient(
                     api_key=api_key,
                     base_url=base_url,
-                    default_model=model or "claude-sonnet-4-20250514",
+                    default_model=model or "claude-sonnet-4-6",
                 )
             else:
                 from tract.llm.client import OpenAIClient

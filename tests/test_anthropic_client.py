@@ -1,7 +1,8 @@
 """Tests for the Anthropic Messages API client.
 
 Tests message translation, response normalization, tool format translation,
-reasoning extraction, and streaming (all with mocked httpx).
+reasoning extraction, thinking block preservation, tool_choice translation,
+and cache usage mapping (all with mocked SDK).
 """
 
 import json
@@ -41,12 +42,19 @@ class TestConstruction:
 
     def test_custom_base_url(self):
         client = AnthropicClient(api_key="sk-test", base_url="https://custom.api/")
-        assert client._base_url == "https://custom.api"
+        assert client._base_url == "https://custom.api/"
         client.close()
 
     def test_default_model(self):
         client = AnthropicClient(api_key="sk-test")
-        assert "claude" in client._default_model
+        assert client._default_model == "claude-sonnet-4-6"
+        client.close()
+
+    def test_uses_anthropic_sdk(self):
+        """Client wraps the official anthropic SDK, not raw httpx."""
+        import anthropic
+        client = AnthropicClient(api_key="sk-test")
+        assert isinstance(client._client, anthropic.Anthropic)
         client.close()
 
 
@@ -112,6 +120,29 @@ class TestMessageTranslation:
         assert tool_msg["content"][0]["type"] == "tool_result"
         assert tool_msg["content"][0]["tool_use_id"] == "call_1"
 
+    def test_tool_result_is_error_propagated(self):
+        messages = [
+            {"role": "user", "content": "Call a tool"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }],
+            },
+            {
+                "role": "tool",
+                "content": "Error: not found",
+                "tool_call_id": "call_1",
+                "is_error": True,
+            },
+        ]
+        _, msgs = self.client._translate_messages(messages)
+        tool_block = msgs[2]["content"][0]
+        assert tool_block["is_error"] is True
+
     def test_assistant_tool_calls_to_content_blocks(self):
         messages = [
             {"role": "user", "content": "Call a tool"},
@@ -133,6 +164,40 @@ class TestMessageTranslation:
         assert asst["content"][1]["type"] == "tool_use"
         assert asst["content"][1]["name"] == "search"
         assert asst["content"][1]["input"] == {"q": "test"}
+
+    def test_thinking_blocks_preserved_in_assistant(self):
+        """Thinking blocks are passed through for tool use continuations."""
+        messages = [
+            {"role": "user", "content": "Think and act"},
+            {
+                "role": "assistant",
+                "content": "I'll search",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }],
+                "_thinking_blocks": [
+                    {
+                        "type": "thinking",
+                        "thinking": "Let me reason...",
+                        "signature": "sig_abc123",
+                    }
+                ],
+            },
+        ]
+        _system, msgs = self.client._translate_messages(messages)
+        asst = msgs[1]
+        blocks = asst["content"]
+        assert isinstance(blocks, list)
+        # Thinking block should come first
+        assert blocks[0]["type"] == "thinking"
+        assert blocks[0]["thinking"] == "Let me reason..."
+        assert blocks[0]["signature"] == "sig_abc123"
+        # Then text
+        assert blocks[1] == {"type": "text", "text": "I'll search"}
+        # Then tool_use
+        assert blocks[2]["type"] == "tool_use"
 
     def test_consecutive_same_role_merged(self):
         messages = [
@@ -209,7 +274,32 @@ class TestToolTranslation:
 
 
 # -----------------------------------------------------------------------
-# Response normalization
+# Tool choice translation
+# -----------------------------------------------------------------------
+
+
+class TestToolChoiceTranslation:
+    def test_string_auto(self):
+        assert AnthropicClient._translate_tool_choice("auto") == {"type": "auto"}
+
+    def test_string_required_to_any(self):
+        assert AnthropicClient._translate_tool_choice("required") == {"type": "any"}
+
+    def test_string_none(self):
+        assert AnthropicClient._translate_tool_choice("none") == {"type": "none"}
+
+    def test_openai_named_tool(self):
+        tc = {"type": "function", "function": {"name": "search"}}
+        result = AnthropicClient._translate_tool_choice(tc)
+        assert result == {"type": "tool", "name": "search"}
+
+    def test_already_anthropic_format(self):
+        tc = {"type": "tool", "name": "search"}
+        assert AnthropicClient._translate_tool_choice(tc) == tc
+
+
+# -----------------------------------------------------------------------
+# Response normalization (dict path — for unit testing)
 # -----------------------------------------------------------------------
 
 
@@ -225,7 +315,7 @@ class TestResponseNormalization:
             "id": "msg_123",
             "type": "message",
             "role": "assistant",
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-6",
             "content": [{"type": "text", "text": "Hello there!"}],
             "stop_reason": "end_turn",
             "usage": {"input_tokens": 10, "output_tokens": 5},
@@ -238,14 +328,14 @@ class TestResponseNormalization:
         assert result["usage"]["prompt_tokens"] == 10
         assert result["usage"]["completion_tokens"] == 5
         assert result["usage"]["total_tokens"] == 15
-        assert result["model"] == "claude-sonnet-4-20250514"
+        assert result["model"] == "claude-sonnet-4-6"
 
     def test_tool_use_response(self):
         anthropic_resp = {
             "id": "msg_456",
             "type": "message",
             "role": "assistant",
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-6",
             "content": [
                 {"type": "text", "text": "I'll search for that"},
                 {
@@ -274,9 +364,9 @@ class TestResponseNormalization:
             "id": "msg_789",
             "type": "message",
             "role": "assistant",
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-6",
             "content": [
-                {"type": "thinking", "thinking": "Let me reason about this..."},
+                {"type": "thinking", "thinking": "Let me reason about this...", "signature": "sig_xyz"},
                 {"type": "text", "text": "The answer is 42."},
             ],
             "stop_reason": "end_turn",
@@ -289,6 +379,42 @@ class TestResponseNormalization:
         # Raw blocks preserved for reasoning extraction
         assert "_anthropic_content" in result
         assert result["_anthropic_content"][0]["type"] == "thinking"
+
+    def test_thinking_blocks_in_message(self):
+        """Thinking blocks stored in message for tool use continuations."""
+        anthropic_resp = {
+            "id": "msg_789",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-6",
+            "content": [
+                {"type": "thinking", "thinking": "Let me think...", "signature": "sig_abc"},
+                {"type": "tool_use", "id": "toolu_1", "name": "search", "input": {"q": "test"}},
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 30, "output_tokens": 50},
+        }
+        result = self.client._normalize_response(anthropic_resp)
+        msg = result["choices"][0]["message"]
+        assert "_thinking_blocks" in msg
+        assert len(msg["_thinking_blocks"]) == 1
+        assert msg["_thinking_blocks"][0]["signature"] == "sig_abc"
+
+    def test_cache_usage_preserved(self):
+        anthropic_resp = {
+            "id": "msg_cache",
+            "content": [{"type": "text", "text": "cached"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 50,
+                "cache_read_input_tokens": 80,
+            },
+        }
+        result = self.client._normalize_response(anthropic_resp)
+        assert result["usage"]["cache_creation_input_tokens"] == 50
+        assert result["usage"]["cache_read_input_tokens"] == 80
 
     def test_stop_reason_mapping(self):
         for stop_reason, expected in [
@@ -304,6 +430,125 @@ class TestResponseNormalization:
             }
             result = self.client._normalize_response(resp)
             assert result["choices"][0]["finish_reason"] == expected
+
+
+# -----------------------------------------------------------------------
+# Response normalization (SDK Message object path)
+# -----------------------------------------------------------------------
+
+
+class TestSDKResponseNormalization:
+    """Tests normalization of real anthropic.types.Message objects."""
+
+    def setup_method(self):
+        self.client = AnthropicClient(api_key="sk-test")
+
+    def teardown_method(self):
+        self.client.close()
+
+    def test_sdk_text_response(self):
+        import anthropic.types as t
+
+        msg = t.Message(
+            id="msg_sdk_1",
+            type="message",
+            role="assistant",
+            model="claude-sonnet-4-6",
+            content=[t.TextBlock(type="text", text="Hello from SDK!", citations=None)],
+            stop_reason="end_turn",
+            stop_sequence=None,
+            usage=t.Usage(
+                input_tokens=15, output_tokens=8,
+                cache_creation_input_tokens=None, cache_read_input_tokens=None,
+            ),
+        )
+        result = self.client._normalize_response(msg)
+        assert result["choices"][0]["message"]["content"] == "Hello from SDK!"
+        assert result["usage"]["prompt_tokens"] == 15
+        assert result["usage"]["completion_tokens"] == 8
+
+    def test_sdk_tool_use_response(self):
+        import anthropic.types as t
+
+        msg = t.Message(
+            id="msg_sdk_2",
+            type="message",
+            role="assistant",
+            model="claude-sonnet-4-6",
+            content=[
+                t.ToolUseBlock(
+                    type="tool_use", id="toolu_sdk", name="search",
+                    input={"q": "test"}, caller=None,
+                ),
+            ],
+            stop_reason="tool_use",
+            stop_sequence=None,
+            usage=t.Usage(
+                input_tokens=20, output_tokens=10,
+                cache_creation_input_tokens=None, cache_read_input_tokens=None,
+            ),
+        )
+        result = self.client._normalize_response(msg)
+        tc = result["choices"][0]["message"]["tool_calls"][0]
+        assert tc["id"] == "toolu_sdk"
+        assert tc["function"]["name"] == "search"
+        assert result["choices"][0]["finish_reason"] == "tool_calls"
+
+    def test_sdk_thinking_response(self):
+        import anthropic.types as t
+
+        msg = t.Message(
+            id="msg_sdk_3",
+            type="message",
+            role="assistant",
+            model="claude-sonnet-4-6",
+            content=[
+                t.ThinkingBlock(
+                    type="thinking", thinking="Step 1: analyze...",
+                    signature="sig_test_123",
+                ),
+                t.TextBlock(type="text", text="The result is X.", citations=None),
+            ],
+            stop_reason="end_turn",
+            stop_sequence=None,
+            usage=t.Usage(
+                input_tokens=50, output_tokens=100,
+                cache_creation_input_tokens=None, cache_read_input_tokens=None,
+            ),
+        )
+        result = self.client._normalize_response(msg)
+        # Text content
+        assert result["choices"][0]["message"]["content"] == "The result is X."
+        # Thinking blocks on message
+        tbs = result["choices"][0]["message"]["_thinking_blocks"]
+        assert len(tbs) == 1
+        assert tbs[0]["thinking"] == "Step 1: analyze..."
+        assert tbs[0]["signature"] == "sig_test_123"
+        # Raw blocks for extract_reasoning
+        assert result["_anthropic_content"][0]["type"] == "thinking"
+
+    def test_sdk_cache_usage(self):
+        import anthropic.types as t
+
+        msg = t.Message(
+            id="msg_sdk_4",
+            type="message",
+            role="assistant",
+            model="claude-sonnet-4-6",
+            content=[t.TextBlock(type="text", text="cached", citations=None)],
+            stop_reason="end_turn",
+            stop_sequence=None,
+            usage=t.Usage(
+                input_tokens=100, output_tokens=20,
+                cache_creation_input_tokens=50,
+                cache_read_input_tokens=80,
+            ),
+        )
+        result = self.client._normalize_response(msg)
+        assert result["usage"]["cache_creation_input_tokens"] == 50
+        assert result["usage"]["cache_read_input_tokens"] == 80
+        assert result["usage"]["prompt_tokens"] == 100
+        assert result["usage"]["total_tokens"] == 120
 
 
 # -----------------------------------------------------------------------
@@ -393,7 +638,7 @@ class TestAutoDetection:
 
     def test_detect_from_model_name(self):
         from tract.tract import _detect_provider
-        assert _detect_provider(None, "claude-sonnet-4-20250514") == "anthropic"
+        assert _detect_provider(None, "claude-sonnet-4-6") == "anthropic"
         assert _detect_provider(None, "claude-3-opus") == "anthropic"
         assert _detect_provider(None, "gpt-4o") == "openai"
         assert _detect_provider(None, None) == "openai"
@@ -420,7 +665,7 @@ class TestAutoDetection:
 
         t = Tract.open(
             api_key="sk-test",
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
         )
         assert isinstance(t._llm_client, AnthropicClient)
         t.close()

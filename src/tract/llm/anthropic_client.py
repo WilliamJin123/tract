@@ -1,8 +1,7 @@
-"""Built-in Anthropic Messages API client with tenacity retry.
+"""Built-in Anthropic Messages API client using the official SDK.
 
-Provides a sync HTTP client for the Anthropic Messages API.
-Normalizes responses to OpenAI format so the rest of tract
-(loop, compression, spawn, resolver) works without changes.
+Wraps the ``anthropic`` Python SDK.  Normalizes responses to OpenAI format
+so the rest of tract (loop, compression, spawn, resolver) works unchanged.
 """
 
 from __future__ import annotations
@@ -13,8 +12,7 @@ import os
 import uuid
 from typing import Any, Iterator
 
-import httpx
-import tenacity
+import anthropic
 
 from tract.llm.errors import (
     LLMAuthError,
@@ -25,25 +23,11 @@ from tract.llm.errors import (
 
 logger = logging.getLogger(__name__)
 
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
-_AUTH_ERROR_STATUS_CODES = {401, 403}
-
 _DEFAULT_MAX_TOKENS = 8192
-_DEFAULT_API_VERSION = "2023-06-01"
-
-
-def _is_retryable(exc: BaseException) -> bool:
-    if isinstance(exc, LLMAuthError):
-        return False
-    if isinstance(exc, LLMRateLimitError):
-        return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code in _RETRYABLE_STATUS_CODES
-    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
 
 
 class AnthropicClient:
-    """Sync httpx client for the Anthropic Messages API.
+    """Anthropic Messages API client using the official SDK.
 
     Implements the LLMClient protocol.  Accepts OpenAI-format messages
     and tool definitions, translates to Anthropic format for the API call,
@@ -61,37 +45,30 @@ class AnthropicClient:
         self,
         api_key: str | None = None,
         base_url: str | None = None,
-        default_model: str = "claude-sonnet-4-20250514",
+        default_model: str = "claude-sonnet-4-6",
         timeout: float = 120.0,
         max_retries: int = 3,
         default_max_tokens: int = _DEFAULT_MAX_TOKENS,
-        api_version: str = _DEFAULT_API_VERSION,
     ) -> None:
-        self._api_key = api_key or os.environ.get("TRACT_ANTHROPIC_API_KEY", "")
-        if not self._api_key:
+        resolved_key = api_key or os.environ.get("TRACT_ANTHROPIC_API_KEY", "")
+        if not resolved_key:
             raise LLMConfigError(
                 "No API key provided. Pass api_key= or set TRACT_ANTHROPIC_API_KEY "
                 "environment variable."
             )
-        self._base_url = (
-            base_url
-            or os.environ.get(
-                "TRACT_ANTHROPIC_BASE_URL", "https://api.anthropic.com"
-            )
-        ).rstrip("/")
+        self._api_key = resolved_key
+        self._base_url = base_url
         self._default_model = default_model
-        self._timeout = timeout
-        self._max_retries = max_retries
         self._default_max_tokens = default_max_tokens
-        self._api_version = api_version
-        self._client = httpx.Client(
-            timeout=timeout,
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": self._api_key,
-                "anthropic-version": self._api_version,
-            },
-        )
+
+        sdk_kwargs: dict[str, Any] = {
+            "api_key": resolved_key,
+            "max_retries": max_retries,
+            "timeout": timeout,
+        }
+        if base_url:
+            sdk_kwargs["base_url"] = base_url.rstrip("/")
+        self._client = anthropic.Anthropic(**sdk_kwargs)
 
     # ------------------------------------------------------------------
     # LLMClient protocol: chat()
@@ -112,105 +89,22 @@ class AnthropicClient:
         tool_call_id).  Translates to Anthropic format, calls the API,
         and normalizes the response back to OpenAI format.
         """
-        retryer = tenacity.Retrying(
-            retry=tenacity.retry_if_exception(_is_retryable),
-            wait=(
-                tenacity.wait_exponential(multiplier=1, min=1, max=30)
-                + tenacity.wait_random(0, 2)
-            ),
-            stop=tenacity.stop_after_attempt(self._max_retries),
-            before_sleep=tenacity.before_sleep_log(logger, logging.WARNING),
-            reraise=True,
+        create_kwargs = self._build_create_kwargs(
+            messages, model=model, temperature=temperature,
+            max_tokens=max_tokens, **kwargs,
         )
-        return retryer(
-            self._do_chat,
-            messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **kwargs,
-        )
+        try:
+            response = self._client.messages.create(**create_kwargs)
+        except anthropic.AuthenticationError as e:
+            raise LLMAuthError(f"Authentication failed: {e}") from e
+        except anthropic.RateLimitError as e:
+            raise LLMRateLimitError(f"Rate limited: {e}") from e
+        except anthropic.APIStatusError as e:
+            raise LLMResponseError(f"API error ({e.status_code}): {e}") from e
+        except anthropic.APIConnectionError as e:
+            raise LLMResponseError(f"Connection error: {e}") from e
 
-    def _do_chat(
-        self,
-        messages: list[dict],
-        *,
-        model: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        **kwargs: Any,
-    ) -> dict:
-        """Execute a single Messages API request (no retry)."""
-        system, anthropic_messages = self._translate_messages(messages)
-
-        payload: dict[str, Any] = {
-            "model": model or self._default_model,
-            "max_tokens": max_tokens or self._default_max_tokens,
-            "messages": anthropic_messages,
-        }
-        if system:
-            payload["system"] = system
-        if temperature is not None:
-            payload["temperature"] = temperature
-
-        # Translate tool definitions from OpenAI to Anthropic format
-        tools = kwargs.pop("tools", None)
-        if tools:
-            payload["tools"] = self._translate_tools(tools)
-
-        # Translate stop → stop_sequences
-        stop = kwargs.pop("stop", None)
-        if stop is not None:
-            if isinstance(stop, str):
-                stop = [stop]
-            payload["stop_sequences"] = stop
-
-        # Extended thinking
-        thinking = kwargs.pop("thinking", None)
-        if thinking is not None:
-            payload["thinking"] = thinking
-
-        # Pass through remaining kwargs
-        payload.update(kwargs)
-
-        response = self._client.post(
-            f"{self._base_url}/v1/messages",
-            json=payload,
-        )
-
-        if response.status_code in _AUTH_ERROR_STATUS_CODES:
-            raise LLMAuthError(
-                f"Authentication failed: HTTP {response.status_code} - "
-                f"{response.text}"
-            )
-
-        if response.status_code == 429:
-            retry_after_raw = response.headers.get("Retry-After")
-            retry_after: float | None = None
-            if retry_after_raw is not None:
-                try:
-                    retry_after = float(retry_after_raw)
-                except (ValueError, TypeError):
-                    pass
-            raise LLMRateLimitError(
-                f"Rate limited: HTTP 429 - {response.text}",
-                retry_after=retry_after,
-            )
-
-        if response.status_code == 529:
-            raise LLMRateLimitError(
-                f"Overloaded: HTTP 529 - {response.text}"
-            )
-
-        response.raise_for_status()
-
-        data = response.json()
-        if "content" not in data:
-            raise LLMResponseError(
-                f"Unexpected response format: missing 'content' key. "
-                f"Response: {data}"
-            )
-        return self._normalize_response(data)
+        return self._normalize_response(response)
 
     # ------------------------------------------------------------------
     # LLMClient protocol: extract_*
@@ -294,180 +188,63 @@ class AnthropicClient:
         full normalized OpenAI-format response dict (same as ``chat()``
         would return).
         """
-        system, anthropic_messages = self._translate_messages(messages)
+        create_kwargs = self._build_create_kwargs(
+            messages, model=model, temperature=temperature,
+            max_tokens=max_tokens, **kwargs,
+        )
+        try:
+            with self._client.messages.stream(**create_kwargs) as stream:
+                for event in stream:
+                    yielded = self._map_stream_event(event)
+                    if yielded is not None:
+                        yield yielded
 
-        payload: dict[str, Any] = {
-            "model": model or self._default_model,
-            "max_tokens": max_tokens or self._default_max_tokens,
-            "messages": anthropic_messages,
-            "stream": True,
-        }
-        if system:
-            payload["system"] = system
-        if temperature is not None:
-            payload["temperature"] = temperature
+                # SDK accumulates the full message; normalize it
+                final_message = stream.get_final_message()
+                normalized = self._normalize_response(final_message)
+                yield UsageEvent(usage=normalized.get("usage", {}))
+                yield MessageDone(response=normalized)
 
-        tools = kwargs.pop("tools", None)
-        if tools:
-            payload["tools"] = self._translate_tools(tools)
+        except anthropic.AuthenticationError as e:
+            raise LLMAuthError(f"Authentication failed: {e}") from e
+        except anthropic.RateLimitError as e:
+            raise LLMRateLimitError(f"Rate limited: {e}") from e
+        except anthropic.APIStatusError as e:
+            raise LLMResponseError(f"API error ({e.status_code}): {e}") from e
 
-        stop = kwargs.pop("stop", None)
-        if stop is not None:
-            if isinstance(stop, str):
-                stop = [stop]
-            payload["stop_sequences"] = stop
+    @staticmethod
+    def _map_stream_event(event: Any) -> StreamEvent | None:
+        """Map an SDK stream event to a tract StreamEvent."""
+        ev_type = event.type
 
-        thinking = kwargs.pop("thinking", None)
-        if thinking is not None:
-            payload["thinking"] = thinking
-
-        payload.update(kwargs)
-
-        yield from self._do_stream(payload)
-
-    def _do_stream(self, payload: dict) -> Iterator[StreamEvent]:
-        """Execute streaming request and yield events."""
-        with self._client.stream(
-            "POST",
-            f"{self._base_url}/v1/messages",
-            json=payload,
-        ) as response:
-            if response.status_code in _AUTH_ERROR_STATUS_CODES:
-                response.read()
-                raise LLMAuthError(
-                    f"Authentication failed: HTTP {response.status_code}"
+        if ev_type == "content_block_start":
+            block = event.content_block
+            if hasattr(block, "type") and block.type == "tool_use":
+                return ToolCallStart(
+                    index=event.index, id=block.id, name=block.name,
                 )
-            if response.status_code == 429:
-                response.read()
-                raise LLMRateLimitError("Rate limited: HTTP 429")
-            if response.status_code >= 400:
-                response.read()
-                response.raise_for_status()
 
-            # Accumulation state
-            content_blocks: list[dict] = []
-            current_block_idx: int = -1
-            text_parts: list[str] = []
-            tool_inputs: dict[int, list[str]] = {}  # idx -> json fragments
-            thinking_parts: dict[int, list[str]] = {}
-            model_name: str = ""
-            msg_id: str = ""
-            usage: dict = {}
-            stop_reason: str | None = None
+        elif ev_type == "content_block_delta":
+            delta = event.delta
+            delta_type = delta.type
+            if delta_type == "text_delta":
+                return TextDelta(text=delta.text)
+            if delta_type == "input_json_delta":
+                return ToolCallDelta(
+                    index=event.index, partial_json=delta.partial_json,
+                )
+            if delta_type == "thinking_delta":
+                return ThinkingDelta(text=delta.thinking)
+            # signature_delta handled internally by SDK
 
-            for line in response.iter_lines():
-                if not line.startswith("data: "):
-                    continue
-                data_str = line[6:]
-                if data_str.strip() == "[DONE]":
-                    break
-                try:
-                    event = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
-
-                event_type = event.get("type", "")
-
-                if event_type == "message_start":
-                    msg = event.get("message", {})
-                    model_name = msg.get("model", "")
-                    msg_id = msg.get("id", "")
-                    usage = msg.get("usage", {})
-
-                elif event_type == "content_block_start":
-                    idx = event.get("index", 0)
-                    block = event.get("content_block", {})
-                    current_block_idx = idx
-                    # Pad content_blocks if needed
-                    while len(content_blocks) <= idx:
-                        content_blocks.append({})
-                    content_blocks[idx] = dict(block)
-
-                    if block.get("type") == "tool_use":
-                        tool_inputs[idx] = []
-                        yield ToolCallStart(
-                            index=idx,
-                            id=block.get("id", ""),
-                            name=block.get("name", ""),
-                        )
-
-                elif event_type == "content_block_delta":
-                    idx = event.get("index", current_block_idx)
-                    delta = event.get("delta", {})
-                    delta_type = delta.get("type", "")
-
-                    if delta_type == "text_delta":
-                        text = delta.get("text", "")
-                        text_parts.append(text)
-                        yield TextDelta(text=text)
-
-                    elif delta_type == "input_json_delta":
-                        partial = delta.get("partial_json", "")
-                        if idx in tool_inputs:
-                            tool_inputs[idx].append(partial)
-                        yield ToolCallDelta(index=idx, partial_json=partial)
-
-                    elif delta_type == "thinking_delta":
-                        text = delta.get("thinking", "")
-                        if idx not in thinking_parts:
-                            thinking_parts[idx] = []
-                        thinking_parts[idx].append(text)
-                        yield ThinkingDelta(text=text)
-
-                elif event_type == "content_block_stop":
-                    idx = event.get("index", current_block_idx)
-                    # Finalize tool input JSON
-                    if idx in tool_inputs:
-                        raw = "".join(tool_inputs[idx])
-                        try:
-                            parsed = json.loads(raw) if raw else {}
-                        except json.JSONDecodeError:
-                            parsed = {"_raw": raw}
-                        if idx < len(content_blocks):
-                            content_blocks[idx]["input"] = parsed
-                    # Finalize thinking text
-                    if idx in thinking_parts:
-                        text = "".join(thinking_parts[idx])
-                        if idx < len(content_blocks):
-                            content_blocks[idx]["thinking"] = text
-
-                elif event_type == "message_delta":
-                    delta = event.get("delta", {})
-                    stop_reason = delta.get("stop_reason", stop_reason)
-                    delta_usage = event.get("usage", {})
-                    if delta_usage:
-                        usage.update(delta_usage)
-
-                elif event_type == "message_stop":
-                    pass  # handled after loop
-
-            # Build the full Anthropic response for normalization
-            full_text = "".join(text_parts)
-            # Update text blocks with accumulated text
-            for block in content_blocks:
-                if block.get("type") == "text":
-                    block["text"] = full_text
-
-            anthropic_response = {
-                "id": msg_id,
-                "type": "message",
-                "role": "assistant",
-                "model": model_name,
-                "content": content_blocks,
-                "stop_reason": stop_reason,
-                "usage": usage,
-            }
-
-            normalized = self._normalize_response(anthropic_response)
-            yield UsageEvent(usage=normalized.get("usage", {}))
-            yield MessageDone(response=normalized)
+        return None
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Close the underlying httpx client."""
+        """Close the underlying client."""
         self._client.close()
 
     def __enter__(self) -> AnthropicClient:
@@ -475,6 +252,58 @@ class AnthropicClient:
 
     def __exit__(self, *args: object) -> None:
         self.close()
+
+    # ------------------------------------------------------------------
+    # Internal: build API kwargs
+    # ------------------------------------------------------------------
+
+    def _build_create_kwargs(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Build kwargs dict for messages.create() / messages.stream()."""
+        system, anthropic_messages = self._translate_messages(messages)
+
+        create_kwargs: dict[str, Any] = {
+            "model": model or self._default_model,
+            "max_tokens": max_tokens or self._default_max_tokens,
+            "messages": anthropic_messages,
+        }
+        if system is not None:
+            create_kwargs["system"] = system
+        if temperature is not None:
+            create_kwargs["temperature"] = temperature
+
+        # Translate tool definitions
+        tools = kwargs.pop("tools", None)
+        if tools:
+            create_kwargs["tools"] = self._translate_tools(tools)
+
+        # Translate stop → stop_sequences
+        stop = kwargs.pop("stop", None)
+        if stop is not None:
+            if isinstance(stop, str):
+                stop = [stop]
+            create_kwargs["stop_sequences"] = stop
+
+        # Extended thinking
+        thinking = kwargs.pop("thinking", None)
+        if thinking is not None:
+            create_kwargs["thinking"] = thinking
+
+        # Tool choice translation
+        tool_choice = kwargs.pop("tool_choice", None)
+        if tool_choice is not None:
+            create_kwargs["tool_choice"] = self._translate_tool_choice(tool_choice)
+
+        # Pass through remaining kwargs (cache_control, metadata, etc.)
+        create_kwargs.update(kwargs)
+        return create_kwargs
 
     # ------------------------------------------------------------------
     # Internal: message translation (OpenAI → Anthropic)
@@ -504,12 +333,13 @@ class AnthropicClient:
                 raw.append({"role": "assistant", "content": content_blocks})
 
             elif role == "tool":
-                # OpenAI tool result → Anthropic tool_result content block
-                block = {
+                block: dict[str, Any] = {
                     "type": "tool_result",
                     "tool_use_id": msg.get("tool_call_id", ""),
                     "content": msg.get("content", ""),
                 }
+                if msg.get("is_error"):
+                    block["is_error"] = True
                 raw.append({"role": "user", "content": [block]})
 
             else:
@@ -524,33 +354,45 @@ class AnthropicClient:
 
     @staticmethod
     def _build_assistant_content(msg: dict) -> list[dict] | str:
-        """Build Anthropic content blocks for an assistant message."""
+        """Build Anthropic content blocks for an assistant message.
+
+        Handles text, tool_use, and thinking blocks.  Thinking blocks
+        (with signatures) are preserved for tool use continuations as
+        required by the Anthropic API.
+        """
         text = msg.get("content", "") or ""
         tool_calls = msg.get("tool_calls")
+        thinking_blocks = msg.get("_thinking_blocks", [])
 
-        if not tool_calls:
+        if not tool_calls and not thinking_blocks:
             return text
 
         blocks: list[dict] = []
+
+        # Thinking blocks must come first and in original order
+        for tb in thinking_blocks:
+            blocks.append(tb)
+
         if text:
             blocks.append({"type": "text", "text": text})
 
-        for tc in tool_calls:
-            func = tc.get("function", {})
-            raw_args = func.get("arguments", "{}")
-            if isinstance(raw_args, str):
-                try:
-                    parsed = json.loads(raw_args)
-                except json.JSONDecodeError:
-                    parsed = {"_raw": raw_args}
-            else:
-                parsed = raw_args
-            blocks.append({
-                "type": "tool_use",
-                "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:24]}"),
-                "name": func.get("name", ""),
-                "input": parsed,
-            })
+        if tool_calls:
+            for tc in tool_calls:
+                func = tc.get("function", {})
+                raw_args = func.get("arguments", "{}")
+                if isinstance(raw_args, str):
+                    try:
+                        parsed = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        parsed = {"_raw": raw_args}
+                else:
+                    parsed = raw_args
+                blocks.append({
+                    "type": "tool_use",
+                    "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:24]}"),
+                    "name": func.get("name", ""),
+                    "input": parsed,
+                })
 
         return blocks
 
@@ -604,21 +446,127 @@ class AnthropicClient:
             })
         return result
 
+    @staticmethod
+    def _translate_tool_choice(tool_choice: Any) -> dict:
+        """Translate OpenAI tool_choice format to Anthropic format.
+
+        OpenAI string shortcuts: "auto", "none", "required"
+        OpenAI named: {"type": "function", "function": {"name": "..."}}
+        Anthropic: {"type": "auto"}, {"type": "any"}, {"type": "tool", "name": "..."}
+        """
+        if isinstance(tool_choice, str):
+            mapping = {"required": "any", "auto": "auto", "none": "none"}
+            return {"type": mapping.get(tool_choice, tool_choice)}
+        if isinstance(tool_choice, dict):
+            if tool_choice.get("type") == "function":
+                return {
+                    "type": "tool",
+                    "name": tool_choice.get("function", {}).get("name", ""),
+                }
+            return tool_choice
+        return {"type": "auto"}
+
     # ------------------------------------------------------------------
     # Internal: response normalization (Anthropic → OpenAI)
     # ------------------------------------------------------------------
 
-    def _normalize_response(self, data: dict) -> dict:
+    def _normalize_response(self, msg: Any) -> dict:
         """Convert Anthropic Messages API response to OpenAI format.
 
-        This allows all existing tract code that reads
-        ``response["choices"][0]["message"]["content"]`` to work unchanged.
+        Accepts either an ``anthropic.types.Message`` object (from SDK)
+        or a raw dict (for testing).  Normalizes to the same OpenAI-format
+        dict that ``OpenAIClient.chat()`` returns.
         """
-        content_blocks = data.get("content", [])
+        if isinstance(msg, dict):
+            return self._normalize_dict_response(msg)
 
-        # Extract text content
+        # --- SDK Message object path ---
+        content_blocks = msg.content
+
         text_parts: list[str] = []
         tool_calls: list[dict] = []
+        thinking_blocks: list[dict] = []
+
+        for block in content_blocks:
+            if block.type == "text":
+                text_parts.append(block.text)
+            elif block.type == "tool_use":
+                tool_calls.append({
+                    "id": block.id,
+                    "type": "function",
+                    "function": {
+                        "name": block.name,
+                        "arguments": json.dumps(block.input),
+                    },
+                })
+            elif block.type == "thinking":
+                thinking_blocks.append({
+                    "type": "thinking",
+                    "thinking": block.thinking,
+                    "signature": block.signature,
+                })
+
+        text = "\n".join(text_parts) if text_parts else None
+
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": text,
+        }
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        if thinking_blocks:
+            message["_thinking_blocks"] = thinking_blocks
+
+        # Map stop_reason to finish_reason
+        stop_reason = msg.stop_reason or "end_turn"
+        finish_reason_map = {
+            "end_turn": "stop",
+            "tool_use": "tool_calls",
+            "max_tokens": "length",
+            "stop_sequence": "stop",
+            "pause_turn": "stop",
+            "refusal": "stop",
+        }
+        finish_reason = finish_reason_map.get(stop_reason, "stop")
+
+        # Map usage — preserve cache tokens
+        usage_obj = msg.usage
+        usage: dict[str, Any] = {
+            "prompt_tokens": usage_obj.input_tokens,
+            "completion_tokens": usage_obj.output_tokens,
+            "total_tokens": usage_obj.input_tokens + usage_obj.output_tokens,
+        }
+        if usage_obj.cache_creation_input_tokens:
+            usage["cache_creation_input_tokens"] = usage_obj.cache_creation_input_tokens
+        if usage_obj.cache_read_input_tokens:
+            usage["cache_read_input_tokens"] = usage_obj.cache_read_input_tokens
+
+        # Serialize raw content blocks for reasoning extraction
+        raw_blocks = []
+        for b in content_blocks:
+            raw_blocks.append(b.model_dump() if hasattr(b, "model_dump") else b)
+
+        result: dict[str, Any] = {
+            "id": msg.id,
+            "object": "chat.completion",
+            "model": msg.model,
+            "choices": [{
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason,
+            }],
+            "usage": usage,
+            "_anthropic_content": raw_blocks,
+        }
+        return result
+
+    def _normalize_dict_response(self, data: dict) -> dict:
+        """Normalize a raw dict response (used by tests)."""
+        content_blocks = data.get("content", [])
+
+        text_parts: list[str] = []
+        tool_calls: list[dict] = []
+        thinking_blocks: list[dict] = []
 
         for block in content_blocks:
             block_type = block.get("type", "")
@@ -633,6 +581,8 @@ class AnthropicClient:
                         "arguments": json.dumps(block.get("input", {})),
                     },
                 })
+            elif block_type == "thinking":
+                thinking_blocks.append(block)
 
         text = "\n".join(text_parts) if text_parts else None
 
@@ -642,8 +592,9 @@ class AnthropicClient:
         }
         if tool_calls:
             message["tool_calls"] = tool_calls
+        if thinking_blocks:
+            message["_thinking_blocks"] = thinking_blocks
 
-        # Map stop_reason to finish_reason
         stop_reason = data.get("stop_reason", "end_turn")
         finish_reason_map = {
             "end_turn": "stop",
@@ -653,9 +604,8 @@ class AnthropicClient:
         }
         finish_reason = finish_reason_map.get(stop_reason, "stop")
 
-        # Map usage
         raw_usage = data.get("usage", {})
-        usage = {
+        usage: dict[str, Any] = {
             "prompt_tokens": raw_usage.get("input_tokens", 0),
             "completion_tokens": raw_usage.get("output_tokens", 0),
             "total_tokens": (
@@ -663,20 +613,21 @@ class AnthropicClient:
                 + raw_usage.get("output_tokens", 0)
             ),
         }
+        if raw_usage.get("cache_creation_input_tokens"):
+            usage["cache_creation_input_tokens"] = raw_usage["cache_creation_input_tokens"]
+        if raw_usage.get("cache_read_input_tokens"):
+            usage["cache_read_input_tokens"] = raw_usage["cache_read_input_tokens"]
 
         result: dict[str, Any] = {
             "id": data.get("id", ""),
             "object": "chat.completion",
             "model": data.get("model", ""),
-            "choices": [
-                {
-                    "index": 0,
-                    "message": message,
-                    "finish_reason": finish_reason,
-                }
-            ],
+            "choices": [{
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason,
+            }],
             "usage": usage,
-            # Preserve raw Anthropic content for reasoning extraction
             "_anthropic_content": content_blocks,
         }
         return result
