@@ -9,45 +9,21 @@ Three profiles:
 from __future__ import annotations
 
 import logging
+from typing import Literal, get_args
 
-from tract.toolkit.models import ToolConfig, ToolProfile
+from tract.toolkit.models import ToolConfig, ToolName, ToolProfile
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# All 29 tool names (must match definitions.py)
+# Profile name type
 # ---------------------------------------------------------------------------
-_ALL_TOOL_NAMES = [
-    "commit",
-    "compile",
-    "annotate",
-    "status",
-    "log",
-    "diff",
-    "compress",
-    "branch",
-    "switch",
-    "merge",
-    "reset",
-    "checkout",
-    "gc",
-    "list_branches",
-    "get_commit",
-    "configure_model",
-    "tag",
-    "untag",
-    "query_by_tags",
-    "register_tag",
-    "get_tags",
-    "list_tags",
-    "configure",
-    "create_metadata",
-    "get_config",
-    "transition",
-    "directive",
-    "create_middleware",
-    "remove_middleware",
-]
+ProfileName = Literal["self", "supervisor", "full"]
+
+# ---------------------------------------------------------------------------
+# All tool names — derived from the ToolName Literal (single source of truth)
+# ---------------------------------------------------------------------------
+_ALL_TOOL_NAMES: list[str] = list(get_args(ToolName))
 
 # ---------------------------------------------------------------------------
 # SELF profile: tools for an agent managing its own context
@@ -366,11 +342,11 @@ _PROFILES: dict[str, ToolProfile] = {
 }
 
 
-def get_profile(name: str) -> ToolProfile:
+def get_profile(name: ProfileName | str) -> ToolProfile:
     """Look up a built-in profile by name.
 
     Args:
-        name: Profile name ("self", "supervisor", or "full").
+        name: Profile name (``"self"``, ``"supervisor"``, or ``"full"``).
 
     Returns:
         The matching ToolProfile.

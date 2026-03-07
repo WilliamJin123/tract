@@ -412,7 +412,7 @@ class Session:
 
         llm_client = getattr(into, "_llm_client", None)
 
-        return collapse_tract(
+        result = collapse_tract(
             parent_tract=into,
             child_tract=child,
             spawn_repo=self._spawn_repo,
@@ -422,6 +422,15 @@ class Session:
             target_tokens=target_tokens,
             llm_client=llm_client,
         )
+
+        # Attach effective config for display
+        if llm_client is not None and content is None:
+            import dataclasses as _dc
+            effective_config = getattr(into, "_default_config", None)
+            if effective_config is not None:
+                result = _dc.replace(result, config=effective_config)
+
+        return result
 
     def deploy(
         self,

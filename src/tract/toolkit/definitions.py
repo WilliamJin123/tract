@@ -12,6 +12,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from tract.middleware import VALID_EVENTS
 from tract.toolkit.models import ToolDefinition
 
 if TYPE_CHECKING:
@@ -731,11 +732,7 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
                 "properties": {
                     "event": {
                         "type": "string",
-                        "enum": [
-                            "pre_commit", "post_commit", "pre_compile",
-                            "pre_compress", "pre_merge", "pre_gc",
-                            "pre_transition", "post_transition",
-                        ],
+                        "enum": sorted(VALID_EVENTS),
                         "description": "Event to hook into.",
                     },
                     "code": {

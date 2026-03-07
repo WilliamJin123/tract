@@ -9,11 +9,12 @@ Not thread-safe in v1.  Each thread should open its own ``Tract``.
 
 from __future__ import annotations
 
+import json
 import uuid
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import fields as dc_fields, replace
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 from pydantic import BaseModel
 
@@ -60,6 +61,7 @@ if TYPE_CHECKING:
 
     from tract.llm.protocols import LLMClient, ResolverCallable
     from tract.loop import LoopResult
+    from tract.middleware import MiddlewareEvent
     from tract.models.branch import BranchInfo
     from tract.models.compression import CompressResult, GCResult, ReorderWarning, ToolCompactResult, ToolDropResult
     from tract.models.merge import ImportResult, MergeResult, RebaseResult
@@ -69,8 +71,21 @@ if TYPE_CHECKING:
     from tract.operations.config_index import ConfigIndex
     from tract.storage.schema import CommitRow
     from tract.toolkit.executor import ToolExecutor
+    from tract.toolkit.models import ToolName
+    from tract.toolkit.profiles import ProfileName
     from tract.protocols import ToolTurn
     from tract.models.config import ToolSummarizationConfig
+
+# ---------------------------------------------------------------------------
+# Compile strategy type
+# ---------------------------------------------------------------------------
+CompileStrategy = Literal["full", "messages", "adaptive"]
+
+# ---------------------------------------------------------------------------
+# Valid operation names for configure_operations / configure_clients
+# ---------------------------------------------------------------------------
+_VALID_OPERATION_NAMES: frozenset[str] = frozenset({"chat", "merge", "compress", "message"})
+_VALID_PROMPT_NAMES: frozenset[str] = frozenset({"compress", "merge", "message", "commit_message"})
 
 
 # ------------------------------------------------------------------
@@ -102,6 +117,17 @@ def _fallback_message(content_type: str, text: str) -> str:
     if len(preview) > _MAX_AUTO_MSG_LEN:
         preview = preview[: _MAX_AUTO_MSG_LEN - 3] + "..."
     return preview
+
+
+def _detect_provider(
+    base_url: str | None, model: str | None,
+) -> Literal["openai", "anthropic"]:
+    """Auto-detect LLM provider from base_url or model name."""
+    if base_url and "anthropic" in base_url.lower():
+        return "anthropic"
+    if model and model.startswith("claude"):
+        return "anthropic"
+    return "openai"
 
 
 class Tract:
@@ -217,6 +243,7 @@ class Tract:
         tokenizer_encoding: str | None = None,
         commit_reasoning: bool = True,
         auto_message: bool | str | LLMConfig = False,
+        provider: Literal["openai", "anthropic"] | None = None,
     ) -> Tract:
         """Open (or create) a Trace repository.
 
@@ -269,6 +296,11 @@ class Tract:
                 - ``True``: use the tract-level default LLM client/model.
                 - ``"model-name"``: use a specific model (e.g. ``"llama3.1-8b"``).
                 - :class:`LLMConfig`: full control over message generation config.
+            provider: LLM provider to use when *api_key* is provided.
+                ``"openai"`` (default) or ``"anthropic"``.  When ``None``,
+                auto-detects from *base_url* or *model* name: base URLs
+                containing ``"anthropic"`` or models starting with ``"claude"``
+                select the Anthropic client.
 
         Returns:
             A ready-to-use ``Tract`` instance.
@@ -404,13 +436,23 @@ class Tract:
 
         # Auto-configure LLM if api_key provided
         if api_key is not None:
-            from tract.llm.client import OpenAIClient
+            detected = provider or _detect_provider(base_url, model)
+            if detected == "anthropic":
+                from tract.llm.anthropic_client import AnthropicClient
 
-            client = OpenAIClient(
-                api_key=api_key,
-                base_url=base_url,
-                default_model=model or "gpt-4o-mini",
-            )
+                client = AnthropicClient(
+                    api_key=api_key,
+                    base_url=base_url,
+                    default_model=model or "claude-sonnet-4-20250514",
+                )
+            else:
+                from tract.llm.client import OpenAIClient
+
+                client = OpenAIClient(
+                    api_key=api_key,
+                    base_url=base_url,
+                    default_model=model or "gpt-4o-mini",
+                )
             tract.configure_llm(client)
             tract._owns_llm_client = True
             if model is not None:
@@ -439,14 +481,12 @@ class Tract:
         if auto_message is not False:
             tract._auto_message_enabled = True
             if isinstance(auto_message, str):
-                from dataclasses import replace as _replace
-                tract._operation_configs = _replace(
+                tract._operation_configs = replace(
                     tract._operation_configs,
                     message=LLMConfig(model=auto_message, temperature=0.0),
                 )
             elif isinstance(auto_message, LLMConfig):
-                from dataclasses import replace as _replace
-                tract._operation_configs = _replace(
+                tract._operation_configs = replace(
                     tract._operation_configs, message=auto_message,
                 )
             # auto_message=True: no operation config needed, uses default
@@ -612,7 +652,7 @@ class Tract:
         name: str,
         text: str,
         *,
-        priority: Any = None,
+        priority: Priority | None = None,
         message: str | None = None,
         tags: list[str] | None = None,
     ) -> CommitInfo:
@@ -639,10 +679,8 @@ class Tract:
             self.annotate(info.commit_hash, actual_priority)
         return info
 
-    def use(self, event: str, handler: Callable) -> str:
+    def add_middleware(self, event: MiddlewareEvent, handler: Callable) -> str:
         """Register middleware. Returns handler ID for removal."""
-        import uuid as _uuid
-
         from tract.middleware import VALID_EVENTS
 
         if event not in VALID_EVENTS:
@@ -650,9 +688,12 @@ class Tract:
                 f"Unknown middleware event '{event}'. "
                 f"Valid events: {sorted(VALID_EVENTS)}"
             )
-        handler_id = _uuid.uuid4().hex[:12]
+        handler_id = uuid.uuid4().hex[:12]
         self._middleware.setdefault(event, []).append((handler_id, handler))
         return handler_id
+
+    # Backward-compatible alias
+    use = add_middleware
 
     def remove_middleware(self, handler_id: str) -> None:
         """Remove a registered middleware handler."""
@@ -695,15 +736,15 @@ class Tract:
         self,
         target: str,
         *,
-        handoff: str = "none",
+        handoff: Literal["full", "summary", "none"] | str = "none",
         **kwargs: Any,
     ) -> CommitInfo | None:
         """Transition to target branch with optional handoff.
 
         Args:
             target: Branch name.
-            handoff: "full" (compile all), "summary" (adaptive), "none",
-                     or custom text string.
+            handoff: ``"full"`` (compile all), ``"summary"`` (adaptive),
+                ``"none"``, or custom text string.
 
         Returns:
             CommitInfo of the handoff commit on the target, or None if no handoff.
@@ -822,10 +863,9 @@ class Tract:
             commit_hash: The commit to link tools to.
             tools: List of tool definition dicts.
         """
-        from datetime import datetime as _dt, timezone as _tz
         from tract.models.tools import hash_tool_schema
 
-        now = _dt.now(_tz.utc)
+        now = datetime.now(timezone.utc)
         for position, tool in enumerate(tools):
             content_hash = hash_tool_schema(tool)
             name = ""
@@ -892,8 +932,7 @@ class Tract:
         # (API prompt_tokens already includes tool definition costs)
         token_count = result.token_count
         if not result.token_source.startswith("api:"):
-            import json as _json
-            tools_text = _json.dumps(tools)
+            tools_text = json.dumps(tools)
             tools_tokens = self._token_counter.count_text(tools_text)
             token_count += tools_tokens
         # CompiledContext is frozen, so create new instance with tools
@@ -953,20 +992,18 @@ class Tract:
         if isinstance(content, dict):
             content = validate_content(content, custom_registry=self._custom_type_registry)
 
-        # Determine role for auto-classification
-        _role = None
+        # Determine role and content_type for auto-classification
+        _ctype = getattr(content, "content_type", "unknown") if isinstance(content, BaseModel) else "unknown"
+        _role = getattr(content, "role", None) if isinstance(content, BaseModel) else None
+
+        # Extract text once (reused for auto-message and max_commit_tokens)
+        _text: str | None = None
         if isinstance(content, BaseModel):
-            content_dict = content.model_dump(mode="json")
-            _ctype = content_dict.get("content_type", "unknown")
-            _role = content_dict.get("role")
-        else:
-            _ctype = "unknown"
+            from tract.engine.commit import extract_text_from_content as _extract_text
+            _text = _extract_text(content)
 
         # Auto-generate commit message and auto-classify tags
         if message is None and isinstance(content, BaseModel):
-            from tract.engine.commit import extract_text_from_content as _extract_text
-
-            _text = _extract_text(content)
             auto_msg, auto_tags = self._auto_classify(
                 _ctype, _text, role=_role, operation=operation, metadata=metadata,
             )
@@ -990,17 +1027,13 @@ class Tract:
 
         # Config enforcement: max_commit_tokens
         max_commit_tokens = self.get_config("max_commit_tokens")
-        if max_commit_tokens is not None:
-            # Estimate token count for the content
-            if isinstance(content, BaseModel):
-                from tract.engine.commit import extract_text_from_content as _extract
-                _est_text = _extract(content)
-                _est_tokens = self._token_counter.count_text(_est_text) if _est_text else 0
-                if _est_tokens > int(max_commit_tokens):
-                    raise BlockedError(
-                        "pre_commit",
-                        f"Exceeds max_commit_tokens ({max_commit_tokens})",
-                    )
+        if max_commit_tokens is not None and _text is not None:
+            _est_tokens = self._token_counter.count_text(_text) if _text else 0
+            if _est_tokens > int(max_commit_tokens):
+                raise BlockedError(
+                    "pre_commit",
+                    f"Exceeds max_commit_tokens ({max_commit_tokens})",
+                )
 
         prev_head = self.head
 
@@ -1729,7 +1762,7 @@ class Tract:
             "frequency_penalty", "presence_penalty", "top_k",
             "seed", "stop_sequences",
         )
-        sources: dict = {} if include_sources else {}
+        sources: dict = {}
 
         for field_name in _TYPED_FIELDS:
             # Level 1: Sugar param
@@ -2007,25 +2040,13 @@ class Tract:
 
         # 1b. Persist compile record (SC-3: chat/generate auto-create)
         if self._compile_record_repo is not None:
-            import uuid as _uuid
-            from datetime import datetime as _dt, timezone as _tz
-
-            record_id = _uuid.uuid4().hex
-            current_head = self.head
-            self._compile_record_repo.save_record(
-                record_id=record_id,
-                tract_id=self._tract_id,
-                head_hash=current_head or "",
-                token_count=compiled.token_count,
-                commit_count=compiled.commit_count,
-                token_source=compiled.token_source,
-                params_json=None,  # No compile params for standard calls
-                created_at=_dt.now(_tz.utc),
+            self._save_compile_record(
+                self.head or "",
+                compiled.token_count,
+                compiled.commit_count,
+                compiled.token_source,
+                compiled.commit_hashes,
             )
-            for pos, commit_hash in enumerate(compiled.commit_hashes):
-                self._compile_record_repo.add_effective(
-                    record_id, commit_hash, pos
-                )
 
         # 2. Call LLM (resolve per-operation client and config)
         chat_client = self._resolve_llm_client("chat")
@@ -2199,6 +2220,8 @@ class Tract:
         tool_handlers: dict[str, Callable] | None = None,
         llm_client: LLMClient | None = None,
         on_step: Callable | None = None,
+        on_token: Callable | None = None,
+        stream: bool = False,
     ) -> LoopResult:  # noqa: F821
         """Run the default agent loop on this tract.
 
@@ -2223,6 +2246,10 @@ class Tract:
                 in this dict are dispatched to tract's built-in executor.
             llm_client: LLM client override.
             on_step: Step callback ``(step_num, response) -> None``.
+            on_token: Streaming callback ``(text_chunk) -> None``.  When
+                provided and the LLM client supports streaming, each text
+                delta is passed to this callback as it arrives.
+            stream: Enable streaming even without on_token callback.
 
         Returns:
             LoopResult with status, reason, steps, and tool_calls.
@@ -2241,7 +2268,11 @@ class Tract:
         else:
             resolved_tools = tools  # type: ignore[assignment]
 
-        config = LoopConfig(max_steps=max_steps, system_prompt=system_prompt)
+        config = LoopConfig(
+            max_steps=max_steps,
+            system_prompt=system_prompt,
+            stream=stream,
+        )
         return run_loop(
             self,
             task=task,
@@ -2250,6 +2281,7 @@ class Tract:
             tools=resolved_tools,
             tool_handlers=tool_handlers,
             on_step=on_step,
+            on_token=on_token,
         )
 
     def revise(
@@ -2321,9 +2353,8 @@ class Tract:
             role = "system"
         elif ct == "dialogue":
             # Load the blob to get the role field.
-            import json as _json
             blob = self._blob_repo.get(target_row.content_hash)
-            data = _json.loads(blob.payload_json) if blob else {}
+            data = json.loads(blob.payload_json) if blob else {}
             role = data.get("role", "assistant")
         else:
             role = "assistant"
@@ -3865,24 +3896,19 @@ class Tract:
             )
             return
         # Keyword path: validate and construct OperationConfigs
-        _valid_ops = {"chat", "merge", "compress", "message"}
         for name, cfg in operation_configs.items():
             if not isinstance(cfg, LLMConfig):
                 raise TypeError(
                     f"Expected LLMConfig for '{name}', "
                     f"got {type(cfg).__name__}"
                 )
-            if name not in _valid_ops:
+            if name not in _VALID_OPERATION_NAMES:
                 raise ValueError(
                     f"Unknown operation '{name}'. "
-                    f"Valid operations: {', '.join(sorted(_valid_ops))}"
+                    f"Valid operations: {', '.join(sorted(_VALID_OPERATION_NAMES))}"
                 )
         # Merge with existing: only replace fields that are provided
-        from dataclasses import replace as _replace
-        updates = {}
-        for name, cfg in operation_configs.items():
-            updates[name] = cfg
-        self._operation_configs = _replace(self._operation_configs, **updates)
+        self._operation_configs = replace(self._operation_configs, **operation_configs)
         # Log config change
         self._log_config_change(
             "operation_config",
@@ -3938,15 +3964,13 @@ class Tract:
             self._operation_clients = _clients
             self._log_config_change("operation_client", source="api")
             return
-        _valid_ops = {"chat", "merge", "compress", "message"}
         for name in operation_clients:
-            if name not in _valid_ops:
+            if name not in _VALID_OPERATION_NAMES:
                 raise ValueError(
                     f"Unknown operation '{name}'. "
-                    f"Valid operations: {', '.join(sorted(_valid_ops))}"
+                    f"Valid operations: {', '.join(sorted(_VALID_OPERATION_NAMES))}"
                 )
-        from dataclasses import replace as _replace
-        self._operation_clients = _replace(self._operation_clients, **operation_clients)
+        self._operation_clients = replace(self._operation_clients, **operation_clients)
         # Log config change
         self._log_config_change("operation_client", source="api")
 
@@ -3971,7 +3995,6 @@ class Tract:
         repo = self._persistence_repo
         if repo is None:
             return
-        import json as _json
         from tract.storage.schema import ConfigChangeRow
 
         entry = ConfigChangeRow(
@@ -3988,14 +4011,12 @@ class Tract:
 
     def _serialize_operation_configs(self) -> str | None:
         """Serialize current operation configs to JSON string."""
-        import json as _json
-        from dataclasses import fields as dc_fields
         result = {}
         for f in dc_fields(self._operation_configs):
             val = getattr(self._operation_configs, f.name)
             if val is not None:
                 result[f.name] = val.to_dict()
-        return _json.dumps(result) if result else None
+        return json.dumps(result) if result else None
 
     def config_history(
         self,
@@ -4068,19 +4089,17 @@ class Tract:
                 source="api",
             )
             return
-        _valid_ops = {"compress", "merge", "message", "commit_message"}
         for name, val in prompt_overrides.items():
             if not isinstance(val, str):
                 raise TypeError(
                     f"Expected str for '{name}', got {type(val).__name__}"
                 )
-            if name not in _valid_ops:
+            if name not in _VALID_PROMPT_NAMES:
                 raise ValueError(
                     f"Unknown operation '{name}'. "
-                    f"Valid operations: {', '.join(sorted(_valid_ops))}"
+                    f"Valid operations: {', '.join(sorted(_VALID_PROMPT_NAMES))}"
                 )
-        from dataclasses import replace as _replace
-        self._operation_prompts = _replace(self._operation_prompts, **prompt_overrides)
+        self._operation_prompts = replace(self._operation_prompts, **prompt_overrides)
         self._log_config_change(
             "prompts",
             config_json=self._serialize_prompts(),
@@ -4094,14 +4113,12 @@ class Tract:
 
     def _serialize_prompts(self) -> str | None:
         """Serialize current operation prompts to JSON string."""
-        import json as _json
-        from dataclasses import fields as dc_fields
         result = {}
         for f in dc_fields(self._operation_prompts):
             val = getattr(self._operation_prompts, f.name)
             if val is not None:
                 result[f.name] = val
-        return _json.dumps(result) if result else None
+        return json.dumps(result) if result else None
 
     def _resolve_llm_client(self, operation: str) -> LLMClient:
         """Resolve the LLM client for a given operation.
@@ -4727,6 +4744,11 @@ class Tract:
         self._session.commit()
         self._cache.clear()
 
+        # Attach resolved config to result for display
+        if llm_kwargs:
+            import dataclasses as _dc
+            result = _dc.replace(result, config=LLMConfig.from_dict(llm_kwargs))
+
         return result
 
     def compress_tool_calls(
@@ -4779,8 +4801,7 @@ class Tract:
             CompressionError: If no tool turns found or LLM returns
                 malformed response.
         """
-        import json as _json
-
+        
         from tract.exceptions import CompressionError
         from tract.models.compression import ToolCompactResult
         from tract.operations.compression import build_role_label
@@ -4844,7 +4865,7 @@ class Tract:
                 max_tokens=max_tokens, llm_config=llm_config,
             )
             if resolved:
-                llm_kwargs = resolved.to_llm_kwargs()
+                llm_kwargs = resolved
 
         llm = self._resolve_llm_client("compress")
         response = llm.chat(
@@ -4858,8 +4879,8 @@ class Tract:
         # 4. Parse per-result summaries from LLM response
         raw_content = response["choices"][0]["message"]["content"]
         try:
-            summaries = _json.loads(raw_content)
-        except (_json.JSONDecodeError, TypeError) as exc:
+            summaries = json.loads(raw_content)
+        except (json.JSONDecodeError, TypeError) as exc:
             raise CompressionError(
                 f"LLM returned invalid JSON for tool compaction: {exc}\n"
                 f"Response: {raw_content[:200]}"
@@ -4894,6 +4915,14 @@ class Tract:
         # 6. Return result
         all_tool_names = sorted({n for turn in turns for n in turn.tool_names})
 
+        # Build effective config for display
+        effective_config = LLMConfig.from_dict(
+            self._resolve_llm_config(
+                "compress", model=model, temperature=temperature,
+                max_tokens=max_tokens, llm_config=llm_config,
+            )
+        )
+
         return ToolCompactResult(
             edit_commits=tuple(edit_commits),
             source_commits=tuple(source_commits),
@@ -4901,6 +4930,7 @@ class Tract:
             compacted_tokens=compacted_tokens,
             tool_names=tuple(all_tool_names),
             turn_count=len(turns),
+            config=effective_config,
         )
 
     def gc(
@@ -4999,15 +5029,16 @@ class Tract:
                 f"Expected TokenUsage or dict, got {type(usage).__name__}"
             )
 
-        target_hash = head_hash or self.head
+        current_head = self.head
+        target_hash = head_hash or current_head
         if target_hash is None:
             raise TraceError("Cannot record usage: no commits exist")
 
         # Validate explicit head_hash matches current HEAD
-        if head_hash is not None and head_hash != self.head:
+        if head_hash is not None and head_hash != current_head:
             raise TraceError(
                 f"Cannot record usage: head_hash {head_hash} "
-                f"does not match current HEAD {self.head}"
+                f"does not match current HEAD {current_head}"
             )
 
         # If no snapshot yet, trigger a compile to populate one
@@ -5028,22 +5059,7 @@ class Tract:
             self._cache.store_api_override(target_hash, context_tokens, token_source)
             # Persist as compile record for cross-session durability
             if self._compile_record_repo is not None:
-                import uuid as _uuid
-                from datetime import datetime as _dt, timezone as _tz
-                record_id = _uuid.uuid4().hex
-                self._compile_record_repo.save_record(
-                    record_id=record_id,
-                    tract_id=self._tract_id,
-                    head_hash=target_hash,
-                    token_count=context_tokens,
-                    commit_count=updated.commit_count,
-                    token_source=token_source,
-                    params_json=None,
-                    created_at=_dt.now(_tz.utc),
-                )
-                for pos, commit_hash in enumerate(updated.commit_hashes):
-                    self._compile_record_repo.add_effective(record_id, commit_hash, pos)
-                self._session.commit()
+                self._save_compile_record(target_hash, context_tokens, updated.commit_count, token_source, updated.commit_hashes)
             return self._cache.to_compiled(updated)
 
         # Fallback (custom compiler, no snapshot): return minimal result
@@ -5051,26 +5067,38 @@ class Tract:
         token_source = f"api:{usage.prompt_tokens}+{usage.completion_tokens}"
         # Persist as compile record even without snapshot
         if self._compile_record_repo is not None:
-            import uuid as _uuid
-            from datetime import datetime as _dt, timezone as _tz
-            record_id = _uuid.uuid4().hex
-            self._compile_record_repo.save_record(
-                record_id=record_id,
-                tract_id=self._tract_id,
-                head_hash=target_hash,
-                token_count=context_tokens,
-                commit_count=0,
-                token_source=token_source,
-                params_json=None,
-                created_at=_dt.now(_tz.utc),
-            )
-            self._session.commit()
+            self._save_compile_record(target_hash, context_tokens, 0, token_source)
         return CompiledContext(
             messages=[],
             token_count=context_tokens,
             commit_count=0,
             token_source=token_source,
         )
+
+    def _save_compile_record(
+        self,
+        head_hash: str,
+        token_count: int,
+        commit_count: int,
+        token_source: str,
+        commit_hashes: tuple[str, ...] | list[str] = (),
+    ) -> None:
+        """Persist a compile record to storage."""
+        assert self._compile_record_repo is not None
+        record_id = uuid.uuid4().hex
+        self._compile_record_repo.save_record(
+            record_id=record_id,
+            tract_id=self._tract_id,
+            head_hash=head_hash,
+            token_count=token_count,
+            commit_count=commit_count,
+            token_source=token_source,
+            params_json=None,
+            created_at=datetime.now(timezone.utc),
+        )
+        for pos, ch in enumerate(commit_hashes):
+            self._compile_record_repo.add_effective(record_id, ch, pos)
+        self._session.commit()
 
     def _normalize_usage_dict(self, usage_dict: dict) -> TokenUsage:
         """Normalise provider-specific usage dicts to :class:`TokenUsage`.
@@ -5153,31 +5181,16 @@ class Tract:
     # Agent toolkit
     # ------------------------------------------------------------------
 
-    def as_tools(
+    def _resolve_tools(
         self,
         *,
-        profile: str | object = "self",
-        tool_names: list[str] | None = None,
-        overrides: dict[str, str] | None = None,
-        format: str = "openai",
-    ) -> list[dict]:
-        """Get tool definitions for this tract in LLM-consumable format.
+        profile: ProfileName | ToolProfile | str = "self",
+        tool_names: list[ToolName | str] | None = None,
+        overrides: dict[ToolName | str, str] | None = None,
+    ) -> list:
+        """Shared tool resolution: profile filtering, name filtering, overrides.
 
-        Combines tool definitions, profile filtering, optional description
-        overrides, and format conversion in one call.
-
-        Args:
-            profile: A profile name (``"self"``, ``"supervisor"``, ``"full"``)
-                or a :class:`~tract.toolkit.models.ToolProfile` instance.
-            tool_names: Optional list of tool names to include. When provided,
-                only tools whose names are in this list are returned (applied
-                after profile filtering).
-            overrides: Optional dict mapping tool names to replacement
-                descriptions.  Applied on top of the profile's descriptions.
-            format: Output format -- ``"openai"`` (default) or ``"anthropic"``.
-
-        Returns:
-            List of tool definition dicts in the requested format.
+        Returns list of ToolDefinition objects.
         """
         from tract.toolkit.definitions import get_all_tools
         from tract.toolkit.models import ToolProfile as _ToolProfile
@@ -5209,18 +5222,46 @@ class Tract:
             allowed = set(tool_names)
             filtered = [t for t in filtered if t.name in allowed]
 
-        # Apply overrides
+        # Apply description overrides
         if overrides:
-            from dataclasses import replace as _replace
-
             new_filtered = []
             for tool in filtered:
                 if tool.name in overrides:
-                    tool = _replace(tool, description=overrides[tool.name])
+                    tool = replace(tool, description=overrides[tool.name])
                 new_filtered.append(tool)
             filtered = new_filtered
 
-        # Convert to requested format
+        return filtered
+
+    def as_tools(
+        self,
+        *,
+        profile: ProfileName | ToolProfile | str = "self",
+        tool_names: list[ToolName | str] | None = None,
+        overrides: dict[ToolName | str, str] | None = None,
+        format: Literal["openai", "anthropic"] = "openai",
+    ) -> list[dict]:
+        """Get tool definitions for this tract in LLM-consumable format.
+
+        Combines tool definitions, profile filtering, optional description
+        overrides, and format conversion in one call.
+
+        Args:
+            profile: A profile name (``"self"``, ``"supervisor"``, ``"full"``)
+                or a :class:`~tract.toolkit.models.ToolProfile` instance.
+            tool_names: Optional list of tool names to include. When provided,
+                only tools whose names are in this list are returned (applied
+                after profile filtering).
+            overrides: Optional dict mapping tool names to replacement
+                descriptions.  Applied on top of the profile's descriptions.
+            format: Output format -- ``"openai"`` (default) or ``"anthropic"``.
+
+        Returns:
+            List of tool definition dicts in the requested format.
+        """
+        filtered = self._resolve_tools(
+            profile=profile, tool_names=tool_names, overrides=overrides,
+        )
         if format == "openai":
             return [tool.to_openai() for tool in filtered]
         elif format == "anthropic":
@@ -5233,8 +5274,9 @@ class Tract:
     def as_callable_tools(
         self,
         *,
-        profile: str | object = "self",
-        overrides: dict[str, str] | None = None,
+        profile: ProfileName | ToolProfile | str = "self",
+        tool_names: list[ToolName | str] | None = None,
+        overrides: dict[ToolName | str, str] | None = None,
     ) -> list:
         """Get tools as typed Python callables for framework integration.
 
@@ -5245,6 +5287,7 @@ class Tract:
         Args:
             profile: A profile name (``"self"``, ``"supervisor"``, ``"full"``)
                 or a :class:`~tract.toolkit.models.ToolProfile` instance.
+            tool_names: Optional list of tool names to include.
             overrides: Optional dict mapping tool names to replacement
                 descriptions.  Applied on top of the profile's descriptions.
 
@@ -5252,52 +5295,20 @@ class Tract:
             List of typed Python callables, one per tool.
         """
         from tract.toolkit.callables import tools_to_callables
-        from tract.toolkit.definitions import get_all_tools
-        from tract.toolkit.models import ToolProfile as _ToolProfile
-        from tract.toolkit.profiles import get_profile
 
-        all_tools = get_all_tools(self)
-
-        # Resolve profile
-        if isinstance(profile, str):
-            resolved_profile = get_profile(profile)
-        elif isinstance(profile, _ToolProfile):
-            resolved_profile = profile
-        else:
-            raise TypeError(
-                f"profile must be a string or ToolProfile, got {type(profile).__name__}"
-            )
-
-        # Apply profile filtering
-        filtered = resolved_profile.filter_tools(all_tools)
-
-        # Include dynamic operation tools (same as as_tools)
-        filtered_names = {t.name for t in filtered}
-        for tool in all_tools:
-            if tool.name.startswith("fire_") and tool.name not in filtered_names:
-                filtered.append(tool)
-
-        # Apply description overrides
-        if overrides:
-            from dataclasses import replace as _replace
-
-            new_filtered = []
-            for tool in filtered:
-                if tool.name in overrides:
-                    tool = _replace(tool, description=overrides[tool.name])
-                new_filtered.append(tool)
-            filtered = new_filtered
-
+        filtered = self._resolve_tools(
+            profile=profile, tool_names=tool_names, overrides=overrides,
+        )
         return tools_to_callables(filtered)
 
-    def switch_profile(self, profile: str | object) -> None:
+    def switch_profile(self, profile: ProfileName | ToolProfile | str) -> None:
         """Switch the active tool profile.
 
         Changes which tools are available for the current session.
         Clears any per-tool overrides.
 
         Args:
-            profile: Profile name ("self", "supervisor", "full") or
+            profile: Profile name (``"self"``, ``"supervisor"``, ``"full"``) or
                 a ToolProfile instance.
         """
         if self._tool_executor is None:
@@ -5305,7 +5316,7 @@ class Tract:
             self._tool_executor = ToolExecutor(self)
         self._tool_executor.set_profile(profile)
 
-    def unlock_tool(self, tool_name: str) -> None:
+    def unlock_tool(self, tool_name: ToolName | str) -> None:
         """Force-enable a tool regardless of current profile.
 
         Args:
@@ -5316,7 +5327,7 @@ class Tract:
             self._tool_executor = ToolExecutor(self)
         self._tool_executor.unlock_tool(tool_name)
 
-    def lock_tool(self, tool_name: str) -> None:
+    def lock_tool(self, tool_name: ToolName | str) -> None:
         """Force-disable a tool regardless of current profile.
 
         Args:
@@ -5370,7 +5381,6 @@ class Tract:
 
         Called during Tract.open() after all repos are initialized.
         """
-        import json as _json
         import logging
 
         logger = logging.getLogger(__name__)
@@ -5381,7 +5391,7 @@ class Tract:
         # Load operation configs from DB
         for config_row in repo.get_operation_configs(self._tract_id):
             try:
-                _json.loads(config_row.config_json)  # validate JSON
+                json.loads(config_row.config_json)  # validate JSON
             except Exception:
                 logger.warning(
                     "Failed to load config '%s': skipping.",

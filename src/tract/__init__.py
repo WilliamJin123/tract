@@ -82,17 +82,34 @@ from tract.operations.diff import DiffResult, MessageDiff, DiffStat
 
 # Config index and middleware
 from tract.operations.config_index import ConfigIndex
-from tract.middleware import MiddlewareContext
+from tract.middleware import MiddlewareContext, MiddlewareEvent
 
 # LLM protocol
 from tract.llm.protocols import LLMClient, AgentLoop
 
+# LLM clients
+from tract.llm.client import OpenAIClient
+from tract.llm.anthropic_client import (
+    AnthropicClient,
+    StreamEvent,
+    TextDelta,
+    ToolCallStart,
+    ToolCallDelta,
+    ThinkingDelta,
+    UsageEvent,
+    MessageDone,
+)
+
 # Agent toolkit
-from tract.toolkit.models import ToolDefinition, ToolProfile, ToolConfig, ToolResult
+from tract.toolkit.models import ToolDefinition, ToolName, ToolProfile, ToolConfig, ToolResult
+from tract.toolkit.profiles import ProfileName
 from tract.toolkit.executor import ToolExecutor
 
 # Default loop
 from tract.loop import LoopConfig, LoopResult, run_loop
+
+# Type aliases for IDE autocomplete
+from tract.tract import CompileStrategy
 
 # Tool tracking
 from tract.models.tools import hash_tool_schema
@@ -190,6 +207,7 @@ __all__ = [
     # Config index and middleware
     "ConfigIndex",
     "MiddlewareContext",
+    "MiddlewareEvent",
     # Exceptions
     "TraceError",
     "CommitNotFoundError",
@@ -236,9 +254,22 @@ __all__ = [
     # LLM protocol
     "LLMClient",
     "AgentLoop",
+    # LLM clients
+    "OpenAIClient",
+    "AnthropicClient",
+    # Stream event types
+    "StreamEvent",
+    "TextDelta",
+    "ToolCallStart",
+    "ToolCallDelta",
+    "ThinkingDelta",
+    "UsageEvent",
+    "MessageDone",
     # Agent toolkit
     "ToolDefinition",
+    "ToolName",
     "ToolProfile",
+    "ProfileName",
     "ToolConfig",
     "ToolResult",
     "ToolExecutor",
@@ -246,4 +277,6 @@ __all__ = [
     "LoopConfig",
     "LoopResult",
     "run_loop",
+    # Type aliases
+    "CompileStrategy",
 ]

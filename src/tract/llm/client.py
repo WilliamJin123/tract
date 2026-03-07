@@ -6,9 +6,10 @@ Reads configuration from constructor arguments or environment variables.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 import tenacity
@@ -245,6 +246,183 @@ class OpenAIClient:
             or None if not present.
         """
         return response.get("usage")
+
+    @staticmethod
+    def extract_tool_calls(response: dict) -> list[dict]:
+        """Extract tool calls from an OpenAI response dict.
+
+        Returns list of ``{"id": ..., "name": ..., "arguments": dict}``
+        dicts, with arguments parsed from JSON strings.
+        """
+        try:
+            msg = response["choices"][0]["message"]
+            tcs = msg.get("tool_calls")
+            if not tcs:
+                return []
+            result = []
+            for tc in tcs:
+                func = tc.get("function", {})
+                raw_args = func.get("arguments", "{}")
+                if isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        args = {"_raw": raw_args}
+                else:
+                    args = raw_args
+                result.append({
+                    "id": tc.get("id", ""),
+                    "name": func.get("name", ""),
+                    "arguments": args,
+                })
+            return result
+        except (KeyError, IndexError, TypeError):
+            return []
+
+    def stream(
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ) -> Iterator:
+        """Stream a chat completion, yielding typed events.
+
+        Yields events from :mod:`tract.llm.anthropic_client` event types
+        (TextDelta, ToolCallStart, ToolCallDelta, UsageEvent, MessageDone)
+        for a provider-agnostic streaming interface.
+        """
+        from tract.llm.anthropic_client import (
+            MessageDone,
+            TextDelta,
+            ToolCallDelta,
+            ToolCallStart,
+            UsageEvent,
+        )
+
+        payload: dict[str, Any] = {
+            "model": model or self._default_model,
+            "messages": messages,
+            "stream": True,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        payload.update(kwargs)
+
+        with self._client.stream(
+            "POST",
+            f"{self._base_url}/chat/completions",
+            json=payload,
+        ) as response:
+            if response.status_code in _AUTH_ERROR_STATUS_CODES:
+                response.read()
+                raise LLMAuthError(
+                    f"Authentication failed: HTTP {response.status_code}"
+                )
+            if response.status_code == 429:
+                response.read()
+                raise LLMRateLimitError("Rate limited: HTTP 429")
+            if response.status_code >= 400:
+                response.read()
+                response.raise_for_status()
+
+            # Accumulation state
+            text_parts: list[str] = []
+            tool_calls_acc: dict[int, dict] = {}  # index -> {id, name, args_parts}
+            full_response: dict = {}
+            finish_reason: str | None = None
+            model_name: str = ""
+
+            for line in response.iter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                model_name = chunk.get("model", model_name)
+
+                choices = chunk.get("choices", [])
+                if not choices:
+                    # Usage-only chunk (some providers send this)
+                    usage = chunk.get("usage")
+                    if usage:
+                        yield UsageEvent(usage=usage)
+                    continue
+
+                delta = choices[0].get("delta", {})
+                finish_reason = choices[0].get("finish_reason", finish_reason)
+
+                # Text content
+                content = delta.get("content")
+                if content:
+                    text_parts.append(content)
+                    yield TextDelta(text=content)
+
+                # Tool calls (incremental)
+                tcs = delta.get("tool_calls", [])
+                for tc_delta in tcs:
+                    idx = tc_delta.get("index", 0)
+                    if idx not in tool_calls_acc:
+                        tc_id = tc_delta.get("id", "")
+                        tc_name = tc_delta.get("function", {}).get("name", "")
+                        tool_calls_acc[idx] = {
+                            "id": tc_id,
+                            "name": tc_name,
+                            "args_parts": [],
+                        }
+                        if tc_id or tc_name:
+                            yield ToolCallStart(
+                                index=idx, id=tc_id, name=tc_name,
+                            )
+                    args_fragment = tc_delta.get("function", {}).get("arguments", "")
+                    if args_fragment:
+                        tool_calls_acc[idx]["args_parts"].append(args_fragment)
+                        yield ToolCallDelta(
+                            index=idx, partial_json=args_fragment,
+                        )
+
+            # Build full response
+            text = "".join(text_parts) or None
+            message: dict[str, Any] = {"role": "assistant", "content": text}
+
+            if tool_calls_acc:
+                oai_tcs = []
+                for idx in sorted(tool_calls_acc):
+                    tc = tool_calls_acc[idx]
+                    raw_args = "".join(tc["args_parts"])
+                    oai_tcs.append({
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": raw_args,
+                        },
+                    })
+                message["tool_calls"] = oai_tcs
+
+            full_response = {
+                "id": "",
+                "object": "chat.completion",
+                "model": model_name,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": message,
+                        "finish_reason": finish_reason or "stop",
+                    }
+                ],
+            }
+
+            yield MessageDone(response=full_response)
 
     @staticmethod
     def extract_reasoning(response: dict) -> tuple[str, str] | None:

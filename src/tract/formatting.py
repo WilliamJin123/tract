@@ -69,6 +69,53 @@ def _is_estimate(token_source: str) -> bool:
     return not token_source or token_source.startswith("tiktoken:")
 
 
+def _format_config_lines(config: Any, *, label_width: int = 10) -> list[str]:
+    """Format an LLMConfig into Rich markup lines with model shown prominently.
+
+    Returns a list of markup strings. First line shows model (bold),
+    second line shows remaining config fields (if any).
+    """
+    if config is None:
+        return []
+    fields = config.non_none_fields() if hasattr(config, "non_none_fields") else {}
+    if not fields:
+        return []
+    fields = dict(fields)  # copy to avoid mutation
+    model = fields.pop("model", None)
+    other_parts = [f"{k}={v}" for k, v in fields.items()]
+    lines: list[str] = []
+    if model:
+        model_line = f"[bold]{'Model:':<{label_width}}[/bold] {model}"
+        if other_parts:
+            model_line += f"  [dim]({', '.join(other_parts)})[/dim]"
+        lines.append(model_line)
+    elif other_parts:
+        lines.append(f"[bold]{'Config:':<{label_width}}[/bold] {', '.join(other_parts)}")
+    return lines
+
+
+def _format_config_inline(config: Any) -> str | None:
+    """Format an LLMConfig into a single inline string for footers.
+
+    Returns a Rich markup string like 'model: gpt-4o  temperature=0.7'
+    or None if config has no fields.
+    """
+    if config is None:
+        return None
+    fields = config.non_none_fields() if hasattr(config, "non_none_fields") else {}
+    if not fields:
+        return None
+    fields = dict(fields)
+    model = fields.pop("model", None)
+    other_parts = [f"{k}={v}" for k, v in fields.items()]
+    parts: list[str] = []
+    if model:
+        parts.append(f"[bold]{model}[/bold]")
+    if other_parts:
+        parts.append(f"[dim]{', '.join(other_parts)}[/dim]")
+    return "  ".join(parts) if parts else None
+
+
 def pprint_chat_response(response: Any, *, max_chars: int | None = None, file: Any = None) -> None:
     """Pretty-print a ChatResponse.
 
@@ -129,11 +176,9 @@ def pprint_chat_response(response: Any, *, max_chars: int | None = None, file: A
             f"[dim]{u.prompt_tokens} prompt + {u.completion_tokens} completion"
             f" = {u.total_tokens} tokens[/dim]"
         )
-    if response.generation_config is not None:
-        fields = response.generation_config.non_none_fields()
-        if fields:
-            parts = [f"{k}={v}" for k, v in fields.items()]
-            footer_parts_str.append(f"[dim]config: {', '.join(parts)}[/dim]")
+    config_inline = _format_config_inline(response.generation_config)
+    if config_inline:
+        footer_parts_str.append(config_inline)
 
     # Combine markdown body + plain-text footer into a single panel
     if footer_parts_str:
@@ -525,12 +570,10 @@ def pprint_commit_info(
     if tags:
         body_parts.append(f"[bold]Tags:[/bold]      {', '.join(tags)}")
 
-    # Generation config
-    if info.generation_config is not None:
-        fields = info.generation_config.non_none_fields()
-        if fields:
-            parts = [f"{k}={v}" for k, v in fields.items()]
-            body_parts.append(f"[bold]Config:[/bold]    {', '.join(parts)}")
+    # Generation config (model shown prominently)
+    config_lines = _format_config_lines(info.generation_config)
+    for line in config_lines:
+        body_parts.append(line)
 
     # Content (when provided via Tract.show())
     if content is not None:
@@ -937,11 +980,19 @@ _LOOP_STATUS_STYLES: dict[str, str] = {
 }
 
 
-def pprint_loop_result(result: Any, *, file: Any = None) -> None:
+def pprint_loop_result(
+    result: Any,
+    *,
+    style: Literal["compact", "chat"] = "compact",
+    file: Any = None,
+) -> None:
     """Pretty-print a LoopResult.
 
     Args:
         result: A LoopResult instance.
+        style: ``"compact"`` (default) shows one-line-per-commit context
+            summary. ``"chat"`` shows full message content with panels
+            (same format as ``CompiledContext.pprint(style="chat")``).
         file: Optional file-like object for output (used in tests).
     """
     console = _make_console(file)
@@ -973,6 +1024,12 @@ def pprint_loop_result(result: Any, *, file: Any = None) -> None:
             )
             header_parts.append(f"[dim]steps: {per_step}[/dim]")
 
+    # Config (model shown prominently)
+    config = getattr(result, "config", None)
+    config_inline = _format_config_inline(config)
+    if config_inline:
+        header_parts.append(config_inline)
+
     border = "green" if result.status == "completed" else ("red" if result.status == "error" else "yellow")
 
     console.print(Panel(
@@ -981,58 +1038,63 @@ def pprint_loop_result(result: Any, *, file: Any = None) -> None:
         border_style=border,
     ))
 
-    # --- Context panel: compact one-line-per-commit list ---
+    # --- Context display ---
     compiled = getattr(result, "compiled", None)
     if compiled is not None and compiled.messages:
-        hashes = compiled.commit_hashes if compiled.commit_hashes else ()
-        priorities = compiled.priorities if compiled.priorities else ()
-        pinned_count = sum(1 for p in priorities if p == "pinned")
+        if style == "chat":
+            # Full chat-style: delegate to compiled context's chat renderer
+            _pprint_compiled_chat(compiled, file=file)
+        else:
+            # Compact: one-line-per-commit summary
+            hashes = compiled.commit_hashes if compiled.commit_hashes else ()
+            priorities = compiled.priorities if compiled.priorities else ()
+            pinned_count = sum(1 for p in priorities if p == "pinned")
 
-        lines = Text(overflow="ellipsis", no_wrap=True)
-        for i, msg in enumerate(compiled.messages):
-            if i > 0:
-                lines.append("\n")
+            lines = Text(overflow="ellipsis", no_wrap=True)
+            for i, msg in enumerate(compiled.messages):
+                if i > 0:
+                    lines.append("\n")
 
-            # Hash
-            commit_hash = hashes[i][:7] if i < len(hashes) else "       "
-            lines.append(f"{commit_hash} ", style="dim")
+                # Hash
+                commit_hash = hashes[i][:7] if i < len(hashes) else "       "
+                lines.append(f"{commit_hash} ", style="dim")
 
-            # Pin marker
-            priority = priorities[i] if i < len(priorities) else ""
-            if priority == "pinned":
-                lines.append("* ", style="bold yellow")
-            else:
-                lines.append("  ")
+                # Pin marker
+                priority = priorities[i] if i < len(priorities) else ""
+                if priority == "pinned":
+                    lines.append("* ", style="bold yellow")
+                else:
+                    lines.append("  ")
 
-            # Role
-            if msg.role == "assistant" and getattr(msg, "tool_calls", None):
-                lines.append("tool call  ", style="bold magenta")
-            else:
-                sk = _style_key(msg)
-                color = _ROLE_COLORS.get(sk, "white")
-                label = "reasoning" if sk == "reasoning" else ("tool res." if msg.role == "tool" else msg.role)
-                lines.append(f"{label:<10} ", style=f"bold {color}")
+                # Role
+                if msg.role == "assistant" and getattr(msg, "tool_calls", None):
+                    lines.append("tool call  ", style="bold magenta")
+                else:
+                    sk = _style_key(msg)
+                    color = _ROLE_COLORS.get(sk, "white")
+                    label = "reasoning" if sk == "reasoning" else ("tool res." if msg.role == "tool" else msg.role)
+                    lines.append(f"{label:<10} ", style=f"bold {color}")
 
-            # Content (single line, truncated by overflow)
-            if msg.role == "assistant" and getattr(msg, "tool_calls", None):
-                call_parts = []
-                for tc in msg.tool_calls:
-                    args = ", ".join(f"{k}={v!r}" for k, v in tc.arguments.items())
-                    call_parts.append(f"{tc.name}({args})")
-                display = "; ".join(call_parts)
-            else:
-                display = msg.content.replace("\n", " ")
-            content_style = "dim" if msg.role == "system" else ""
-            lines.append(display, style=content_style)
+                # Content (single line, truncated by overflow)
+                if msg.role == "assistant" and getattr(msg, "tool_calls", None):
+                    call_parts = []
+                    for tc in msg.tool_calls:
+                        args = ", ".join(f"{k}={v!r}" for k, v in tc.arguments.items())
+                        call_parts.append(f"{tc.name}({args})")
+                    display = "; ".join(call_parts)
+                else:
+                    display = msg.content.replace("\n", " ")
+                content_style = "dim" if msg.role == "system" else ""
+                lines.append(display, style=content_style)
 
-        # Title with summary
-        pin_str = f" | {pinned_count} pinned" if pinned_count else ""
-        ctx_title = f"[bold]Context[/bold] [dim]({compiled.commit_count} commits{pin_str})[/dim]"
+            # Title with summary
+            pin_str = f" | {pinned_count} pinned" if pinned_count else ""
+            ctx_title = f"[bold]Context[/bold] [dim]({compiled.commit_count} commits{pin_str})[/dim]"
 
-        console.print(Panel(lines, title=ctx_title, border_style="dim"))
+            console.print(Panel(lines, title=ctx_title, border_style="dim"))
 
-    # --- Response panel ---
-    if result.final_response:
+    # --- Response panel (only in compact mode — chat mode already shows it) ---
+    if style == "compact" and result.final_response:
         console.print(Panel(
             Markdown(result.final_response),
             title="[bold]Response[/bold]",
@@ -1068,6 +1130,10 @@ def pprint_compress_result(result: Any, *, file: Any = None) -> None:
     body_parts.append(f"[bold]Preserved:[/bold]      {len(result.preserved_commits)}")
     body_parts.append(f"[bold]New HEAD:[/bold]       {result.new_head[:8]}")
 
+    config = getattr(result, "config", None)
+    for line in _format_config_lines(config, label_width=16):
+        body_parts.append(line)
+
     console.print(Panel(
         "\n".join(body_parts),
         title="[bold]Compress Result[/bold]",
@@ -1094,6 +1160,10 @@ def pprint_tool_compact_result(result: Any, *, file: Any = None) -> None:
     body_parts.append(f"[bold]Turns:[/bold]      {result.turn_count}")
     body_parts.append(f"[bold]Tools:[/bold]      {', '.join(result.tool_names)}")
     body_parts.append(f"[bold]Edits:[/bold]      {len(result.edit_commits)}")
+
+    config = getattr(result, "config", None)
+    for line in _format_config_lines(config):
+        body_parts.append(line)
 
     console.print(Panel(
         "\n".join(body_parts),
@@ -1226,6 +1296,10 @@ def pprint_collapse_result(result: Any, *, file: Any = None) -> None:
         body_parts.append(f"[bold]Commit:[/bold]       {result.parent_commit_hash[:8]}")
     else:
         body_parts.append(f"[bold]Commit:[/bold]       [dim](not auto-committed)[/dim]")
+
+    config = getattr(result, "config", None)
+    for line in _format_config_lines(config, label_width=14):
+        body_parts.append(line)
 
     console.print(Panel(
         "\n".join(body_parts),

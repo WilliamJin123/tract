@@ -7,12 +7,47 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Canonical tool name type — single source of truth for autocomplete & validation
+# ---------------------------------------------------------------------------
+ToolName = Literal[
+    "commit",
+    "compile",
+    "annotate",
+    "status",
+    "log",
+    "diff",
+    "compress",
+    "branch",
+    "switch",
+    "merge",
+    "reset",
+    "checkout",
+    "gc",
+    "list_branches",
+    "get_commit",
+    "configure_model",
+    "tag",
+    "untag",
+    "query_by_tags",
+    "register_tag",
+    "get_tags",
+    "list_tags",
+    "configure",
+    "create_metadata",
+    "get_config",
+    "transition",
+    "directive",
+    "create_middleware",
+    "remove_middleware",
+]
 
 
 @dataclass(frozen=True)
@@ -26,7 +61,7 @@ class ToolDefinition:
         handler: Callable that executes the tool.
     """
 
-    name: str
+    name: str  # str (not ToolName) to allow dynamic fire_* tools
     description: str
     parameters: dict
     handler: Callable[..., object]
@@ -82,7 +117,7 @@ class ToolProfile:
     """
 
     name: str
-    tool_configs: dict[str, ToolConfig] = field(default_factory=dict)
+    tool_configs: dict[ToolName | str, ToolConfig] = field(default_factory=dict)
 
     def filter_tools(self, all_tools: list[ToolDefinition]) -> list[ToolDefinition]:
         """Filter and optionally override tool descriptions based on this profile.

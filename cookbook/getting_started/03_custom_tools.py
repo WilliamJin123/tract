@@ -134,7 +134,7 @@ def main():
             on_step=lambda step, _resp: print(f"  step {step}..."),
         )
 
-        result.pprint()
+        result.pprint(style="chat")
 
 
 if __name__ == "__main__":

@@ -179,33 +179,75 @@ class CompiledContext:
         return self.to_dicts()
 
     def to_anthropic(self) -> dict[str, object]:
-        """Convert messages to Anthropic API format.
+        """Convert messages to native Anthropic API format.
 
         Anthropic does not support ``role: "system"`` in the messages
         array.  System messages are extracted to a separate ``"system"``
-        key and concatenated with ``"\\n\\n"``.
+        key.  Assistant messages with tool calls produce ``tool_use``
+        content blocks.  Tool result messages produce ``tool_result``
+        content blocks inside user messages.  Consecutive same-role
+        messages are merged (Anthropic requires strict alternation).
 
         Returns:
             Dict with ``"system"`` (str or None) and ``"messages"``
-            (list of non-system message dicts).
+            (list of Anthropic-format message dicts).
         """
         system_parts: list[str] = []
-        messages: list[dict] = []
+        raw: list[dict] = []
         for m in self.messages:
             if m.role == "system":
                 system_parts.append(m.content)
-            else:
-                d: dict = {"role": m.role, "content": m.content}
-                if m.name is not None:
-                    d["name"] = m.name
+            elif m.role == "assistant":
                 if m.tool_calls:
-                    d["tool_calls"] = [tc.to_openai() for tc in m.tool_calls]
-                if m.tool_call_id is not None:
-                    d["tool_call_id"] = m.tool_call_id
-                messages.append(d)
+                    # Mixed content: text + tool_use blocks
+                    blocks: list[dict] = []
+                    if m.content:
+                        blocks.append({"type": "text", "text": m.content})
+                    for tc in m.tool_calls:
+                        blocks.append({
+                            "type": "tool_use",
+                            "id": tc.id,
+                            "name": tc.name,
+                            "input": tc.arguments,
+                        })
+                    raw.append({"role": "assistant", "content": blocks})
+                else:
+                    # Plain text assistant message
+                    raw.append({"role": "assistant", "content": m.content or ""})
+            elif m.tool_call_id is not None:
+                # Tool result → user message with tool_result block
+                raw.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": m.tool_call_id,
+                        "content": m.content or "",
+                    }],
+                })
+            else:
+                raw.append({"role": m.role, "content": m.content})
+
+        # Merge consecutive same-role messages for Anthropic alternation
+        merged: list[dict] = []
+        for msg in raw:
+            if merged and merged[-1]["role"] == msg["role"]:
+                prev_content = merged[-1]["content"]
+                new_content = msg["content"]
+                prev_blocks = (
+                    prev_content if isinstance(prev_content, list)
+                    else ([{"type": "text", "text": prev_content}] if prev_content else [])
+                )
+                new_blocks = (
+                    new_content if isinstance(new_content, list)
+                    else ([{"type": "text", "text": new_content}] if new_content else [])
+                )
+                merged[-1]["content"] = prev_blocks + new_blocks
+            else:
+                merged.append(dict(msg))
+
         return {
             "system": "\n\n".join(system_parts) if system_parts else None,
-            "messages": messages,
+            "messages": merged,
         }
 
     def to_openai_params(self) -> dict[str, object]:
@@ -227,13 +269,25 @@ class CompiledContext:
 
         Returns a dict with ``"system"``, ``"messages"``, and optionally
         ``"tools"`` keys, suitable for passing to the Anthropic messages API.
+        Tool definitions are converted from OpenAI format to Anthropic format
+        (``input_schema`` instead of ``parameters``).
 
         Returns:
             Dict with system, messages, and tools (if any).
         """
         result = self.to_anthropic()
         if self.tools:
-            result["tools"] = list(self.tools)
+            anthropic_tools = []
+            for tool in self.tools:
+                func = tool.get("function", tool)
+                anthropic_tools.append({
+                    "name": func.get("name", ""),
+                    "description": func.get("description", ""),
+                    "input_schema": func.get(
+                        "parameters", func.get("input_schema", {})
+                    ),
+                })
+            result["tools"] = anthropic_tools
         return result
 
     def __str__(self) -> str:

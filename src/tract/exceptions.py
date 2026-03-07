@@ -52,14 +52,6 @@ class EditTargetError(TraceError):
     """
 
 
-class DuplicateRefError(TraceError):
-    """Raised when a ref already exists."""
-
-    def __init__(self, ref_name: str) -> None:
-        self.ref_name = ref_name
-        super().__init__(f"Ref already exists: {ref_name}")
-
-
 class DetachedHeadError(TraceError):
     """Raised when attempting to commit in detached HEAD state."""
 
@@ -169,15 +161,6 @@ class SessionError(TraceError):
     """Raised when session operations fail."""
 
 
-class TriggerExecutionError(TraceError):
-    """Raised when a trigger action fails to execute."""
-
-
-class TriggerConfigError(TraceError):
-    """Raised when trigger configuration is invalid."""
-
-
-
 class RetryExhaustedError(TraceError):
     """All retry attempts failed."""
 
@@ -206,19 +189,6 @@ class TagNotRegisteredError(TraceError):
 
 class CurationError(TraceError):
     """Raised when a curation operation fails during deploy()."""
-
-
-class BlockedByRuleError(TraceError):
-    """Raised when a rule blocks an operation.
-
-    .. deprecated:: Use :class:`BlockedError` instead.
-    """
-
-    def __init__(self, event: str, reasons: list[str]) -> None:
-        self.event = event
-        self.reasons = reasons
-        reason_str = "; ".join(reasons) if reasons else "Blocked by rule"
-        super().__init__(f"{event} blocked: {reason_str}")
 
 
 class BlockedError(TraceError):

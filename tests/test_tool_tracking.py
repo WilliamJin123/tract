@@ -376,7 +376,7 @@ class TestFormatOutput:
         t.close()
 
     def test_to_anthropic_params_includes_tools(self):
-        """to_anthropic_params() includes tools when present."""
+        """to_anthropic_params() includes tools in Anthropic format."""
         t = Tract.open()
         t.commit(
             InstructionContent(text="System"),
@@ -390,7 +390,16 @@ class TestFormatOutput:
         assert "system" in params
         assert "messages" in params
         assert "tools" in params
-        assert params["tools"] == [TOOL_SEARCH]
+        # Tools are translated from OpenAI format to Anthropic format
+        assert params["tools"] == [{
+            "name": "search",
+            "description": "Search the web",
+            "input_schema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        }]
         t.close()
 
     def test_to_openai_params_no_tools(self):

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -69,6 +69,7 @@ class CollapseResult:
     summary_tokens: int
     source_tokens: int
     purpose: str
+    config: Any = None
 
     def pprint(self) -> None:
         """Pretty-print this collapse result using rich formatting."""

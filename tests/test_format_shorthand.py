@@ -122,8 +122,8 @@ class TestToAnthropic:
         assert result["system"] is None
         assert len(result["messages"]) == 2
 
-    def test_preserves_name_on_non_system(self):
-        """to_anthropic() preserves name field on non-system messages."""
+    def test_strips_name_on_non_system(self):
+        """to_anthropic() strips 'name' field (not supported by Anthropic)."""
         ctx = CompiledContext(
             messages=[
                 Message(role="system", content="Be helpful."),
@@ -134,24 +134,49 @@ class TestToAnthropic:
         assert result["messages"][0] == {
             "role": "user",
             "content": "Hello",
-            "name": "Alice",
         }
 
-    def test_tool_role_passes_through(self):
-        """to_anthropic() passes non-standard roles like 'tool' through."""
+    def test_tool_result_to_user_content_block(self):
+        """to_anthropic() converts tool results to user tool_result blocks."""
         ctx = CompiledContext(
             messages=[
                 Message(role="system", content="Be helpful."),
                 Message(role="user", content="Call tool"),
-                Message(role="tool", content='{"result": 42}'),
+                Message(
+                    role="tool",
+                    content='{"result": 42}',
+                    tool_call_id="call_123",
+                ),
             ],
         )
         result = ctx.to_anthropic()
         assert result["system"] == "Be helpful."
-        assert result["messages"][1] == {
-            "role": "tool",
+        # Tool result merged into previous user message as content blocks
+        assert len(result["messages"]) == 1
+        user_msg = result["messages"][0]
+        assert user_msg["role"] == "user"
+        # Content should be blocks: text + tool_result
+        blocks = user_msg["content"]
+        assert isinstance(blocks, list)
+        assert blocks[0] == {"type": "text", "text": "Call tool"}
+        assert blocks[1] == {
+            "type": "tool_result",
+            "tool_use_id": "call_123",
             "content": '{"result": 42}',
         }
+
+    def test_tool_role_without_call_id_passes_through(self):
+        """to_anthropic() passes 'tool' role without tool_call_id as user."""
+        ctx = CompiledContext(
+            messages=[
+                Message(role="user", content="Hello"),
+                Message(role="assistant", content="Calling tool"),
+                Message(role="tool", content='{"result": 42}'),
+            ],
+        )
+        result = ctx.to_anthropic()
+        # tool without tool_call_id treated as regular user message
+        assert len(result["messages"]) == 3
 
 
 # -----------------------------------------------------------------------

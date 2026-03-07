@@ -187,7 +187,7 @@ class TestCompiledContextToolDicts:
         assert params["tools"][0]["function"]["name"] == "eval"
 
     def test_to_anthropic_includes_tool_data(self):
-        """to_anthropic() includes tool fields on non-system messages."""
+        """to_anthropic() emits native Anthropic tool_use/tool_result blocks."""
         tcs = [ToolCall(id="call_1", name="eval", arguments={})]
         messages = [
             Message(role="system", content="You are helpful"),
@@ -199,8 +199,18 @@ class TestCompiledContextToolDicts:
 
         assert result["system"] == "You are helpful"
         assert len(result["messages"]) == 2
-        assert "tool_calls" in result["messages"][0]
-        assert result["messages"][1]["tool_call_id"] == "call_1"
+        # Assistant message has tool_use content blocks
+        asst = result["messages"][0]
+        assert asst["role"] == "assistant"
+        assert isinstance(asst["content"], list)
+        assert asst["content"][0]["type"] == "tool_use"
+        assert asst["content"][0]["name"] == "eval"
+        # Tool result is a user message with tool_result content block
+        tool_msg = result["messages"][1]
+        assert tool_msg["role"] == "user"
+        assert isinstance(tool_msg["content"], list)
+        assert tool_msg["content"][0]["type"] == "tool_result"
+        assert tool_msg["content"][0]["tool_use_id"] == "call_1"
 
 
 class TestDialogueContentToolRole:

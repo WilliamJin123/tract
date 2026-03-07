@@ -7,7 +7,7 @@ garbage collection results, and reorder warnings.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,7 @@ class CompressResult:
     """Ratio of compressed_tokens / original_tokens. Values < 1.0 indicate
     effective compression; values > 1.0 indicate the summary expanded tokens."""
     new_head: str
+    config: Any = None
 
     def pprint(self) -> None:
         """Pretty-print this compress result using rich formatting."""
@@ -62,6 +63,8 @@ class ToolCompactResult:
 
     turn_count: int
     """Number of tool turns that were compacted."""
+
+    config: Any = None
 
     def pprint(self) -> None:
         """Pretty-print this tool compact result using rich formatting."""
