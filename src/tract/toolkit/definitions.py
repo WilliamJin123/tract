@@ -109,7 +109,9 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
             description=(
                 "Set a priority annotation on a commit. Use 'pinned' to protect "
                 "important context from compression, 'skip' to exclude irrelevant "
-                "content from compilation, or 'normal' to reset."
+                "content from compilation, or 'normal' to reset. Note: "
+                "instruction/system commits are already pinned by default — "
+                "check log output for current priorities before annotating."
             ),
             parameters={
                 "type": "object",
@@ -855,9 +857,11 @@ def _handle_log(tract: Tract, limit: int, op_filter: str | None) -> str:
     lines = []
     for entry in entries:
         msg = entry.message or ""
+        pri = entry.effective_priority or "normal"
+        pri_tag = f" [{pri}]" if pri != "normal" else ""
         lines.append(
             f"  {entry.commit_hash[:8]} {entry.operation.value:6s} "
-            f"{entry.content_type:12s} {entry.token_count:5d}t  {msg}"
+            f"{entry.content_type:12s} {entry.token_count:5d}t{pri_tag}  {msg}"
         )
     return f"Log ({len(entries)} commits):\n" + "\n".join(lines)
 
@@ -969,6 +973,10 @@ def _handle_get_commit(tract: Tract, commit_hash: str) -> str:
     info = tract.get_commit(commit_hash)
     if info is None:
         return f"Commit {commit_hash} not found."
+    # Enrich with effective priority
+    enriched = tract._enrich_with_priorities([info])
+    info = enriched[0] if enriched else info
+    priority = info.effective_priority or "normal"
     meta = json.dumps(info.metadata) if info.metadata else "none"
     gen_cfg = json.dumps(info.generation_config.to_dict()) if info.generation_config else "none"
     tags = tract.get_tags(info.commit_hash)
@@ -976,6 +984,7 @@ def _handle_get_commit(tract: Tract, commit_hash: str) -> str:
     return (
         f"Commit {info.commit_hash[:8]}: "
         f"type={info.content_type}, op={info.operation.value}, "
+        f"priority={priority}, "
         f"tokens={info.token_count}, message={info.message or 'none'}, "
         f"tags={tags_str}, "
         f"metadata={meta}, generation_config={gen_cfg}"

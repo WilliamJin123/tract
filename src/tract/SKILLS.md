@@ -28,7 +28,7 @@ Content is always a dict, never a bare string.
 
 **Branching**: `branch(name, source, switch)` — create branch. `switch(target)` — change branch. `merge(source, message)` — merge into current. `reset(target, mode)` — mode is `"soft"` (default). `checkout(target)` — read-only detached HEAD. `list_branches()`. `transition(target, handoff)` — switch with hooks; handoff is `"full"`, `"summary"`, `"none"`, or custom text.
 
-**Annotations**: `annotate(target_hash, priority, reason)` — priority is `"pinned"` (survives compression), `"normal"`, or `"skip"` (excluded from compile). `directive(name, text, priority)` — named standing instruction, deduplicated by name, default pinned.
+**Annotations**: `annotate(target_hash, priority, reason)` — priority is `"pinned"` (survives compression), `"normal"`, or `"skip"` (excluded from compile). `directive(name, text, priority)` — named standing instruction, deduplicated by name, default pinned. Note: instruction/system commits and directives are **pinned by default** — check `log` output for `[pinned]`/`[skip]` tags before annotating.
 
 **Tags**: `tag(commit_hash, tag)`, `untag(commit_hash, tag)`, `query_by_tags(tags, match)` — match is `"any"` or `"all"`. `register_tag(name, description)`, `get_tags(commit_hash)`, `list_tags()`.
 
