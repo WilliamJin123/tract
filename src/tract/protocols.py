@@ -290,6 +290,35 @@ class CompiledContext:
             result["tools"] = anthropic_tools
         return result
 
+    def to_text(
+        self,
+        *,
+        include_roles: bool = True,
+        separator: str = "\n\n",
+    ) -> str:
+        """Flatten compiled messages to plain text.
+
+        Useful for embedding compiled context in agent prompts or
+        other plain-text contexts where structured messages aren't needed.
+
+        Args:
+            include_roles: If True, prefix each message with ``[ROLE]:``.
+                When a message has a ``name``, it appears as ``[ROLE (name)]:``.
+            separator: String placed between messages.
+
+        Returns:
+            Plain text representation of all messages.
+        """
+        lines: list[str] = []
+        for msg in self.messages:
+            if include_roles:
+                role = msg.role.upper()
+                name = f" ({msg.name})" if msg.name else ""
+                lines.append(f"[{role}{name}]:\n{msg.content}")
+            else:
+                lines.append(msg.content)
+        return separator.join(lines)
+
     def __str__(self) -> str:
         return (
             f"CompiledContext(messages={self.commit_count},"
