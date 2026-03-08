@@ -41,6 +41,16 @@ class ToolExecutor:
 
     def _rebuild_tools(self) -> None:
         """Rebuild the internal tool lookup from current Tract state."""
+        # Handle compact profile specially: domain-grouped tools
+        if self._profile is not None and self._profile.name == "compact":
+            from tract.toolkit.compact import get_compact_tools
+
+            compact_tools = get_compact_tools(self._tract)
+            self._tools.clear()
+            for tool in compact_tools:
+                self._tools[tool.name] = tool
+            return
+
         from tract.toolkit.definitions import get_all_tools
 
         all_tools = get_all_tools(self._tract)

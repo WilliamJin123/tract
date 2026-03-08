@@ -5201,8 +5201,6 @@ class Tract:
         from tract.toolkit.models import ToolProfile as _ToolProfile
         from tract.toolkit.profiles import get_profile
 
-        all_tools = get_all_tools(self)
-
         # Resolve profile
         if isinstance(profile, str):
             resolved_profile = get_profile(profile)
@@ -5212,6 +5210,14 @@ class Tract:
             raise TypeError(
                 f"profile must be a string or ToolProfile, got {type(profile).__name__}"
             )
+
+        # Special case: compact profile generates domain-grouped tools
+        if resolved_profile.name == "compact":
+            from tract.toolkit.compact import get_compact_tools
+
+            return get_compact_tools(self)
+
+        all_tools = get_all_tools(self)
 
         # Apply profile filtering
         filtered = resolved_profile.filter_tools(all_tools)

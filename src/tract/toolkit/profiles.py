@@ -1,9 +1,10 @@
 """Built-in tool profiles with curated subsets and scenario-appropriate descriptions.
 
-Three profiles:
+Four profiles:
 - ``SELF_PROFILE``: Tools for an agent managing its OWN context.
 - ``SUPERVISOR_PROFILE``: Tools for managing ANOTHER agent's context.
 - ``FULL_PROFILE``: All tools with default descriptions.
+- ``COMPACT_PROFILE``: Domain-grouped tools for reduced token overhead (see compact.py).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Profile name type
 # ---------------------------------------------------------------------------
-ProfileName = Literal["self", "supervisor", "full"]
+ProfileName = Literal["self", "supervisor", "full", "compact"]
 
 # ---------------------------------------------------------------------------
 # All tool names — derived from the ToolName Literal (single source of truth)
@@ -331,6 +332,17 @@ FULL_PROFILE = ToolProfile(
     tool_configs={name: ToolConfig(enabled=True) for name in _ALL_TOOL_NAMES},
 )
 
+# ---------------------------------------------------------------------------
+# COMPACT profile: grouped domain tools for reduced token overhead
+# ---------------------------------------------------------------------------
+# Unlike other profiles that filter the 29 individual tools, the compact
+# profile is handled specially -- it generates 7 domain-grouped tools
+# instead of filtering the standard tool list. See compact.py.
+COMPACT_PROFILE = ToolProfile(
+    name="compact",
+    tool_configs={},  # Empty -- compact uses its own tool generation
+)
+
 
 # ---------------------------------------------------------------------------
 # Profile lookup
@@ -339,6 +351,7 @@ _PROFILES: dict[str, ToolProfile] = {
     "self": SELF_PROFILE,
     "supervisor": SUPERVISOR_PROFILE,
     "full": FULL_PROFILE,
+    "compact": COMPACT_PROFILE,
 }
 
 
