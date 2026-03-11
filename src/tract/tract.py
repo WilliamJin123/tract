@@ -5116,6 +5116,173 @@ class Tract:
 
         return target_head
 
+    def export_state(self, *, include_blobs: bool = True) -> dict:
+        """Export the current branch's DAG as a portable JSON-serializable dict.
+
+        Creates a snapshot of all commits reachable from HEAD with their
+        content, metadata, annotations, and branch info. The result can be
+        saved to a file and loaded into a different tract via
+        :meth:`load_state`.
+
+        Args:
+            include_blobs: If True (default), include full content payloads.
+                If False, include only commit metadata (smaller but not
+                restorable).
+
+        Returns:
+            A dict with keys: version, tract_id, branch, head, commits,
+            branches, exported_at.
+        """
+        from tract.operations.ancestry import walk_ancestry
+
+        head = self.head
+        if head is None:
+            return {
+                "version": 1,
+                "tract_id": self._tract_id,
+                "branch": self.current_branch,
+                "head": None,
+                "commits": [],
+                "branches": {},
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        # Walk full ancestry from HEAD
+        commits_data = []
+        ancestry = walk_ancestry(
+            self._commit_repo, self._blob_repo, head,
+            parent_repo=self._parent_repo,
+        )
+
+        for commit_row in ancestry:
+            entry: dict = {
+                "hash": commit_row.commit_hash,
+                "content_type": commit_row.content_type,
+                "operation": commit_row.operation.value if hasattr(commit_row.operation, "value") else str(commit_row.operation),
+                "message": commit_row.message,
+                "metadata": commit_row.metadata_json,
+                "created_at": commit_row.created_at.isoformat() if commit_row.created_at else None,
+            }
+
+            # Parent hashes -- get_parents returns list[str]
+            if self._parent_repo:
+                parents = self._parent_repo.get_parents(commit_row.commit_hash)
+                entry["parents"] = parents
+            else:
+                entry["parents"] = [commit_row.parent_hash] if commit_row.parent_hash else []
+
+            # Blob content
+            if include_blobs:
+                blob = self._blob_repo.get(commit_row.content_hash)
+                if blob:
+                    entry["content_hash"] = commit_row.content_hash
+                    entry["payload"] = blob.payload_json
+                else:
+                    entry["content_hash"] = commit_row.content_hash
+                    entry["payload"] = None
+            else:
+                entry["content_hash"] = commit_row.content_hash
+
+            # Annotations
+            ann = self._annotation_repo.get_latest(commit_row.commit_hash)
+            if ann:
+                entry["priority"] = ann.priority.value if hasattr(ann.priority, "value") else str(ann.priority)
+
+            commits_data.append(entry)
+
+        # Branch info
+        branches = {}
+        for branch_info in self.list_branches():
+            branches[branch_info.name] = branch_info.commit_hash
+
+        return {
+            "version": 1,
+            "tract_id": self._tract_id,
+            "branch": self.current_branch,
+            "head": head,
+            "commits": commits_data,
+            "branches": branches,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def load_state(self, state: dict) -> int:
+        """Load commits from an exported state dict into this tract.
+
+        Replays the exported commits as new commits on the current branch,
+        preserving content and metadata. Does NOT overwrite existing commits.
+
+        Args:
+            state: A dict previously returned by :meth:`export_state`.
+
+        Returns:
+            Number of commits loaded.
+
+        Raises:
+            ValueError: If the state dict is invalid or version unsupported.
+        """
+        if not isinstance(state, dict) or state.get("version") != 1:
+            raise ValueError("Invalid or unsupported export state (expected version=1)")
+
+        commits = state.get("commits", [])
+        if not commits:
+            return 0
+
+        loaded = 0
+        for entry in commits:
+            payload = entry.get("payload")
+            if payload is None:
+                continue  # skip commits without content (include_blobs=False)
+
+            content_type = entry.get("content_type", "")
+            message = entry.get("message")
+            metadata_json = entry.get("metadata")
+
+            # Parse metadata
+            metadata = None
+            if metadata_json:
+                try:
+                    metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+                except (ValueError, TypeError):
+                    metadata = None
+
+            # Reconstruct content from payload
+            try:
+                payload_dict = json.loads(payload) if isinstance(payload, str) else payload
+            except (ValueError, TypeError):
+                continue
+
+            # Ensure content_type is present in payload dict
+            if "content_type" not in payload_dict:
+                payload_dict["content_type"] = content_type
+
+            # Use validate_content to reconstruct the proper content model
+            try:
+                content = validate_content(
+                    payload_dict,
+                    custom_registry=self._custom_type_registry,
+                )
+            except Exception:
+                continue  # skip unrecognized content types
+
+            info = self.commit(
+                content,
+                message=message or f"imported: {content_type}",
+                metadata=metadata,
+            )
+
+            # Restore priority annotation if present
+            priority_val = entry.get("priority")
+            if priority_val and priority_val != "normal":
+                try:
+                    priority = Priority(priority_val)
+                    self.annotate(info.commit_hash, priority, reason="imported")
+                except (ValueError, KeyError):
+                    pass
+
+            loaded += 1
+
+        return loaded
+
     @property
     def llm_client(self) -> LLMClient:
         """The configured LLM client for direct access.
