@@ -168,6 +168,10 @@ def validate_content(
     registered custom type, validates against that model. Otherwise,
     falls through to the built-in discriminated union.
 
+    Error messages are designed to be actionable for LLMs: they state
+    which content_type was used, what fields are required vs provided,
+    and what valid types exist.
+
     Args:
         data: Content dict with a "content_type" field.
         custom_registry: Optional per-repo dict mapping type names to
@@ -181,6 +185,15 @@ def validate_content(
     """
     content_type = data.get("content_type")
 
+    # --- No content_type at all ---
+    if content_type is None:
+        valid_types = _all_valid_types(custom_registry)
+        raise ContentValidationError(
+            f"Missing required field 'content_type'. "
+            f"Provided fields: {sorted(data.keys())}. "
+            f"Valid content_type values: {valid_types}"
+        )
+
     # Check custom registry first (if provided)
     if custom_registry and content_type in custom_registry:
         try:
@@ -189,16 +202,93 @@ def validate_content(
             return adapter.validate_python(data)
         except ValidationError as e:
             raise ContentValidationError(
-                f"Custom content type '{content_type}' validation failed: {e}"
+                _format_field_error(content_type, data, model_class)
             ) from e
+
+    # --- Unknown content_type ---
+    if content_type not in BUILTIN_CONTENT_TYPES:
+        valid_types = _all_valid_types(custom_registry)
+        raise ContentValidationError(
+            f"Unknown content_type '{content_type}'. "
+            f"Valid types: {valid_types}. "
+            f"Use one of these as the 'content_type' field value."
+        )
 
     # Fall through to built-in discriminated union
     try:
         return _builtin_adapter.validate_python(data)
     except ValidationError as e:
+        model_class = _BUILTIN_TYPE_MODELS.get(content_type)
+        if model_class is not None:
+            raise ContentValidationError(
+                _format_field_error(content_type, data, model_class)
+            ) from e
+        # Fallback (should not happen for known types)
         raise ContentValidationError(
-            f"Content validation failed: {e}"
+            f"Content validation failed for type '{content_type}': {e}"
         ) from e
+
+
+# Map content_type name -> model class for error formatting
+_BUILTIN_TYPE_MODELS: dict[str, type[BaseModel]] = {
+    "instruction": InstructionContent,
+    "dialogue": DialogueContent,
+    "tool_io": ToolIOContent,
+    "reasoning": ReasoningContent,
+    "artifact": ArtifactContent,
+    "output": OutputContent,
+    "freeform": FreeformContent,
+    "session": SessionContent,
+    "config": ConfigContent,
+    "metadata": MetadataContent,
+}
+
+
+def _all_valid_types(
+    custom_registry: dict[str, type[BaseModel]] | None = None,
+) -> list[str]:
+    """Return sorted list of all valid content_type values."""
+    types = sorted(BUILTIN_CONTENT_TYPES)
+    if custom_registry:
+        types = sorted(set(types) | set(custom_registry.keys()))
+    return types
+
+
+def _format_field_error(
+    content_type: str,
+    data: dict[str, Any],
+    model_class: type[BaseModel],
+) -> str:
+    """Build an LLM-actionable error message for field validation failures."""
+    fields = model_class.model_fields
+    required = sorted(
+        k for k, v in fields.items()
+        if v.is_required() and k != "content_type"
+    )
+    optional = sorted(
+        k for k, v in fields.items()
+        if not v.is_required() and k != "content_type"
+    )
+    provided = sorted(k for k in data.keys() if k != "content_type")
+    missing = [f for f in required if f not in data]
+    extra = [f for f in provided if f not in fields]
+
+    parts = [f"Invalid fields for content_type '{content_type}'."]
+    parts.append(f"Required fields: {required}.")
+    if optional:
+        parts.append(f"Optional fields: {optional}.")
+    parts.append(f"You provided: {provided}.")
+    if missing:
+        parts.append(f"Missing required: {missing}.")
+    if extra:
+        parts.append(f"Unknown fields (will be ignored): {extra}.")
+
+    # Add a corrective example
+    example_fields = {f: "..." for f in required}
+    example_fields["content_type"] = content_type
+    parts.append(f"Example: {example_fields}")
+
+    return " ".join(parts)
 
 
 # ---------------------------------------------------------------------------
