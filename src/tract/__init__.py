@@ -57,6 +57,7 @@ from tract.models.merge import (
     ImportResult,
     ConflictInfo,
     MergeResult,
+    MergeStrategy,
     RebaseResult,
     RebaseWarning,
 )
@@ -203,6 +204,7 @@ __all__ = [
     # Merge models
     "ConflictInfo",
     "MergeResult",
+    "MergeStrategy",
     "RebaseWarning",
     "ImportIssue",
     "RebaseResult",

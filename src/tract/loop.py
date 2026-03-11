@@ -361,8 +361,21 @@ def _commit_tool_result(
     status: Literal["success", "error"],
     metadata: dict,
 ) -> None:
-    """Commit a tool result/error to the tract."""
+    """Commit a tool result/error to the tract.
+
+    When a :class:`~tract.models.config.ToolSummarizationConfig` is
+    configured on the tract and the result exceeds the ``auto_threshold``
+    token count, the output is summarized via the LLM before committing.
+    The original token count is stored in metadata as
+    ``summarized_from_length``.
+    """
     from tract.models.content import ToolIOContent
+
+    # --- Auto-summarize large successful results -------------------------
+    if status == "success":
+        output, metadata = _maybe_summarize_tool_result(
+            tract, tool_name, output, metadata,
+        )
 
     payload_key = "result" if status == "success" else "error"
     msg_prefix = "tool result" if status == "success" else "tool error"
@@ -376,6 +389,131 @@ def _commit_tool_result(
         message=f"{msg_prefix}: {tool_name}",
         metadata=metadata,
     )
+
+
+def _maybe_summarize_tool_result(
+    tract: Tract,
+    tool_name: str,
+    output: str,
+    metadata: dict,
+) -> tuple[str, dict]:
+    """Summarize a tool result if ToolSummarizationConfig requires it.
+
+    Returns the (possibly summarized) output and updated metadata.
+    If summarization is not configured or the result is under threshold,
+    the original output and metadata are returned unchanged.
+    """
+    config = getattr(tract, "_tool_summarization_config", None)
+    if config is None:
+        return output, metadata
+
+    # Check threshold
+    if config.auto_threshold is None:
+        return output, metadata
+
+    # Count tokens in the output
+    token_count = tract._token_counter.count_text(output)
+    if token_count <= config.auto_threshold:
+        return output, metadata
+
+    # Determine summarization instructions
+    instructions = config.instructions.get(tool_name, config.default_instructions)
+
+    # Need an LLM client to summarize
+    if not tract._has_llm_client("compress"):
+        logger.debug(
+            "Tool result for %s exceeds threshold (%d > %d) but no LLM client "
+            "available for summarization",
+            tool_name, token_count, config.auto_threshold,
+        )
+        return output, metadata
+
+    try:
+        summarized = _summarize_tool_output(
+            tract, tool_name, output, instructions,
+            include_context=config.include_context,
+            system_prompt=config.system_prompt,
+        )
+        # Update metadata with original token count
+        metadata = {**metadata, "summarized_from_length": token_count}
+        logger.debug(
+            "Summarized tool result for %s: %d -> %d tokens",
+            tool_name, token_count,
+            tract._token_counter.count_text(summarized),
+        )
+        return summarized, metadata
+    except Exception:
+        logger.debug(
+            "Failed to summarize tool result for %s, using original",
+            tool_name, exc_info=True,
+        )
+        return output, metadata
+
+
+def _summarize_tool_output(
+    tract: Tract,
+    tool_name: str,
+    output: str,
+    instructions: str | None,
+    *,
+    include_context: bool = False,
+    system_prompt: str | None = None,
+) -> str:
+    """Call the LLM to summarize a single tool result.
+
+    Args:
+        tract: The Tract instance (used for LLM client and context).
+        tool_name: Name of the tool whose result is being summarized.
+        output: The raw tool output to summarize.
+        instructions: Per-tool or default summarization instructions.
+        include_context: If True, compile current context for relevance.
+        system_prompt: Override the default summarization system prompt.
+
+    Returns:
+        The summarized output string.
+    """
+    from tract.prompts.summarize import (
+        TOOL_CONTEXT_SUMMARIZE_SYSTEM,
+        TOOL_SUMMARIZE_SYSTEM,
+        build_summarize_prompt,
+    )
+
+    # Resolve system prompt
+    if system_prompt is not None:
+        sys_prompt = system_prompt
+    elif include_context:
+        sys_prompt = TOOL_CONTEXT_SUMMARIZE_SYSTEM
+    else:
+        sys_prompt = TOOL_SUMMARIZE_SYSTEM
+
+    # Build context text if requested
+    context_text: str | None = None
+    if include_context:
+        try:
+            compiled = tract.compile()
+            context_text = "\n".join(
+                f"{m.role}: {m.content}" for m in compiled.messages
+            )
+        except Exception:
+            context_text = None
+
+    # Build the user prompt
+    user_prompt = build_summarize_prompt(
+        f"Tool: {tool_name}\nResult:\n{output}",
+        instructions=instructions,
+        context_text=context_text,
+    )
+
+    llm = tract._resolve_llm_client("compress")
+    response = llm.chat(
+        [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+
+    # Extract content from response
+    return _extract_content(response, llm) or output
 
 
 def _extract_usage(response: Any, client: LLMClient | None = None) -> dict | None:

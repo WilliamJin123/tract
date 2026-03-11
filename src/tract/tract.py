@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from tract.toolkit.models import ToolProfile
     from tract.models.branch import BranchInfo
     from tract.models.compression import CompressResult, GCResult, ReorderWarning, ToolCompactResult, ToolDropResult
-    from tract.models.merge import ImportResult, MergeResult, RebaseResult
+    from tract.models.merge import ImportResult, MergeResult, MergeStrategy, RebaseResult
     from tract.models.session import SpawnInfo
     from tract.operations.diff import DiffResult
     from tract.operations.history import StatusInfo
@@ -3061,11 +3061,12 @@ class Tract:
         )
 
         return ToolCompactResult(
-            edit_commits=edit_commits,
-            source_commits=source_commits,
-            tool_names=all_tool_names,
+            edit_commits=tuple(edit_commits),
+            source_commits=tuple(source_commits),
+            tool_names=tuple(all_tool_names),
             original_tokens=original_tokens,
             compacted_tokens=compacted_tokens,
+            turn_count=len(turns),
             config=effective_config,
         )
 
@@ -3933,6 +3934,137 @@ class Tract:
             if len(results) >= limit:
                 break
         return self._enrich_with_priorities(results)
+
+    def find(
+        self,
+        *,
+        content: str | None = None,
+        pattern: str | None = None,
+        tag: str | None = None,
+        content_type: str | None = None,
+        metadata_key: str | None = None,
+        metadata_value: str | None = None,
+        branch: str | None = None,
+        limit: int = 50,
+    ) -> list[CommitInfo]:
+        """Search commits by content, tags, content type, or metadata.
+
+        Walks the ancestry of the specified branch (or current HEAD) and
+        returns commits matching **all** provided criteria (AND logic).
+
+        Args:
+            content: Substring match in commit content text.
+            pattern: Regex match in commit content text.
+            tag: Match commits that have this tag (immutable or mutable).
+            content_type: Match commits with this content type.
+            metadata_key: Match commits that have this key in metadata.
+            metadata_value: When used with ``metadata_key``, match commits
+                where ``metadata[metadata_key] == metadata_value``.
+            branch: Search a specific branch.  Defaults to current HEAD.
+            limit: Maximum number of results.  Default 50.
+
+        Returns:
+            List of matching :class:`CommitInfo` in reverse chronological
+            order (newest first).
+        """
+        import re
+
+        # Resolve starting commit hash
+        if branch is not None:
+            start_hash = self._ref_repo.get_branch(self._tract_id, branch)
+            if start_hash is None:
+                raise BranchNotFoundError(branch)
+        else:
+            start_hash = self.head
+
+        if start_hash is None:
+            return []
+
+        # Pre-compile regex if provided
+        compiled_re = re.compile(pattern) if pattern is not None else None
+
+        # Walk a generous window of ancestors for filtering
+        scan_limit = max(limit * 10, 500)
+        ancestors = self._commit_repo.get_ancestors(start_hash, limit=scan_limit)
+
+        results: list[CommitInfo] = []
+        for row in ancestors:
+            # --- content_type filter ---
+            if content_type is not None and row.content_type != content_type:
+                continue
+
+            # --- metadata filters ---
+            if metadata_key is not None:
+                md = row.metadata_json
+                if not isinstance(md, dict) or metadata_key not in md:
+                    continue
+                if metadata_value is not None and md[metadata_key] != metadata_value:
+                    continue
+
+            # --- tag filter (immutable + mutable) ---
+            if tag is not None:
+                commit_tags: set[str] = set(row.tags_json) if row.tags_json else set()
+                if self._tag_annotation_repo is not None:
+                    commit_tags.update(
+                        self._tag_annotation_repo.get_tags(row.commit_hash)
+                    )
+                if tag not in commit_tags:
+                    continue
+
+            # --- content / pattern filters (load blob lazily) ---
+            if content is not None or compiled_re is not None:
+                blob = self._blob_repo.get(row.content_hash)
+                if blob is None:
+                    continue
+                try:
+                    blob_text = blob.payload_json
+                except Exception:
+                    continue
+
+                if content is not None and content not in blob_text:
+                    continue
+                if compiled_re is not None and not compiled_re.search(blob_text):
+                    continue
+
+            info = self._commit_engine._row_to_info(row)
+            results.append(info)
+
+            if len(results) >= limit:
+                break
+
+        return self._enrich_with_priorities(results)
+
+    def find_one(
+        self,
+        *,
+        content: str | None = None,
+        pattern: str | None = None,
+        tag: str | None = None,
+        content_type: str | None = None,
+        metadata_key: str | None = None,
+        metadata_value: str | None = None,
+        branch: str | None = None,
+    ) -> CommitInfo | None:
+        """Search commits and return the first match, or ``None``.
+
+        Accepts the same filters as :meth:`find`.  Equivalent to
+        ``find(..., limit=1)[0]`` but returns ``None`` instead of
+        raising on empty results.
+
+        Returns:
+            The first matching :class:`CommitInfo`, or ``None``.
+        """
+        hits = self.find(
+            content=content,
+            pattern=pattern,
+            tag=tag,
+            content_type=content_type,
+            metadata_key=metadata_key,
+            metadata_value=metadata_value,
+            branch=branch,
+            limit=1,
+        )
+        return hits[0] if hits else None
 
     def skipped(self, limit: int = 100) -> list[CommitInfo]:
         """Return commits with effective priority SKIP.
@@ -4937,7 +5069,7 @@ class Tract:
         source_branch: str,
         *,
         resolver: ResolverCallable | str | None = None,
-        strategy: str = "auto",
+        strategy: str | MergeStrategy = "auto",
         no_ff: bool = False,
         auto_commit: bool = False,
         model: str | None = None,
@@ -4953,7 +5085,10 @@ class Tract:
             source_branch: Name of the branch to merge.
             resolver: Optional conflict resolver (ResolverCallable).
                 Falls back to self._default_resolver if configured.
-            strategy: ``"auto"`` (default) or ``"semantic"``.
+            strategy: Merge strategy: ``"auto"`` (default), ``"ours"``,
+                ``"theirs"``, or ``"semantic"``.  With ``"ours"``, conflicts
+                are resolved by keeping the current branch's version.  With
+                ``"theirs"``, the source branch's version wins.
             no_ff: If True, always create a merge commit (no fast-forward).
             auto_commit: If True, auto-commit even with resolved conflicts.
             model: Override model for the default resolver.

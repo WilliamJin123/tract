@@ -15,6 +15,26 @@ from pydantic import BaseModel
 from tract.models.commit import CommitInfo
 
 
+class MergeStrategy(str, enum.Enum):
+    """Merge conflict resolution strategies.
+
+    Controls how conflicts are handled during a merge:
+    - AUTO: Detect conflicts and use resolver (current default behavior).
+    - OURS: On conflict, always take the current branch's version.
+    - THEIRS: On conflict, always take the source branch's version.
+    """
+
+    AUTO = "auto"
+    OURS = "ours"
+    THEIRS = "theirs"
+
+    def __repr__(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
+
+
 class ConflictType(str, enum.Enum):
     """Types of structural merge conflicts."""
 

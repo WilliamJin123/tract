@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from tract.exceptions import MergeConflictError, MergeError, NothingToMergeError
 from tract.models.commit import CommitInfo, CommitOperation
-from tract.models.merge import ConflictInfo, ConflictType, MergeResult
+from tract.models.merge import ConflictInfo, ConflictType, MergeResult, MergeStrategy
 from tract.operations.dag import find_merge_base, get_branch_commits, is_ancestor
 
 logger = logging.getLogger(__name__)
@@ -251,7 +251,7 @@ def merge_branches(
     token_counter: TokenCounter,
     *,
     resolver: ResolverCallable | None = None,
-    strategy: str = "auto",
+    strategy: str | MergeStrategy = MergeStrategy.AUTO,
     no_ff: bool = False,
 ) -> MergeResult:
     """Execute a merge of source_branch into the current branch.
@@ -261,6 +261,12 @@ def merge_branches(
     - Clean merge: auto-merges divergent histories with only APPENDs.
     - Conflict merge: detects structural conflicts, calls resolver if available.
     - Semantic: also runs resolver on full merged context (strategy="semantic").
+
+    The ``strategy`` parameter controls conflict resolution:
+    - ``"auto"`` (default): detect conflicts, use resolver or return for review.
+    - ``"ours"``: on conflict, always take the current branch's version.
+    - ``"theirs"``: on conflict, always take the source branch's version.
+    - ``"semantic"``: like auto, but marks result as semantic merge.
 
     Args:
         tract_id: The tract identifier.
@@ -273,7 +279,8 @@ def merge_branches(
         commit_engine: Commit engine for creating merge commits.
         token_counter: Token counter.
         resolver: Optional conflict resolver callable.
-        strategy: Merge strategy ("auto" or "semantic").
+        strategy: Merge strategy (``"auto"``, ``"ours"``, ``"theirs"``,
+            or ``"semantic"``).
         no_ff: If True, always create a merge commit (no fast-forward).
 
     Returns:
@@ -285,6 +292,21 @@ def merge_branches(
         MergeConflictError: If conflicts detected and no resolver available
             and no way to return for review (internal use).
     """
+    # Normalize strategy to MergeStrategy enum
+    if isinstance(strategy, str):
+        try:
+            strategy_enum = MergeStrategy(strategy.lower())
+        except ValueError:
+            # Allow "semantic" as a pass-through (not a MergeStrategy member)
+            if strategy.lower() == "semantic":
+                strategy_enum = MergeStrategy.AUTO
+            else:
+                raise MergeError(
+                    f"Unknown merge strategy: {strategy!r}. "
+                    f"Use 'auto', 'ours', 'theirs', or 'semantic'."
+                )
+    else:
+        strategy_enum = strategy
     # Get current branch
     current_branch = ref_repo.get_current_branch(tract_id)
     if current_branch is None:
@@ -380,6 +402,22 @@ def merge_branches(
         target_tip_hash=current_hash,
     )
 
+    # --- Ours/Theirs: auto-resolve conflicts without a resolver ---
+    if strategy_enum == MergeStrategy.OURS:
+        for conflict in conflicts:
+            target_key = conflict.target_hash or conflict.commit_a.commit_hash
+            result.resolutions[target_key] = conflict.content_a_text
+            result.resolution_reasoning[target_key] = "Auto-resolved: strategy=ours"
+        return result
+
+    if strategy_enum == MergeStrategy.THEIRS:
+        for conflict in conflicts:
+            target_key = conflict.target_hash or conflict.commit_b.commit_hash
+            result.resolutions[target_key] = conflict.content_b_text
+            result.resolution_reasoning[target_key] = "Auto-resolved: strategy=theirs"
+        return result
+
+    # --- Auto/Semantic: use resolver if available ---
     if resolver is not None:
         # Call resolver for each conflict
         all_resolved = True

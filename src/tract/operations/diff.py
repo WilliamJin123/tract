@@ -7,6 +7,7 @@ token deltas, and generation config changes.
 from __future__ import annotations
 
 import difflib
+import json
 from dataclasses import dataclass, field
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -80,6 +81,56 @@ class DiffResult:
         """Pretty-print this diff with colored unified diff output."""
         from tract.formatting import pprint_diff_result
         pprint_diff_result(self, stat_only=stat_only)
+
+    def to_dict(self) -> dict:
+        """Serialize diff result to a JSON-compatible dictionary.
+
+        Returns a dictionary with commit hashes, total message counts,
+        token delta, and per-message diff entries including status, roles,
+        content previews, and unified diff lines for modified messages.
+
+        Returns:
+            JSON-serializable dict representation of this diff.
+        """
+        source_total = sum(
+            1 for d in self.message_diffs if d.status in ("unchanged", "removed", "modified")
+        )
+        target_total = sum(
+            1 for d in self.message_diffs if d.status in ("unchanged", "added", "modified")
+        )
+        return {
+            "source": self.commit_a,
+            "target": self.commit_b,
+            "total_messages": {"source": source_total, "target": target_total},
+            "token_delta": self.stat.total_token_delta,
+            "messages": [
+                {
+                    "status": d.status,
+                    "role": d.role_b if d.status == "added" else d.role_a,
+                    "content_preview": (
+                        d.content_diff_lines[0][:200]
+                        if d.content_diff_lines
+                        else None
+                    ),
+                    "token_delta": d.token_delta,
+                    "content_diff": (
+                        d.content_diff_lines if d.status == "modified" else None
+                    ),
+                }
+                for d in self.message_diffs
+            ],
+        }
+
+    def to_json(self, *, indent: int = 2) -> str:
+        """Serialize diff result to a formatted JSON string.
+
+        Args:
+            indent: Number of spaces for JSON indentation. Defaults to 2.
+
+        Returns:
+            Pretty-printed JSON string of :meth:`to_dict`.
+        """
+        return json.dumps(self.to_dict(), indent=indent)
 
     def open(self, *, editor: str | None = None) -> None:
         """Open this diff in an external editor's diff view.
