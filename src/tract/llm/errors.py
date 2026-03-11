@@ -37,3 +37,12 @@ class LLMAuthError(LLMClientError):
 
 class LLMResponseError(LLMClientError):
     """Unexpected response format from LLM API."""
+
+
+class LLMToolUseError(LLMClientError):
+    """Model attempted a tool call but the response was truncated or malformed.
+
+    This typically happens when ``max_tokens`` is too low for the tool call
+    arguments the model tried to generate.  The error is retryable because a
+    subsequent attempt may produce shorter output.
+    """

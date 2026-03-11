@@ -51,9 +51,9 @@ class StepLogger:
         content = _extract_content(response)
         tool_calls = _extract_tool_calls(response)
 
-        print(f"\n{self.indent}{'─' * 40}")
+        print(f"\n{self.indent}{'-' * 40}")
         print(f"{self.indent}Step {step_num}")
-        print(f"{self.indent}{'─' * 40}")
+        print(f"{self.indent}{'-' * 40}")
 
         if content:
             text = content.replace("\n", "\n" + self.indent + "  ")

@@ -79,16 +79,15 @@ def main():
         ctx_full = t.compile(strategy=strategy)
         print(f"  {strategy}: {len(ctx_full.messages)} messages")
 
-        # --- Compile strategy: messages (last K) ---
+        # --- Compile strategy: messages (lightweight summaries) ---
 
-        print("\n=== Strategy: messages (last 5) ===\n")
+        print("\n=== Strategy: messages (lightweight) ===\n")
 
         t.configure(compile_strategy="messages", compile_strategy_k=5)
 
         strategy = t.get_config("compile_strategy")
-        k = t.get_config("compile_strategy_k")
-        ctx_messages = t.compile(strategy=strategy, strategy_k=k)
-        print(f"  {strategy} (k={k}): {len(ctx_messages.messages)} messages")
+        ctx_messages = t.compile(strategy=strategy)
+        print(f"  {strategy}: {len(ctx_messages.messages)} messages (commit-message text only)")
 
         # --- Compile strategy: adaptive ---
 
@@ -105,9 +104,11 @@ def main():
 
         print("\n=== Strategy Comparison ===\n")
 
-        print(f"  full:     {len(ctx_full.messages)} messages")
-        print(f"  messages: {len(ctx_messages.messages)} messages (last {k})")
-        print(f"  adaptive: {len(ctx_adaptive.messages)} messages")
+        # All strategies produce the same number of messages -- they differ
+        # in *content detail*, not in message count.
+        print(f"  full:     {len(ctx_full.messages)} messages (full content)")
+        print(f"  messages: {len(ctx_messages.messages)} messages (lightweight commit messages)")
+        print(f"  adaptive: {len(ctx_adaptive.messages)} messages (last {k} full, rest lightweight)")
 
         # --- All active config ---
 

@@ -82,7 +82,7 @@ def main():
 
         # Manually transition since the agent didn't have the tool
         t.transition("synthesize", handoff="Summarize the research findings")
-        t.configure(temperature=0.3)
+        t.configure(stage="synthesize", temperature=0.3)
 
         with StreamPrinter(title="Synthesis", border_style="green") as printer:
             result2 = t.run(

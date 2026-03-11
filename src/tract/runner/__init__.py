@@ -30,6 +30,7 @@ from tract.llm.errors import (
     LLMConfigError,
     LLMRateLimitError,
     LLMAuthError,
+    LLMToolUseError,
 )
 
 # Agent toolkit
@@ -56,6 +57,7 @@ __all__ = [
     "LLMConfigError",
     "LLMRateLimitError",
     "LLMAuthError",
+    "LLMToolUseError",
     "StreamEvent",
     "TextDelta",
     "ToolCallStart",

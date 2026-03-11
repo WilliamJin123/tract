@@ -75,7 +75,7 @@ async def main():
 
         print("=== achat() ===")
         response = await t.achat("What is the capital of France?")
-        print(f"  Response: {response.text[:200]}")
+        print(f"  Response: {(response.text or '(no response)')[:200]}")
         print(f"  Tokens: {response.usage}")
 
         # --- 2. arun() -- async agent loop with async tool handlers ---
@@ -93,7 +93,7 @@ async def main():
             on_step=log.on_step,
             on_tool_result=log.on_tool_result,
         )
-        print(f"\n  Final: {result.final_response[:200]}")
+        print(f"\n  Final: {(result.final_response or '(no response)')[:200]}")
         print(f"  Steps: {result.steps}")
 
         # --- 3. acompress() -- async LLM-powered summarization ---

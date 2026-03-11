@@ -6916,7 +6916,17 @@ class Tract:
         if resolved_profile.name == "compact":
             from tract.toolkit.compact import get_compact_tools
 
-            return get_compact_tools(self)
+            compact_tools = get_compact_tools(self)
+            if tool_names is not None:
+                allowed = set(tool_names)
+                compact_tools = [t for t in compact_tools if t.name in allowed]
+            if overrides:
+                compact_tools = [
+                    replace(t, description=overrides[t.name])
+                    if t.name in overrides else t
+                    for t in compact_tools
+                ]
+            return compact_tools
 
         all_tools = get_all_tools(self)
 

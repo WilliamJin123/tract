@@ -100,6 +100,7 @@ def main():
             result3 = t.run(
                 "Check your status and then summarize your current context.",
                 max_steps=5,
+                profile="full",
                 tool_names=["status", "log"],
                 on_token=printer,
                 on_tool_result=log.on_tool_result,

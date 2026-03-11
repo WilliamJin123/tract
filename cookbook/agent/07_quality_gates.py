@@ -99,7 +99,7 @@ def main():
         result = t.run(
             "Research auth, DB schema, and error handling for a REST API. "
             "When ready, transition to implementation.",
-            max_steps=12, max_tokens=512,
+            max_steps=12, max_tokens=1024,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )
         result.pprint()

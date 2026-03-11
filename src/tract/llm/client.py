@@ -20,6 +20,7 @@ from tract.llm.errors import (
     LLMConfigError,
     LLMRateLimitError,
     LLMResponseError,
+    LLMToolUseError,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,12 +32,12 @@ _AUTH_ERROR_STATUS_CODES = {401, 403}
 def _is_retryable(exc: BaseException) -> bool:
     """Check if an exception is retryable.
 
-    Retryable: 429, 500, 502, 503, 504, connection errors.
-    Not retryable: 401, 403, 400, other client errors.
+    Retryable: 429, 500, 502, 503, 504, connection errors, tool_use_failed.
+    Not retryable: 401, 403, other client errors.
     """
     if isinstance(exc, LLMAuthError):
         return False
-    if isinstance(exc, LLMRateLimitError):
+    if isinstance(exc, (LLMRateLimitError, LLMToolUseError)):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in _RETRYABLE_STATUS_CODES
@@ -193,6 +194,20 @@ class OpenAIClient:
                 f"Rate limited: HTTP 429 - {response.text}",
                 retry_after=retry_after,
             )
+
+        # Detect tool_use_failed (e.g. Groq returns 400 when the model's
+        # tool-call JSON was truncated by max_tokens).  This is retryable.
+        if response.status_code == 400:
+            try:
+                err_body = response.json()
+            except Exception:
+                err_body = {}
+            err_info = err_body.get("error") if isinstance(err_body, dict) else None
+            if isinstance(err_info, dict) and err_info.get("code") == "tool_use_failed":
+                raise LLMToolUseError(
+                    f"Tool call truncated (max_tokens too low?): "
+                    f"{err_info.get('message', response.text)}"
+                )
 
         response.raise_for_status()
 
@@ -564,6 +579,20 @@ class OpenAIClient:
                 f"Rate limited: HTTP 429 - {response.text}",
                 retry_after=retry_after,
             )
+
+        # Detect tool_use_failed (e.g. Groq 400 when tool-call JSON truncated)
+        if response.status_code == 400:
+            try:
+                err_body = response.json()
+            except Exception:
+                err_body = {}
+            err_info = err_body.get("error") if isinstance(err_body, dict) else None
+            if isinstance(err_info, dict) and err_info.get("code") == "tool_use_failed":
+                raise LLMToolUseError(
+                    f"Tool call truncated (max_tokens too low?): "
+                    f"{err_info.get('message', response.text)}"
+                )
+
         response.raise_for_status()
 
         data = response.json()

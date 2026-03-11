@@ -105,6 +105,7 @@ def main():
         # --- 1. Select a slim subset of built-in tract tools ---
 
         tract_tools = t.as_tools(
+            profile="full",
             tool_names=["commit", "status", "log", "compile"],
             format="openai",
         )

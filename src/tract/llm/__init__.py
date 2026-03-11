@@ -22,6 +22,7 @@ from tract.llm.errors import (
     LLMConfigError,
     LLMRateLimitError,
     LLMResponseError,
+    LLMToolUseError,
 )
 from tract.llm.protocols import LLMClient, Resolution, ResolverCallable
 from tract.llm.resolver import OpenAIResolver
@@ -38,6 +39,7 @@ __all__ = [
     "LLMRateLimitError",
     "LLMAuthError",
     "LLMResponseError",
+    "LLMToolUseError",
     # Stream event types
     "StreamEvent",
     "TextDelta",
