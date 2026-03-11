@@ -685,6 +685,192 @@ def compress_range(
     )
 
 
+def sliding_window_compress(
+    tract_id: str,
+    commit_repo: CommitRepository,
+    blob_repo: BlobRepository,
+    annotation_repo: AnnotationRepository,
+    ref_repo: RefRepository,
+    commit_engine: CommitEngine,
+    token_counter: TokenCounter,
+    event_repo: OperationEventRepository,
+    parent_repo: CommitParentRepository,
+    *,
+    window_size: int = 5,
+    target_tokens: int | None = None,
+    preserve: list[str] | None = None,
+    llm_client: LLMClient | None = None,
+    content: str | None = None,
+    instructions: str | None = None,
+    system_prompt: str | None = None,
+    llm_kwargs: dict | None = None,
+    generation_config: dict | None = None,
+    type_registry: dict[str, type] | None = None,
+    triggered_by: str | None = None,
+    two_stage: bool = False,
+) -> CompressRangeResult | None:
+    """Compress commits outside a sliding window.
+
+    Keeps the most recent ``window_size`` commits in full detail.
+    Everything older gets compressed into a summary (unless PINNED).
+
+    Args:
+        tract_id: Tract identifier.
+        commit_repo: Commit repository.
+        blob_repo: Blob repository.
+        annotation_repo: Annotation repository.
+        ref_repo: Ref repository.
+        commit_engine: Commit engine for creating commits.
+        token_counter: Token counter.
+        event_repo: Operation event repository.
+        parent_repo: Commit parent repository.
+        window_size: Number of most-recent commits to keep in full detail.
+        target_tokens: Optional target token count for summaries.
+        preserve: Optional list of hashes to treat as PINNED.
+        llm_client: Optional LLM client for summarization.
+        content: Optional manual summary text (bypasses LLM).
+        instructions: Optional LLM instructions.
+        system_prompt: Optional custom system prompt for LLM.
+        llm_kwargs: Optional per-operation LLM config.
+        generation_config: Optional generation config to record on summary commits.
+        type_registry: Optional custom content type registry.
+        triggered_by: Optional provenance string.
+        two_stage: Whether to use two-stage summarization.
+
+    Returns:
+        CompressRangeResult with summary data and metadata, or None if
+        there is nothing to compress (all commits are in the window or PINNED).
+    """
+    # 1. Resolve HEAD
+    head_hash = ref_repo.get_head(tract_id)
+    if head_hash is None:
+        return None
+
+    # 2. Walk full first-parent chain from HEAD (newest first)
+    all_ancestors = list(commit_repo.get_ancestors(head_hash))
+    if not all_ancestors:
+        return None
+
+    # 3. Split into window (last N, newest first -> keep order) and pre-window
+    window_commits = all_ancestors[:window_size]  # newest first
+    pre_window_commits = all_ancestors[window_size:]  # older commits, newest first
+
+    if not pre_window_commits:
+        # Everything fits in the window -- nothing to compress
+        return None
+
+    # Reverse pre-window to oldest-first for compression processing
+    pre_window_oldest_first = list(reversed(pre_window_commits))
+
+    # 4. Classify pre-window commits by priority
+    pinned_commits, important_commits, normal_commits, skip_commits = (
+        _classify_by_priority(pre_window_oldest_first, annotation_repo, preserve=preserve)
+    )
+
+    # Merge IMPORTANT into compressible (same as compress_range)
+    compressible_commits = normal_commits + important_commits
+
+    if not compressible_commits:
+        # All pre-window commits are PINNED or SKIP -- nothing to compress
+        return None
+
+    # 5. Partition around pinned (reuse existing logic)
+    pinned_hashes = {r.commit_hash for r in pinned_commits}
+    skip_hashes = {r.commit_hash for r in skip_commits}
+    groups = _partition_around_pinned(pre_window_oldest_first, pinned_hashes, skip_hashes)
+
+    if not groups:
+        return None
+
+    # 6. Gather retention criteria from IMPORTANT commits
+    important_hashes = {r.commit_hash for r in important_commits}
+    important_annotations = annotation_repo.batch_get_latest(
+        list(important_hashes)
+    ) if important_hashes else {}
+    group_retention: list[list[RetentionCriteria]] = []
+    group_retention_instructions: list[list[str]] = []
+    for group in groups:
+        criteria: list[RetentionCriteria] = []
+        ret_instructions: list[str] = []
+        for row in group:
+            if row.commit_hash in important_hashes:
+                ann = important_annotations.get(row.commit_hash)
+                if ann is not None and ann.retention_json:
+                    rc = RetentionCriteria(**ann.retention_json)
+                    criteria.append(rc)
+                    if rc.instructions:
+                        ret_instructions.append(rc.instructions)
+        group_retention.append(criteria)
+        group_retention_instructions.append(ret_instructions)
+
+    # 7. Two-stage guidance (same as compress_range)
+    if two_stage and llm_client is not None:
+        from tract.prompts.guidance import (
+            COMPRESS_GUIDANCE_SYSTEM,
+            build_compress_guidance_prompt,
+        )
+        all_text = "\n\n".join(
+            _build_messages_text(group, blob_repo) for group in groups
+        )
+        guidance_response = llm_client.chat(
+            [
+                {"role": "system", "content": COMPRESS_GUIDANCE_SYSTEM},
+                {"role": "user", "content": build_compress_guidance_prompt(
+                    all_text, instructions=instructions
+                )},
+            ],
+            **(llm_kwargs or {}),
+        )
+        guidance_text = guidance_response["choices"][0]["message"]["content"]
+        instructions = f"Guidance:\n{guidance_text}\n\n{instructions or ''}"
+    elif two_stage and llm_client is None and content is None:
+        raise CompressionError(
+            "two_stage=True requires an LLM client. "
+            "Call configure_llm() or pass api_key to Tract.open()."
+        )
+
+    # 8. Generate summaries
+    if content is not None:
+        # Manual mode: single summary for first group, rest absorbed
+        summaries = [content] + [None] * (len(groups) - 1)  # type: ignore[list-item]
+    elif llm_client is not None:
+        summaries = []
+        for gidx, group in enumerate(groups):
+            text = _build_messages_text(group, blob_repo)
+            g_ret_instructions = group_retention_instructions[gidx]
+            summary = _summarize_group(
+                text, llm_client, token_counter,
+                target_tokens=target_tokens,
+                instructions=instructions,
+                system_prompt=system_prompt,
+                llm_kwargs=llm_kwargs,
+                retention_instructions=g_ret_instructions or None,
+            )
+            summaries.append(summary)
+    else:
+        raise CompressionError(
+            "No LLM client configured and no manual content provided. "
+            "Call configure_llm() first or pass content='...'."
+        )
+
+    # 9. Calculate token counts
+    original_tokens = sum(c.token_count for c in compressible_commits)
+    estimated_tokens = sum(
+        token_counter.count_text(s) for s in summaries if s is not None
+    )
+
+    # 10. Build and return CompressRangeResult
+    summary_text = "\n\n".join(s for s in summaries if s is not None)
+    return CompressRangeResult(
+        summary_text=summary_text,
+        summary_commits=summaries,
+        replaced_hashes=[c.commit_hash for c in compressible_commits],
+        pinned_hashes=[c.commit_hash for c in pinned_commits],
+        token_count=estimated_tokens,
+        generation_config=generation_config,
+    )
+
+
 def _commit_compression(
     *,
     tract_id: str,

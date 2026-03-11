@@ -78,6 +78,7 @@ from tract.session import Session
 from tract.models.session import SessionContent, SpawnInfo, CollapseResult
 
 # Operations data models
+from tract.operations.health import HealthReport
 from tract.operations.history import StatusInfo
 from tract.operations.diff import DiffResult, MessageDiff, DiffStat
 
@@ -222,6 +223,7 @@ __all__ = [
     "RebaseResult",
     "ImportResult",
     # Operations
+    "HealthReport",
     "StatusInfo",
     "DiffResult",
     "MessageDiff",

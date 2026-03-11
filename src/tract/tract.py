@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from tract.models.merge import ImportResult, MergeResult, MergeStrategy, RebaseResult
     from tract.models.session import SpawnInfo
     from tract.operations.diff import DiffResult
+    from tract.operations.health import HealthReport
     from tract.operations.history import StatusInfo
     from tract.operations.config_index import ConfigIndex
     from tract.storage.schema import CommitRow
@@ -3048,6 +3049,8 @@ class Tract:
         llm_config: LLMConfig | None = None,
         two_stage: bool | None = None,
         triggered_by: str | None = None,
+        strategy: str = "default",
+        window_size: int = 5,
     ) -> CompressResult:
         """Async version of :meth:`compress`.
 
@@ -3057,8 +3060,10 @@ class Tract:
             _classify_by_priority,
             _commit_compression,
             _partition_around_pinned,
+            _reconstruct_content,
             _resolve_commit_range,
             acompress_range,
+            sliding_window_compress,
         )
 
         if self._ref_repo.is_detached(self._tract_id):
@@ -3095,6 +3100,27 @@ class Tract:
             effective_system_prompt = self._operation_prompts.compress
 
         self._run_middleware("pre_compress")
+
+        # --- Sliding window strategy (delegates to sync helper) ---
+        if strategy == "sliding_window":
+            import asyncio
+            return await asyncio.to_thread(
+                self._compress_sliding_window,
+                window_size=window_size,
+                target_tokens=target_tokens,
+                preserve=preserve,
+                content=content,
+                instructions=instructions,
+                system_prompt=effective_system_prompt,
+                llm_client=llm_client,
+                llm_kwargs=llm_kwargs,
+                two_stage=two_stage,
+                sliding_window_compress_fn=sliding_window_compress,
+                _classify_by_priority_fn=_classify_by_priority,
+                _commit_compression_fn=_commit_compression,
+                _partition_around_pinned_fn=_partition_around_pinned,
+                _reconstruct_content_fn=_reconstruct_content,
+            )
 
         # Step 1: Async LLM summarization
         range_result = await acompress_range(
@@ -4385,6 +4411,25 @@ class Tract:
             recent_commits=recent,
         )
 
+    def health(self) -> HealthReport:
+        """Run health checks on this tract's DAG.
+
+        Validates blob integrity, parent references, branch HEAD validity,
+        and identifies unreachable (orphaned) commits.
+
+        Returns:
+            :class:`HealthReport` with validation results and any warnings.
+        """
+        from tract.operations.health import check_health
+
+        return check_health(
+            self._tract_id,
+            self._commit_repo,
+            self._blob_repo,
+            self._ref_repo,
+            self._parent_repo,
+        )
+
     def _compile_at(self, commit_hash: str) -> CompiledContext:
         """Compile at a specific commit, using LRU cache if available.
 
@@ -4942,6 +4987,134 @@ class Tract:
             force=force,
         )
         self._session.commit()
+
+    # ------------------------------------------------------------------
+    # Snapshot system
+    # ------------------------------------------------------------------
+
+    def snapshot(self, label: str = "", *, metadata: dict | None = None) -> str:
+        """Create a named snapshot (restore point) at the current HEAD.
+
+        Snapshots are implemented as specially-tagged commits with metadata.
+        They record the current state for later restoration.
+
+        Args:
+            label: Human-readable snapshot label (e.g., "before-merge",
+                "pre-compress").
+            metadata: Optional extra metadata to store with the snapshot.
+
+        Returns:
+            The snapshot tag name (e.g., ``"snapshot:before-merge:abc123"``).
+
+        Raises:
+            TraceError: If there is no HEAD (empty tract).
+        """
+        import time
+
+        current_head = self.head
+        if current_head is None:
+            raise TraceError("Cannot create snapshot: no commits yet")
+
+        head_short = current_head[:7]
+        timestamp = int(time.time())
+        tag_name = (
+            f"snapshot:{label}:{head_short}"
+            if label
+            else f"snapshot:{timestamp}:{head_short}"
+        )
+
+        # Gather lightweight state (avoid expensive compile via status())
+        branch_name = self._ref_repo.get_current_branch(self._tract_id)
+
+        # Build snapshot metadata
+        snap_meta: dict = {
+            "snapshot": True,
+            "label": label,
+            "head": current_head,
+            "branch": branch_name,
+            "timestamp": timestamp,
+            **(metadata or {}),
+        }
+
+        # Register the tag so strict-mode allows it
+        self.register_tag(tag_name, description=f"Snapshot: {label or 'unnamed'}")
+
+        # Store as a metadata commit with the snapshot tag
+        from tract.models.content import MetadataContent
+
+        self.commit(
+            MetadataContent(kind="snapshot", data=snap_meta),
+            message=f"Snapshot: {label or 'unnamed'}",
+            metadata=snap_meta,
+            tags=[tag_name],
+        )
+
+        return tag_name
+
+    def list_snapshots(self) -> list[dict]:
+        """List all snapshots for this tract.
+
+        Returns:
+            List of snapshot metadata dicts, newest first.  Each dict has
+            keys: ``tag``, ``label``, ``head``, ``branch``, ``timestamp``,
+            ``hash``.
+        """
+        snapshots: list[dict] = []
+        for entry in self.log(limit=500):
+            meta = entry.metadata or {}
+            if meta.get("snapshot"):
+                snapshots.append({
+                    "tag": next(
+                        (t for t in entry.tags if t.startswith("snapshot:")), ""
+                    ),
+                    "label": meta.get("label", ""),
+                    "head": meta.get("head", ""),
+                    "branch": meta.get("branch", ""),
+                    "timestamp": meta.get("timestamp", 0),
+                    "hash": entry.commit_hash,
+                })
+        return snapshots
+
+    def restore_snapshot(
+        self,
+        tag_or_label: str,
+        *,
+        create_branch: bool = True,
+    ) -> str:
+        """Restore to a previously created snapshot point.
+
+        Args:
+            tag_or_label: Snapshot tag name or label substring to match.
+            create_branch: If ``True`` (default), create a recovery branch
+                at the snapshot point (safe -- no history loss).  If
+                ``False``, reset HEAD directly.
+
+        Returns:
+            The commit hash restored to.
+
+        Raises:
+            ValueError: If no matching snapshot is found.
+        """
+        snapshots = self.list_snapshots()
+        match: dict | None = None
+        for snap in snapshots:
+            if snap["tag"] == tag_or_label or tag_or_label in snap.get("label", ""):
+                match = snap
+                break
+
+        if match is None:
+            raise ValueError(f"Snapshot not found: {tag_or_label}")
+
+        target_head: str = match["head"]
+
+        if create_branch:
+            branch_name = f"restore/{match['label'] or 'snapshot'}"
+            self.branch(branch_name, source=target_head)
+            self.switch(branch_name)
+        else:
+            self.reset(target_head)
+
+        return target_head
 
     @property
     def llm_client(self) -> LLMClient:
@@ -5717,6 +5890,8 @@ class Tract:
         llm_config: LLMConfig | None = None,
         two_stage: bool | None = None,
         triggered_by: str | None = None,
+        strategy: str = "default",
+        window_size: int = 5,
     ) -> CompressResult:
         """Compress commit chains into summaries.
 
@@ -5759,6 +5934,12 @@ class Tract:
             two_stage: When True and LLM is available, generate guidance first
                 (what should the summary focus on?) then generate summaries using
                 that guidance. When None/False, uses one-shot summarization.
+            strategy: Compression strategy. ``"default"`` uses partition-around-pinned
+                on the specified range. ``"sliding_window"`` keeps the last
+                ``window_size`` commits in full detail and compresses everything
+                older (PINNED commits always survive).
+            window_size: For ``strategy="sliding_window"``: number of most-recent
+                commits to keep in full detail. Defaults to 5.
 
         Returns:
             :class:`CompressResult`.
@@ -5772,8 +5953,10 @@ class Tract:
             _classify_by_priority,
             _commit_compression,
             _partition_around_pinned,
+            _reconstruct_content,
             _resolve_commit_range,
             compress_range,
+            sliding_window_compress,
         )
 
         # Guard: detached HEAD blocks compression
@@ -5816,6 +5999,27 @@ class Tract:
 
         # Pre-compress middleware (can block)
         self._run_middleware("pre_compress")
+
+        # --- Sliding window strategy ---
+        if strategy == "sliding_window":
+            return self._compress_sliding_window(
+                window_size=window_size,
+                target_tokens=target_tokens,
+                preserve=preserve,
+                content=content,
+                instructions=instructions,
+                system_prompt=effective_system_prompt,
+                llm_client=llm_client,
+                llm_kwargs=llm_kwargs,
+                two_stage=two_stage,
+                sliding_window_compress_fn=sliding_window_compress,
+                _classify_by_priority_fn=_classify_by_priority,
+                _commit_compression_fn=_commit_compression,
+                _partition_around_pinned_fn=_partition_around_pinned,
+                _reconstruct_content_fn=_reconstruct_content,
+            )
+
+        # --- Default strategy (partition-around-pinned) ---
 
         # Step 1: Generate summaries via compress_range
         range_result = compress_range(
@@ -5895,6 +6099,147 @@ class Tract:
         self._cache.clear()
 
         # Attach resolved config to result for display
+        if llm_kwargs:
+            import dataclasses as _dc
+            result = _dc.replace(result, config=LLMConfig.from_dict(llm_kwargs))
+
+        return result
+
+    def _compress_sliding_window(
+        self,
+        *,
+        window_size: int,
+        target_tokens: int | None,
+        preserve: list[str] | None,
+        content: str | None,
+        instructions: str | None,
+        system_prompt: str | None,
+        llm_client,
+        llm_kwargs: dict,
+        two_stage: bool | None,
+        sliding_window_compress_fn,
+        _classify_by_priority_fn,
+        _commit_compression_fn,
+        _partition_around_pinned_fn,
+        _reconstruct_content_fn,
+    ) -> CompressResult:
+        """Internal helper for sliding-window compression strategy.
+
+        Keeps the most recent ``window_size`` commits in full detail and
+        compresses everything older into summaries.  PINNED commits outside
+        the window are preserved verbatim.
+        """
+        from tract.exceptions import CompressionError
+
+        # Step 1: Generate summaries for pre-window commits
+        range_result = sliding_window_compress_fn(
+            tract_id=self._tract_id,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            annotation_repo=self._annotation_repo,
+            ref_repo=self._ref_repo,
+            commit_engine=self._commit_engine,
+            token_counter=self._token_counter,
+            event_repo=self._event_repo,
+            parent_repo=self._parent_repo,
+            window_size=window_size,
+            target_tokens=target_tokens,
+            preserve=preserve,
+            llm_client=llm_client,
+            llm_kwargs=llm_kwargs,
+            generation_config=llm_kwargs if llm_kwargs else None,
+            content=content,
+            instructions=instructions,
+            system_prompt=system_prompt,
+            type_registry=self._custom_type_registry,
+            two_stage=two_stage or False,
+        )
+
+        if range_result is None:
+            raise CompressionError(
+                "Nothing to compress -- all commits are within the sliding "
+                "window or are pinned/skipped"
+            )
+
+        # Step 2: Re-resolve the pre-window commits for the commit phase
+        head_hash = self._ref_repo.get_head(self._tract_id)
+        branch_name = self._ref_repo.get_current_branch(self._tract_id)
+
+        # Walk ancestry to split into window / pre-window
+        all_ancestors = list(self._commit_repo.get_ancestors(head_hash))
+        window_commits = all_ancestors[:window_size]  # newest first
+        pre_window_commits = all_ancestors[window_size:]  # older commits
+        pre_window_oldest_first = list(reversed(pre_window_commits))
+
+        # Classify pre-window commits
+        pinned_commits, _important, normal_commits, skip_commits = (
+            _classify_by_priority_fn(
+                pre_window_oldest_first, self._annotation_repo, preserve=preserve
+            )
+        )
+        normal_commits = normal_commits + _important
+        pinned_hashes = {r.commit_hash for r in pinned_commits}
+        skip_hashes = {r.commit_hash for r in skip_commits}
+        groups = _partition_around_pinned_fn(
+            pre_window_oldest_first, pinned_hashes, skip_hashes
+        )
+        original_tokens = sum(c.token_count for c in normal_commits)
+
+        # Step 3: Commit the compressed pre-window chain, then replay window
+        nested = self._session.begin_nested()
+        try:
+            result = _commit_compression_fn(
+                tract_id=self._tract_id,
+                commit_repo=self._commit_repo,
+                blob_repo=self._blob_repo,
+                ref_repo=self._ref_repo,
+                commit_engine=self._commit_engine,
+                token_counter=self._token_counter,
+                event_repo=self._event_repo,
+                summaries=range_result.summary_commits,
+                range_commits=pre_window_oldest_first,
+                pinned_commits=pinned_commits,
+                normal_commits=normal_commits,
+                pinned_hashes=pinned_hashes,
+                skip_hashes=skip_hashes,
+                groups=groups,
+                original_tokens=original_tokens,
+                target_tokens=target_tokens,
+                instructions=instructions,
+                system_prompt=system_prompt,
+                branch_name=branch_name,
+                type_registry=self._custom_type_registry,
+                expected_head=head_hash,
+                generation_config=range_result.generation_config,
+            )
+
+            # Step 4: Replay window commits on top of the compressed chain
+            # Window commits are in newest-first order; reverse to oldest-first
+            for row in reversed(window_commits):
+                content_model = _reconstruct_content_fn(
+                    row, self._blob_repo, self._custom_type_registry
+                )
+                self._commit_engine.create_commit(
+                    content=content_model,
+                    operation=row.operation,
+                    message=row.message or "Replayed window commit",
+                    metadata=row.metadata_json,
+                    generation_config=row.generation_config_json,
+                )
+
+            # Update result with final HEAD (after window replay)
+            import dataclasses as _dc
+
+            new_head = self._ref_repo.get_head(self._tract_id) or ""
+            result = _dc.replace(result, new_head=new_head)
+
+        except Exception:
+            nested.rollback()
+            raise
+
+        self._session.commit()
+        self._cache.clear()
+
         if llm_kwargs:
             import dataclasses as _dc
             result = _dc.replace(result, config=LLMConfig.from_dict(llm_kwargs))
