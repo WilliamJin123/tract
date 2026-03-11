@@ -322,8 +322,21 @@ class TestRunLoop:
         assert "LLM call failed" in result.reason
 
     def test_tool_error_committed(self, tract_instance):
-        """Tool execution error is committed as error result, loop continues."""
-        # Create a tool call for a non-existent tool
+        """Tool execution error is committed when transparent_meta_tools is off."""
+        client = MockLLMClient([
+            _make_response("Try this", tool_calls=[{"name": "nonexistent_tool", "arguments": {}}]),
+            _make_response("Oh well."),
+        ])
+        config = LoopConfig(transparent_meta_tools=False)
+        result = run_loop(tract_instance, task="Bad tool", llm_client=client, config=config)
+        assert result.status == "completed"
+        assert result.tool_calls == 1
+        entries = tract_instance.log(limit=20)
+        messages = [e.message for e in entries if e.message and "tool error" in e.message]
+        assert len(messages) >= 1
+
+    def test_meta_tool_error_ephemeral(self, tract_instance):
+        """Meta-tool errors go to ephemeral buffer, not DAG, by default."""
         client = MockLLMClient([
             _make_response("Try this", tool_calls=[{"name": "nonexistent_tool", "arguments": {}}]),
             _make_response("Oh well."),
@@ -331,10 +344,98 @@ class TestRunLoop:
         result = run_loop(tract_instance, task="Bad tool", llm_client=client)
         assert result.status == "completed"
         assert result.tool_calls == 1
-        # Check that error was committed
+        # With transparent_meta_tools=True (default), error is NOT in the DAG
         entries = tract_instance.log(limit=20)
         messages = [e.message for e in entries if e.message and "tool error" in e.message]
-        assert len(messages) >= 1
+        assert len(messages) == 0
+
+    def test_transparent_meta_tools_commit(self, tract_instance):
+        """commit() tool creates content in DAG but tool overhead is ephemeral."""
+        # Step 1: LLM calls commit (meta tool) — content goes to DAG,
+        #         tool_call/result messages go to ephemeral buffer.
+        # Step 2: LLM responds with text, no tools — loop completes.
+        client = MockLLMClient([
+            _make_response("", tool_calls=[{
+                "name": "commit",
+                "arguments": {
+                    "content": {"content_type": "reasoning", "text": "Cache-aside is best."},
+                    "message": "research finding",
+                },
+            }]),
+            _make_response("My recommendation is cache-aside."),
+        ])
+        result = run_loop(tract_instance, task="Research caching", llm_client=client)
+        assert result.status == "completed"
+        assert result.tool_calls == 1
+
+        entries = tract_instance.log(limit=20)
+        messages = [e.message for e in entries if e.message]
+
+        # The committed CONTENT ("research finding") IS in the DAG
+        assert any("research finding" in m for m in messages)
+        # The tool_call wrapper ("call commit") is NOT in the DAG
+        assert not any("call commit" in m for m in messages)
+        # The tool_result wrapper ("tool result: commit") is NOT in the DAG
+        assert not any("tool result: commit" in m for m in messages)
+
+    def test_transparent_meta_tools_off(self, tract_instance):
+        """With transparent_meta_tools=False, tool overhead IS committed."""
+        client = MockLLMClient([
+            _make_response("", tool_calls=[{
+                "name": "commit",
+                "arguments": {
+                    "content": {"content_type": "reasoning", "text": "Cache-aside is best."},
+                    "message": "research finding",
+                },
+            }]),
+            _make_response("Done."),
+        ])
+        config = LoopConfig(transparent_meta_tools=False)
+        result = run_loop(tract_instance, task="Research", llm_client=client, config=config)
+        assert result.status == "completed"
+
+        entries = tract_instance.log(limit=20)
+        messages = [e.message for e in entries if e.message]
+        # With transparency off, tool call/result messages ARE in the DAG
+        assert any("call commit" in m for m in messages)
+
+    def test_domain_tools_always_committed(self, tract_instance):
+        """Custom tool handlers always commit to DAG regardless of transparency."""
+        client = MockLLMClient([
+            _make_response("Searching", tool_calls=[{
+                "name": "web_search",
+                "arguments": {"query": "caching patterns"},
+            }]),
+            _make_response("Found it."),
+        ])
+        result = run_loop(
+            tract_instance,
+            task="Search",
+            llm_client=client,
+            tool_handlers={"web_search": lambda query: f"Results for: {query}"},
+        )
+        assert result.status == "completed"
+        entries = tract_instance.log(limit=20)
+        messages = [e.message for e in entries if e.message]
+        # Domain tool results ARE in the DAG
+        assert any("tool result" in m for m in messages)
+
+    def test_ephemeral_visible_to_llm_next_step(self, tract_instance):
+        """Ephemeral messages from step N are included in step N+1's LLM call."""
+        client = MockLLMClient([
+            _make_response("", tool_calls=[{"name": "status", "arguments": {}}]),
+            _make_response("Done."),
+        ])
+        result = run_loop(tract_instance, task="Check", llm_client=client)
+        assert result.status == "completed"
+        # Step 2's messages should include the ephemeral tool_call + tool_result
+        step2_messages = client.calls[1]["messages"]
+        # Find the ephemeral assistant message with tool_calls
+        tc_msgs = [m for m in step2_messages if m.get("role") == "assistant" and m.get("tool_calls")]
+        assert len(tc_msgs) >= 1
+        # Find the ephemeral tool result
+        tool_msgs = [m for m in step2_messages if m.get("role") == "tool"]
+        assert len(tool_msgs) >= 1
 
     def test_on_step_callback(self, tract_instance):
         """on_step callback is called for each step."""

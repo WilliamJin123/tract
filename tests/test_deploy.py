@@ -151,25 +151,25 @@ class TestDeployBasic:
         assert child.head == hashes[-1]
         session.close()
 
-    def test_deploy_duplicate_branch_raises(self):
-        """deploy() with an existing branch name raises BranchExistsError."""
+    def test_deploy_duplicate_branch_is_idempotent(self):
+        """deploy() with an existing branch name reuses it (idempotent)."""
         session, parent, hashes = _make_session_with_parent(3)
 
         # First deploy succeeds
-        session.deploy(
+        child1 = session.deploy(
             parent,
             purpose="task1",
             branch_name="task-branch",
         )
 
-        # Second deploy with same branch name raises
-        with pytest.raises(BranchExistsError):
-            session.deploy(
-                parent,
-                purpose="task2",
-                branch_name="task-branch",
-            )
+        # Second deploy with same branch name succeeds (reuses branch)
+        child2 = session.deploy(
+            parent,
+            purpose="task2",
+            branch_name="task-branch",
+        )
 
+        assert child1 is not child2
         session.close()
 
     def test_spawn_info_recorded_with_branch_mode(self):

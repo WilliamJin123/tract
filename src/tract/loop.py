@@ -124,6 +124,11 @@ class LoopConfig:
     """Ratio of max_tokens (0.0-1.0) that triggers auto-compression when exceeded."""
     tool_validator: Callable[[str, dict], tuple[bool, str | None]] | None = None
     """Validate tool calls before execution: (tool_name, args) -> (ok, error_msg)."""
+    transparent_meta_tools: bool = True
+    """When True, tract's built-in tool call/result messages are kept in an
+    ephemeral buffer (visible to the LLM for one turn) instead of committed
+    to the DAG.  This keeps compiled context clean — only the *content*
+    produced by tools (e.g. the blob from ``commit()``) persists."""
 
 
 def run_loop(
@@ -199,6 +204,7 @@ def run_loop(
     step_usages: list[TokenUsage] = []
     step_metrics_list: list[StepMetrics] = []
     executor = ToolExecutor(tract)
+    ephemeral_messages: list[dict[str, Any]] = []
 
     # Resolve config once (unlikely to change mid-loop)
     strategy: CompileStrategy = tract.get_config("compile_strategy") or cfg.strategy
@@ -249,6 +255,10 @@ def run_loop(
 
         # Build messages
         messages = last_compiled.to_dicts()
+        # Append ephemeral meta-tool messages from previous step, then clear.
+        if ephemeral_messages:
+            messages.extend(ephemeral_messages)
+            ephemeral_messages = []
         if cfg.system_prompt:
             messages.insert(0, {"role": "system", "content": cfg.system_prompt})
 
@@ -318,19 +328,38 @@ def run_loop(
 
         last_response = content
 
-        # Commit assistant response (with tool_calls metadata if present)
+        # Check if ALL tool calls target tract built-in (meta) tools.
+        # When transparent_meta_tools is on, meta-tool overhead goes to
+        # an ephemeral buffer instead of the DAG.
+        all_meta = (
+            cfg.transparent_meta_tools
+            and bool(tool_call_list)
+            and all(_is_meta_tool(tc["name"], tool_handlers) for tc in tool_call_list)
+        )
+
+        # Commit assistant response
         if tool_call_list:
-            tc_meta = [
-                {"id": tc["id"], "name": tc["name"],
-                 "arguments": tc.get("arguments", {}), "type": "function"}
-                for tc in tool_call_list
-            ]
-            tc_msg = ", ".join(tc["name"] for tc in tool_call_list)
-            tract.assistant(
-                content or "",
-                message=f"call {tc_msg}" if not content else None,
-                metadata={"tool_calls": tc_meta},
-            )
+            if all_meta:
+                # Meta-only: send tool_calls to ephemeral buffer.
+                # The tool execution itself writes content to the DAG.
+                ephemeral_messages.append({
+                    "role": "assistant",
+                    "content": content or "",
+                    "tool_calls": [_build_ephemeral_tool_call(tc) for tc in tool_call_list],
+                })
+            else:
+                # Domain or mixed: commit to DAG (current behavior)
+                tc_meta = [
+                    {"id": tc["id"], "name": tc["name"],
+                     "arguments": tc.get("arguments", {}), "type": "function"}
+                    for tc in tool_call_list
+                ]
+                tc_msg = ", ".join(tc["name"] for tc in tool_call_list)
+                tract.assistant(
+                    content or "",
+                    message=f"call {tc_msg}" if not content else None,
+                    metadata={"tool_calls": tc_meta},
+                )
         elif content:
             tract.assistant(content)
 
@@ -424,13 +453,17 @@ def run_loop(
             tc_id = tc.get("id", "")
             tc_args = tc.get("arguments", {})
             result_meta = {"tool_call_id": tc_id, "name": tc_name}
+            use_ephemeral = all_meta and _is_meta_tool(tc_name, tool_handlers)
 
             # Validate tool arguments if validator configured
             if cfg.tool_validator is not None:
                 valid, err_msg = cfg.tool_validator(tc_name, tc_args)
                 if not valid:
                     error_output = f"Tool validation failed: {err_msg or 'invalid arguments'}"
-                    _commit_tool_result(tract, tc_name, error_output, "error", result_meta)
+                    if use_ephemeral:
+                        _append_ephemeral_tool_result(ephemeral_messages, tc_id, error_output)
+                    else:
+                        _commit_tool_result(tract, tc_name, error_output, "error", result_meta)
                     if on_tool_result:
                         on_tool_result(tc_name, error_output, "error")
                     continue
@@ -442,12 +475,13 @@ def run_loop(
                     pending={"tool_name": tc_name, "arguments": tc_args},
                 )
             except BlockedError:
-                _commit_tool_result(
-                    tract, tc_name,
-                    "Tool execution blocked by middleware", "error", result_meta,
-                )
+                blocked_msg = "Tool execution blocked by middleware"
+                if use_ephemeral:
+                    _append_ephemeral_tool_result(ephemeral_messages, tc_id, blocked_msg)
+                else:
+                    _commit_tool_result(tract, tc_name, blocked_msg, "error", result_meta)
                 if on_tool_result:
-                    on_tool_result(tc_name, "Tool execution blocked by middleware", "error")
+                    on_tool_result(tc_name, blocked_msg, "error")
                 continue
 
             # Custom handler takes priority over built-in executor
@@ -480,28 +514,23 @@ def run_loop(
                     )
             else:
                 result = executor.execute(tc_name, tc_args)
-                if result.success:
-                    _commit_tool_result(tract, tc_name, result.output, "success", result_meta)
-                    if on_tool_result:
-                        on_tool_result(tc_name, result.output, "success")
-                    # Post-tool-execute middleware (informational)
-                    tract._run_middleware(
-                        "post_tool_execute",
-                        pending={"tool_name": tc_name, "result": result.output, "success": True},
-                    )
+                output_text = result.output if result.success else result.error
+                if use_ephemeral:
+                    _append_ephemeral_tool_result(ephemeral_messages, tc_id, output_text)
                 else:
-                    _commit_tool_result(tract, tc_name, result.error, "error", result_meta)
-                    if on_tool_result:
-                        on_tool_result(tc_name, result.error, "error")
-                    # Post-tool-execute middleware (informational)
-                    tract._run_middleware(
-                        "post_tool_execute",
-                        pending={
-                            "tool_name": tc_name,
-                            "result": result.error,
-                            "success": False,
-                        },
-                    )
+                    status: Literal["success", "error"] = "success" if result.success else "error"
+                    _commit_tool_result(tract, tc_name, output_text, status, result_meta)
+                if on_tool_result:
+                    on_tool_result(tc_name, output_text, "success" if result.success else "error")
+                # Post-tool-execute middleware (informational)
+                tract._run_middleware(
+                    "post_tool_execute",
+                    pending={
+                        "tool_name": tc_name,
+                        "result": output_text,
+                        "success": result.success,
+                    },
+                )
 
         # Record step metrics after tool execution
         tool_names_this_step = tuple(tc["name"] for tc in tool_call_list) if tool_call_list else ()
@@ -906,6 +935,45 @@ def _stream_to_response(
 
 
 # ---------------------------------------------------------------------------
+# Meta-tool transparency helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_meta_tool(
+    tool_name: str,
+    tool_handlers: dict[str, Callable[..., Any]] | None,
+) -> bool:
+    """Return True if *tool_name* is a tract built-in (not a user-provided handler)."""
+    return not (tool_handlers and tool_name in tool_handlers)
+
+
+def _build_ephemeral_tool_call(tc: dict[str, Any]) -> dict[str, Any]:
+    """Build an OpenAI-format tool_call entry for ephemeral messages."""
+    args = tc.get("arguments", {})
+    return {
+        "id": tc.get("id", ""),
+        "type": "function",
+        "function": {
+            "name": tc["name"],
+            "arguments": json.dumps(args) if not isinstance(args, str) else args,
+        },
+    }
+
+
+def _append_ephemeral_tool_result(
+    ephemeral: list[dict[str, Any]],
+    tc_id: str,
+    output: str,
+) -> None:
+    """Append a tool result to the ephemeral buffer."""
+    ephemeral.append({
+        "role": "tool",
+        "tool_call_id": tc_id,
+        "content": output,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Async loop
 # ---------------------------------------------------------------------------
 
@@ -964,6 +1032,7 @@ async def arun_loop(
     step_usages: list[TokenUsage] = []
     step_metrics_list: list[StepMetrics] = []
     executor = ToolExecutor(tract)
+    ephemeral_messages: list[dict[str, Any]] = []
 
     strategy: CompileStrategy = tract.get_config("compile_strategy") or cfg.strategy
     strategy_k: int = tract.get_config("compile_strategy_k") or cfg.strategy_k
@@ -1013,6 +1082,9 @@ async def arun_loop(
 
         # Build messages
         messages = last_compiled.to_dicts()
+        if ephemeral_messages:
+            messages.extend(ephemeral_messages)
+            ephemeral_messages = []
         if cfg.system_prompt:
             messages.insert(0, {"role": "system", "content": cfg.system_prompt})
 
@@ -1084,19 +1156,33 @@ async def arun_loop(
 
         last_response = content
 
+        # Check if ALL tool calls target tract built-in (meta) tools.
+        all_meta = (
+            cfg.transparent_meta_tools
+            and bool(tool_call_list)
+            and all(_is_meta_tool(tc["name"], tool_handlers) for tc in tool_call_list)
+        )
+
         # Commit assistant response (sync — local)
         if tool_call_list:
-            tc_meta = [
-                {"id": tc["id"], "name": tc["name"],
-                 "arguments": tc.get("arguments", {}), "type": "function"}
-                for tc in tool_call_list
-            ]
-            tc_msg = ", ".join(tc["name"] for tc in tool_call_list)
-            tract.assistant(
-                content or "",
-                message=f"call {tc_msg}" if not content else None,
-                metadata={"tool_calls": tc_meta},
-            )
+            if all_meta:
+                ephemeral_messages.append({
+                    "role": "assistant",
+                    "content": content or "",
+                    "tool_calls": [_build_ephemeral_tool_call(tc) for tc in tool_call_list],
+                })
+            else:
+                tc_meta = [
+                    {"id": tc["id"], "name": tc["name"],
+                     "arguments": tc.get("arguments", {}), "type": "function"}
+                    for tc in tool_call_list
+                ]
+                tc_msg = ", ".join(tc["name"] for tc in tool_call_list)
+                tract.assistant(
+                    content or "",
+                    message=f"call {tc_msg}" if not content else None,
+                    metadata={"tool_calls": tc_meta},
+                )
         elif content:
             tract.assistant(content)
 
@@ -1187,13 +1273,17 @@ async def arun_loop(
             tc_id = tc.get("id", "")
             tc_args = tc.get("arguments", {})
             result_meta = {"tool_call_id": tc_id, "name": tc_name}
+            use_ephemeral = all_meta and _is_meta_tool(tc_name, tool_handlers)
 
             # Validate tool arguments if validator configured
             if cfg.tool_validator is not None:
                 valid, err_msg = cfg.tool_validator(tc_name, tc_args)
                 if not valid:
                     error_output = f"Tool validation failed: {err_msg or 'invalid arguments'}"
-                    _commit_tool_result(tract, tc_name, error_output, "error", result_meta)
+                    if use_ephemeral:
+                        _append_ephemeral_tool_result(ephemeral_messages, tc_id, error_output)
+                    else:
+                        _commit_tool_result(tract, tc_name, error_output, "error", result_meta)
                     if on_tool_result:
                         on_tool_result(tc_name, error_output, "error")
                     continue
@@ -1205,12 +1295,13 @@ async def arun_loop(
                     pending={"tool_name": tc_name, "arguments": tc_args},
                 )
             except BlockedError:
-                _commit_tool_result(
-                    tract, tc_name,
-                    "Tool execution blocked by middleware", "error", result_meta,
-                )
+                blocked_msg = "Tool execution blocked by middleware"
+                if use_ephemeral:
+                    _append_ephemeral_tool_result(ephemeral_messages, tc_id, blocked_msg)
+                else:
+                    _commit_tool_result(tract, tc_name, blocked_msg, "error", result_meta)
                 if on_tool_result:
-                    on_tool_result(tc_name, "Tool execution blocked by middleware", "error")
+                    on_tool_result(tc_name, blocked_msg, "error")
                 continue
 
             if tool_handlers and tc_name in tool_handlers:
@@ -1223,7 +1314,6 @@ async def arun_loop(
                     _commit_tool_result(tract, tc_name, str(output), "success", result_meta)
                     if on_tool_result:
                         on_tool_result(tc_name, str(output), "success")
-                    # Post-tool-execute middleware (informational)
                     tract._run_middleware(
                         "post_tool_execute",
                         pending={"tool_name": tc_name, "result": str(output), "success": True},
@@ -1235,7 +1325,6 @@ async def arun_loop(
                     )
                     if on_tool_result:
                         on_tool_result(tc_name, f"{type(exc).__name__}: {exc}", "error")
-                    # Post-tool-execute middleware (informational)
                     tract._run_middleware(
                         "post_tool_execute",
                         pending={
@@ -1246,28 +1335,22 @@ async def arun_loop(
                     )
             else:
                 result = await asyncio.to_thread(executor.execute, tc_name, tc_args)
-                if result.success:
-                    _commit_tool_result(tract, tc_name, result.output, "success", result_meta)
-                    if on_tool_result:
-                        on_tool_result(tc_name, result.output, "success")
-                    # Post-tool-execute middleware (informational)
-                    tract._run_middleware(
-                        "post_tool_execute",
-                        pending={"tool_name": tc_name, "result": result.output, "success": True},
-                    )
+                output_text = result.output if result.success else result.error
+                if use_ephemeral:
+                    _append_ephemeral_tool_result(ephemeral_messages, tc_id, output_text)
                 else:
-                    _commit_tool_result(tract, tc_name, result.error, "error", result_meta)
-                    if on_tool_result:
-                        on_tool_result(tc_name, result.error, "error")
-                    # Post-tool-execute middleware (informational)
-                    tract._run_middleware(
-                        "post_tool_execute",
-                        pending={
-                            "tool_name": tc_name,
-                            "result": result.error,
-                            "success": False,
-                        },
-                    )
+                    status: Literal["success", "error"] = "success" if result.success else "error"
+                    _commit_tool_result(tract, tc_name, output_text, status, result_meta)
+                if on_tool_result:
+                    on_tool_result(tc_name, output_text, "success" if result.success else "error")
+                tract._run_middleware(
+                    "post_tool_execute",
+                    pending={
+                        "tool_name": tc_name,
+                        "result": output_text,
+                        "success": result.success,
+                    },
+                )
 
         # Record step metrics after tool execution
         tool_names_this_step = tuple(tc["name"] for tc in tool_call_list) if tool_call_list else ()

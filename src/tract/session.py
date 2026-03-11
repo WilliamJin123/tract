@@ -523,7 +523,6 @@ class Session:
             A new Tract instance on the child branch (same DB, same tract_id).
 
         Raises:
-            BranchExistsError: If *branch_name* already exists.
             CurationError: If curation operations fail.
         """
         from datetime import timezone
@@ -543,7 +542,14 @@ class Session:
         from tract.tract import Tract as _Tract
 
         # 1. Create new branch from parent HEAD (without switching)
-        parent.branch(branch_name, switch=False)
+        #    If branch already exists, reuse it (idempotent deploy).
+        from tract.exceptions import BranchExistsError
+
+        branch_existed = False
+        try:
+            parent.branch(branch_name, switch=False)
+        except BranchExistsError:
+            branch_existed = True
 
         # 3. Build a child Tract instance sharing the same tract_id + DB
         #    but with its own HEAD tracking via _BranchScopedRefProxy.
@@ -613,20 +619,22 @@ class Session:
         #    Use "{tract_id}:{branch_name}" as the child_tract_id because
         #    spawn_pointers has a UNIQUE constraint on child_tract_id, and
         #    multiple deploys from the same parent need distinct entries.
-        now = datetime.now(timezone.utc)
-        child_pointer_id = f"{parent.tract_id}:{branch_name}"
-        self._spawn_repo.save(
-            parent_tract_id=parent.tract_id,
-            parent_commit_hash=parent.head,
-            child_tract_id=child_pointer_id,
-            purpose=purpose,
-            inheritance_mode="branch",
-            display_name=branch_name,
-            created_at=now,
-        )
-        # Intentional: directly access private session to commit the spawn
-        # pointer outside any Tract's own session scope.
-        self._spawn_repo._session.commit()
+        #    Skip if branch already existed (pointer was already recorded).
+        if not branch_existed:
+            now = datetime.now(timezone.utc)
+            child_pointer_id = f"{parent.tract_id}:{branch_name}"
+            self._spawn_repo.save(
+                parent_tract_id=parent.tract_id,
+                parent_commit_hash=parent.head,
+                child_tract_id=child_pointer_id,
+                purpose=purpose,
+                inheritance_mode="branch",
+                display_name=branch_name,
+                created_at=now,
+            )
+            # Intentional: directly access private session to commit the spawn
+            # pointer outside any Tract's own session scope.
+            self._spawn_repo._session.commit()
 
         # 6. Track child in session (use branch_name as key to avoid collision
         #    with parent which uses the same tract_id)
