@@ -158,14 +158,40 @@ class TestValidateContent:
         result = validate_content({"content_type": "instruction", "text": "test"})
         assert isinstance(result, InstructionContent)
 
-    def test_invalid_data_raises_content_validation_error(self):
-        with pytest.raises(ContentValidationError):
+    def test_missing_content_type_raises_content_validation_error(self):
+        """Data with no content_type key raises with helpful message."""
+        with pytest.raises(ContentValidationError, match="Missing required field 'content_type'") as exc_info:
+            validate_content({"text": "test", "role": "user"})
+        msg = str(exc_info.value)
+        assert "Provided fields:" in msg
+        assert "Valid content_type values:" in msg
+
+    def test_missing_content_type_lists_custom_types(self):
+        """Missing content_type error includes custom registry types."""
+
+        class CustomType(BaseModel):
+            content_type: str = "custom"
+            data: str
+
+        with pytest.raises(ContentValidationError, match="custom") as exc_info:
+            validate_content({"text": "test"}, custom_registry={"custom": CustomType})
+        msg = str(exc_info.value)
+        assert "custom" in msg
+
+    def test_unknown_content_type_raises_content_validation_error(self):
+        with pytest.raises(ContentValidationError, match="Unknown content_type 'nonexistent_type'") as exc_info:
             validate_content({"content_type": "nonexistent_type", "text": "test"})
+        msg = str(exc_info.value)
+        assert "Valid types:" in msg
 
     def test_invalid_fields_raises_content_validation_error(self):
-        with pytest.raises(ContentValidationError):
+        """Wrong fields produces an actionable error message."""
+        with pytest.raises(ContentValidationError, match="Invalid fields for content_type 'dialogue'") as exc_info:
             # dialogue requires 'role' field
             validate_content({"content_type": "dialogue", "text": "test"})
+        msg = str(exc_info.value)
+        assert "Required fields:" in msg
+        assert "Missing required:" in msg
 
     def test_custom_registry_type(self):
         """Test validate_content with per-repo custom type registry."""

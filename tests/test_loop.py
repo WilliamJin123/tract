@@ -181,6 +181,46 @@ class TestExtractToolCalls:
         assert tcs[0]["name"] == "commit"
         assert tcs[0]["arguments"]["content"]["content_type"] == "dialogue"
 
+    def test_malformed_json_arguments_fallback(self):
+        """Malformed JSON in arguments falls back to {"_raw": ...} instead of crashing."""
+        resp = {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_bad",
+                        "function": {
+                            "name": "search",
+                            "arguments": '{truncated json...',
+                        },
+                    }],
+                }
+            }]
+        }
+        tcs = _extract_tool_calls(resp)
+        assert len(tcs) == 1
+        assert tcs[0]["name"] == "search"
+        assert tcs[0]["arguments"] == {"_raw": "{truncated json..."}
+
+    def test_malformed_json_object_format_fallback(self):
+        """Malformed JSON on OpenAI object path also falls back gracefully."""
+        func = MagicMock()
+        func.name = "commit"
+        func.arguments = "not valid json {"
+        tc = MagicMock()
+        tc.id = "call_2"
+        tc.function = func
+        msg = MagicMock()
+        msg.tool_calls = [tc]
+        choice = MagicMock()
+        choice.message = msg
+        resp = MagicMock()
+        resp.choices = [choice]
+        tcs = _extract_tool_calls(resp)
+        assert len(tcs) == 1
+        assert tcs[0]["arguments"] == {"_raw": "not valid json {"}
+
     def test_flat_dict_format(self):
         """Test with a flat dict containing tool_calls list."""
         resp = {"tool_calls": [{"name": "status", "arguments": {}}]}

@@ -29,6 +29,8 @@ from tract.llm import (
     Resolution,
     ResolverCallable,
 )
+from tract.llm.errors import LLMToolUseError
+from tract.llm.client import _is_retryable
 
 
 # ---------------------------------------------------------------------------
@@ -420,8 +422,8 @@ class TestOpenAIClientRetry:
         assert call_count == 1
         client.close()
 
-    def test_no_retry_on_400(self):
-        """Client raises HTTPStatusError on 400 (bad request, not retryable)."""
+    def test_no_retry_on_400_generic(self):
+        """Client raises HTTPStatusError on generic 400 (bad request, not retryable)."""
         call_count = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -433,6 +435,61 @@ class TestOpenAIClientRetry:
         with pytest.raises(httpx.HTTPStatusError):
             client.chat([{"role": "user", "content": "Test"}])
 
+        assert call_count == 1
+        client.close()
+
+    def test_400_tool_use_failed_raises_tool_use_error(self):
+        """400 with error.code=tool_use_failed raises LLMToolUseError (retryable)."""
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return httpx.Response(400, json={
+                    "error": {
+                        "code": "tool_use_failed",
+                        "message": "Tool call JSON was truncated by max_tokens",
+                    }
+                })
+            return httpx.Response(200, json=_success_response())
+
+        client = _make_client(transport=_make_transport(handler), max_retries=3)
+        response = client.chat([{"role": "user", "content": "Test"}])
+        # Should have retried and succeeded
+        assert call_count == 2
+        assert "choices" in response
+        client.close()
+
+    def test_400_tool_use_failed_no_retry_left(self):
+        """400 with tool_use_failed exhausts retries, raises LLMToolUseError."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(400, json={
+                "error": {
+                    "code": "tool_use_failed",
+                    "message": "Truncated",
+                }
+            })
+
+        client = _make_client(transport=_make_transport(handler), max_retries=1)
+        with pytest.raises(LLMToolUseError, match="Tool call truncated"):
+            client.chat([{"role": "user", "content": "Test"}])
+        client.close()
+
+    def test_400_non_tool_use_error_not_retried(self):
+        """400 without tool_use_failed code is NOT retried (raises HTTPStatusError)."""
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(400, json={
+                "error": {"code": "invalid_request", "message": "Bad params"}
+            })
+
+        client = _make_client(transport=_make_transport(handler), max_retries=3)
+        with pytest.raises(httpx.HTTPStatusError):
+            client.chat([{"role": "user", "content": "Test"}])
         assert call_count == 1
         client.close()
 
@@ -534,6 +591,48 @@ class TestOpenAIClientConfig:
         client = OpenAIClient(api_key="test-key", base_url="http://api/v1/")
         assert client._base_url == "http://api/v1"
         client.close()
+
+
+# ===========================================================================
+# _is_retryable tests
+# ===========================================================================
+
+class TestIsRetryable:
+    """Test the _is_retryable helper used by tenacity retry logic."""
+
+    def test_llm_tool_use_error_is_retryable(self):
+        assert _is_retryable(LLMToolUseError("truncated")) is True
+
+    def test_llm_rate_limit_error_is_retryable(self):
+        assert _is_retryable(LLMRateLimitError("429")) is True
+
+    def test_llm_auth_error_is_not_retryable(self):
+        assert _is_retryable(LLMAuthError("401")) is False
+
+    def test_llm_config_error_is_not_retryable(self):
+        """LLMConfigError is not in the retryable set."""
+        assert _is_retryable(LLMConfigError("missing key")) is False
+
+    def test_connection_error_is_retryable(self):
+        assert _is_retryable(httpx.ConnectError("Connection refused")) is True
+
+    def test_connect_timeout_is_retryable(self):
+        assert _is_retryable(httpx.ConnectTimeout("timed out")) is True
+
+    def test_generic_exception_is_not_retryable(self):
+        assert _is_retryable(ValueError("bad value")) is False
+
+    def test_http_500_is_retryable(self):
+        request = httpx.Request("POST", "http://test")
+        response = httpx.Response(500, request=request)
+        exc = httpx.HTTPStatusError("500", request=request, response=response)
+        assert _is_retryable(exc) is True
+
+    def test_http_400_is_not_retryable(self):
+        request = httpx.Request("POST", "http://test")
+        response = httpx.Response(400, request=request)
+        exc = httpx.HTTPStatusError("400", request=request, response=response)
+        assert _is_retryable(exc) is False
 
 
 # ===========================================================================

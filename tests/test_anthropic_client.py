@@ -21,7 +21,7 @@ from tract.llm.anthropic_client import (
     UsageEvent,
     _to_content_blocks,
 )
-from tract.llm.errors import LLMConfigError
+from tract.llm.errors import LLMAuthError, LLMConfigError, LLMRateLimitError, LLMResponseError
 
 
 # -----------------------------------------------------------------------
@@ -56,6 +56,79 @@ class TestConstruction:
         client = AnthropicClient(api_key="sk-test")
         assert isinstance(client._client, anthropic.Anthropic)
         client.close()
+
+
+# -----------------------------------------------------------------------
+# Error handling (SDK exceptions -> LLM errors)
+# -----------------------------------------------------------------------
+
+
+class TestErrorHandling:
+    """Tests that Anthropic SDK exceptions map to correct LLM errors."""
+
+    def setup_method(self):
+        self.client = AnthropicClient(api_key="sk-test")
+
+    def teardown_method(self):
+        self.client.close()
+
+    def test_authentication_error_maps_to_auth_error(self):
+        """anthropic.AuthenticationError -> LLMAuthError."""
+        import anthropic
+        with patch.object(self.client._client.messages, "create") as mock_create:
+            mock_create.side_effect = anthropic.AuthenticationError(
+                message="Invalid API key",
+                body=None,
+                response=MagicMock(status_code=401),
+            )
+            with pytest.raises(LLMAuthError, match="Authentication failed"):
+                self.client.chat([{"role": "user", "content": "Hi"}])
+
+    def test_permission_denied_maps_to_auth_error(self):
+        """anthropic.PermissionDeniedError (403) -> LLMAuthError."""
+        import anthropic
+        with patch.object(self.client._client.messages, "create") as mock_create:
+            mock_create.side_effect = anthropic.PermissionDeniedError(
+                message="Forbidden",
+                body=None,
+                response=MagicMock(status_code=403),
+            )
+            with pytest.raises(LLMAuthError, match="Permission denied"):
+                self.client.chat([{"role": "user", "content": "Hi"}])
+
+    def test_rate_limit_maps_to_rate_limit_error(self):
+        """anthropic.RateLimitError -> LLMRateLimitError."""
+        import anthropic
+        with patch.object(self.client._client.messages, "create") as mock_create:
+            mock_create.side_effect = anthropic.RateLimitError(
+                message="Rate limited",
+                body=None,
+                response=MagicMock(status_code=429),
+            )
+            with pytest.raises(LLMRateLimitError, match="Rate limited"):
+                self.client.chat([{"role": "user", "content": "Hi"}])
+
+    def test_api_status_error_maps_to_response_error(self):
+        """anthropic.APIStatusError -> LLMResponseError."""
+        import anthropic
+        with patch.object(self.client._client.messages, "create") as mock_create:
+            mock_create.side_effect = anthropic.APIStatusError(
+                message="Server error",
+                body=None,
+                response=MagicMock(status_code=500),
+            )
+            with pytest.raises(LLMResponseError, match="API error"):
+                self.client.chat([{"role": "user", "content": "Hi"}])
+
+    def test_connection_error_maps_to_response_error(self):
+        """anthropic.APIConnectionError -> LLMResponseError."""
+        import anthropic
+        with patch.object(self.client._client.messages, "create") as mock_create:
+            mock_create.side_effect = anthropic.APIConnectionError(
+                request=MagicMock(),
+            )
+            with pytest.raises(LLMResponseError, match="Connection error"):
+                self.client.chat([{"role": "user", "content": "Hi"}])
 
 
 # -----------------------------------------------------------------------

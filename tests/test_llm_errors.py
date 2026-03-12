@@ -18,6 +18,7 @@ from tract.llm.errors import (
     LLMConfigError,
     LLMRateLimitError,
     LLMResponseError,
+    LLMToolUseError,
 )
 
 
@@ -30,14 +31,14 @@ class TestInheritanceHierarchy:
 
     @pytest.mark.parametrize(
         "cls",
-        [LLMClientError, LLMConfigError, LLMRateLimitError, LLMAuthError, LLMResponseError],
+        [LLMClientError, LLMConfigError, LLMRateLimitError, LLMAuthError, LLMResponseError, LLMToolUseError],
     )
     def test_all_are_trace_errors(self, cls):
         assert issubclass(cls, TraceError)
 
     @pytest.mark.parametrize(
         "cls",
-        [LLMConfigError, LLMRateLimitError, LLMAuthError, LLMResponseError],
+        [LLMConfigError, LLMRateLimitError, LLMAuthError, LLMResponseError, LLMToolUseError],
     )
     def test_leaf_classes_are_llm_client_errors(self, cls):
         assert issubclass(cls, LLMClientError)
@@ -48,7 +49,7 @@ class TestInheritanceHierarchy:
 
     def test_mro_does_not_skip_llm_client_error(self):
         """Leaf classes must go through LLMClientError, not directly to TraceError."""
-        for cls in (LLMConfigError, LLMAuthError, LLMResponseError):
+        for cls in (LLMConfigError, LLMAuthError, LLMResponseError, LLMToolUseError):
             mro = cls.__mro__
             assert mro.index(LLMClientError) < mro.index(TraceError)
 
@@ -162,6 +163,28 @@ class TestLLMResponseError:
 
 
 # ---------------------------------------------------------------------------
+# LLMToolUseError
+# ---------------------------------------------------------------------------
+
+class TestLLMToolUseError:
+    def test_raise_with_message(self):
+        with pytest.raises(LLMToolUseError, match="truncated"):
+            raise LLMToolUseError("Tool call truncated")
+
+    def test_catchable_as_llm_client_error(self):
+        with pytest.raises(LLMClientError):
+            raise LLMToolUseError("tool_use_failed")
+
+    def test_catchable_as_trace_error(self):
+        with pytest.raises(TraceError):
+            raise LLMToolUseError("tool_use_failed")
+
+    def test_str(self):
+        err = LLMToolUseError("max_tokens too low")
+        assert str(err) == "max_tokens too low"
+
+
+# ---------------------------------------------------------------------------
 # Cross-cutting: catch-all handler patterns
 # ---------------------------------------------------------------------------
 
@@ -175,6 +198,7 @@ class TestCatchAllPatterns:
             LLMRateLimitError("rl", retry_after=1),
             LLMAuthError("auth"),
             LLMResponseError("resp"),
+            LLMToolUseError("tool"),
         ],
     )
     def test_single_handler_catches_all_leaves(self, exc):
