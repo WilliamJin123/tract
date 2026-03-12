@@ -1,3 +1,5 @@
-the .env file for cookbooks contains CEREBRAS_API_KEY_[1 to 51] and GROQ_API_KEY[1 to 16]. cycle through the keys when faced with rate limits.
+
+Using waves of subagents to reduce context bloat, I want you to run the cookbooks and debug errors. this includes actual progammatic errors with the cookbooks, as well as soft errors (ex. the llm s unable to use a tool properly, or things do not work as intended). Take note of not only the implementation details, but also fix potential design issues / philosophical discrepancies. 
+the .env file for cookbooks contains CEREBRAS_API_KEY_[1 to 51] and GROQ_API_KEY[1 to 16]. cycle through the keys when faced with rate limits by replacing env variables within the files (using subagents). 
 do not read the .env for privacy's sake.
-Using waves of subagents to reduce context bloat, I want you to run the cookbooks and debug errors. this includes actual progammatic errors with the cookbooks, as well as soft errors (ex. the llm s unable to use a tool properly, or things do not work as intended). Take note of not only the implementation details, but also fix potential design issues / philosophical discrepancies. Commit all changes. In this folder .planning/loops, record a summary after each wave. Continue unless told to stop.
+Commit all changes. In this folder .planning/loops, record a summary after each wave. Continue unless told to stop. revert to the original env vars for all cookbooks at the very end when told to stop.
