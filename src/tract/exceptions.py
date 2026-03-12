@@ -1,6 +1,8 @@
 """Trace exception hierarchy.
 
 All Trace-specific exceptions inherit from TraceError.
+Each exception carries a ``hint`` attribute with an actionable suggestion
+for LLM agents encountering the error.
 """
 
 __all__: list[str] = [
@@ -36,6 +38,8 @@ __all__: list[str] = [
 class TraceError(Exception):
     """Base exception for all Trace errors."""
 
+    hint: str = ""
+
 
 class CommitNotFoundError(TraceError):
     """Raised when a commit hash lookup fails."""
@@ -43,6 +47,7 @@ class CommitNotFoundError(TraceError):
     def __init__(self, commit_hash: str) -> None:
         self.commit_hash = commit_hash
         super().__init__(f"Commit not found: {commit_hash}")
+        self.hint = "Use t.log() to see recent commits, or t.find() to search by content/tags."
 
 
 class BlobNotFoundError(TraceError):
@@ -51,6 +56,7 @@ class BlobNotFoundError(TraceError):
     def __init__(self, content_hash: str) -> None:
         self.content_hash = content_hash
         super().__init__(f"Blob not found: {content_hash}")
+        self.hint = "The blob may have been garbage collected. Use t.log() to find valid commits."
 
 
 class ContentValidationError(TraceError):
@@ -59,6 +65,8 @@ class ContentValidationError(TraceError):
     Named ContentValidationError (not ValidationError) to avoid
     collision with pydantic.ValidationError.
     """
+
+    hint: str = "Ensure content dict has a 'content_type' field matching a registered type. Use t.status() to check."
 
 
 class BudgetExceededError(TraceError):
@@ -71,6 +79,7 @@ class BudgetExceededError(TraceError):
             f"Token budget exceeded: {current_tokens} tokens "
             f"(max: {max_tokens})"
         )
+        self.hint = "Use t.compress() to reduce token usage, or t.configure(max_tokens=N) to raise the budget."
 
 
 class EditTargetError(TraceError):
@@ -79,6 +88,8 @@ class EditTargetError(TraceError):
     An edit must target an existing, non-edit commit. Edits targeting
     other edits or nonexistent commits are invalid.
     """
+
+    hint: str = "Edit must target a non-edit commit. Use t.log() to find the original commit hash."
 
 
 class DetachedHeadError(TraceError):
@@ -89,6 +100,7 @@ class DetachedHeadError(TraceError):
             "Cannot commit in detached HEAD state. "
             "Use 'tract checkout main' to return to your branch."
         )
+        self.hint = "Run t.checkout('main') or t.switch('branch_name') to reattach."
 
 
 class AmbiguousPrefixError(TraceError):
@@ -101,6 +113,7 @@ class AmbiguousPrefixError(TraceError):
         super().__init__(
             f"Ambiguous prefix '{prefix}'. Matches: {candidate_str}"
         )
+        self.hint = "Provide more hash characters to disambiguate, or use t.log() to see full hashes."
 
 
 class BranchExistsError(TraceError):
@@ -109,6 +122,7 @@ class BranchExistsError(TraceError):
     def __init__(self, branch_name: str) -> None:
         self.branch_name = branch_name
         super().__init__(f"Branch already exists: {branch_name}")
+        self.hint = "Use t.switch('name') to switch to the existing branch, or pick a different name."
 
 
 class BranchNotFoundError(TraceError):
@@ -117,6 +131,7 @@ class BranchNotFoundError(TraceError):
     def __init__(self, branch_name: str) -> None:
         self.branch_name = branch_name
         super().__init__(f"Branch not found: {branch_name}")
+        self.hint = "Use t.list_branches() to see available branches."
 
 
 class InvalidBranchNameError(TraceError):
@@ -137,6 +152,7 @@ class UnmergedBranchError(TraceError):
             f"Branch '{branch_name}' has unmerged commits. "
             f"Use force=True to delete anyway."
         )
+        self.hint = "Merge first with t.merge(), or use t.delete_branch(name, force=True)."
 
 
 class MergeError(TraceError):
@@ -152,6 +168,7 @@ class MergeConflictError(MergeError):
         if details:
             msg += f": {details}"
         super().__init__(msg)
+        self.hint = "Use t.merge(source, strategy='theirs') or strategy='ours' to auto-resolve conflicts."
 
 
 class NothingToMergeError(MergeError):
@@ -160,34 +177,49 @@ class NothingToMergeError(MergeError):
     def __init__(self, source_branch: str) -> None:
         self.source_branch = source_branch
         super().__init__(f"Branch '{source_branch}' is already up-to-date")
+        self.hint = "Branch is already up-to-date. No action needed."
 
 
 class RebaseError(TraceError):
     """Base exception for rebase errors."""
 
+    hint: str = "Check that the target branch exists and has diverged. Use t.list_branches() to verify."
+
 
 class ImportCommitError(TraceError):
     """Base exception for import-commit errors."""
+
+    hint: str = "Verify the commit hash and source repository. Use t.log() on the source."
 
 
 class SemanticSafetyError(TraceError):
     """Raised when a semantic safety check blocks and no resolver is available."""
 
+    hint: str = "Review the content for safety issues, or configure a resolver to handle them."
+
 
 class CompressionError(TraceError):
     """Raised when compression fails."""
+
+    hint: str = "Ensure an LLM client is configured via t.configure_llm(). Check that context is non-empty."
 
 
 class GCError(TraceError):
     """Raised when garbage collection fails."""
 
+    hint: str = "GC may fail if there are active references. Try again after completing pending operations."
+
 
 class SpawnError(TraceError):
     """Raised when spawn or collapse operations fail."""
 
+    hint: str = "Check parent/child relationship. Use t.children() or t.parent() to inspect."
+
 
 class SessionError(TraceError):
     """Raised when session operations fail."""
+
+    hint: str = "Verify session state with t.status(). Sessions require proper initialization."
 
 
 class RetryExhaustedError(TraceError):
@@ -202,6 +234,7 @@ class RetryExhaustedError(TraceError):
         super().__init__(
             f"All {attempts} retry attempts failed. Last diagnosis: {last_diagnosis}"
         )
+        self.hint = "Check LLM client configuration and API availability."
 
 
 class TagNotRegisteredError(TraceError):
@@ -230,6 +263,8 @@ class TagNotRegisteredError(TraceError):
 class CurationError(TraceError):
     """Raised when a curation operation fails during deploy()."""
 
+    hint: str = "Review curation rules. Use t.log() to inspect commits targeted for curation."
+
 
 class BlockedError(TraceError):
     """An operation was blocked by config enforcement or middleware.
@@ -244,3 +279,4 @@ class BlockedError(TraceError):
         self.reasons = reasons if isinstance(reasons, list) else [reasons]
         reason_str = "; ".join(self.reasons) if self.reasons else "Blocked"
         super().__init__(f"{event} blocked: {reason_str}")
+        self.hint = "Check middleware configuration. Use t.list_middleware() or review t.status() for active blocks."

@@ -8,6 +8,7 @@ invokes its handler with the provided arguments, and returns a structured
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from tract.toolkit.models import ToolResult
@@ -51,6 +52,16 @@ class ToolExecutor:
                 self._tools[tool.name] = tool
             return
 
+        # Handle discovery profile specially: 3 meta-tools
+        if self._profile is not None and self._profile.name == "discovery":
+            from tract.toolkit.discovery import get_discovery_tools
+
+            discovery_tools = get_discovery_tools(self._tract)
+            self._tools.clear()
+            for tool in discovery_tools:
+                self._tools[tool.name] = tool
+            return
+
         from tract.toolkit.definitions import get_all_tools
 
         all_tools = get_all_tools(self._tract)
@@ -87,24 +98,34 @@ class ToolExecutor:
         """
         tool = self._tools.get(tool_name)
         if tool is None:
+            available = ", ".join(sorted(self._tools.keys()))
             return ToolResult(
                 tool_name=tool_name,
                 success=False,
                 error=f"Unknown tool: {tool_name}",
+                hint=f"Available tools: {available}",
             )
+
+        start = time.perf_counter()
         try:
             result = tool.handler(**arguments)
+            duration_ms = (time.perf_counter() - start) * 1000
             return ToolResult(
                 tool_name=tool_name,
                 success=True,
                 output=str(result),
+                duration_ms=duration_ms,
             )
         except Exception as exc:
+            duration_ms = (time.perf_counter() - start) * 1000
             logger.debug("Tool %s failed: %s", tool_name, exc, exc_info=True)
+            hint = getattr(exc, "hint", "") or ""
             return ToolResult(
                 tool_name=tool_name,
                 success=False,
                 error=f"{type(exc).__name__}: {exc}",
+                hint=hint,
+                duration_ms=duration_ms,
             )
 
     def available_tools(self) -> list[str]:

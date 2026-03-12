@@ -172,7 +172,11 @@ def _build_domain_tool(
             logger.debug(
                 "compact %s.%s failed: %s", domain, action, exc, exc_info=True,
             )
-            return f"Error: {type(exc).__name__}: {exc}"
+            hint = getattr(exc, "hint", "")
+            error_msg = f"Error: {type(exc).__name__}: {exc}"
+            if hint:
+                error_msg += f"\n[hint] {hint}"
+            return error_msg
 
     return ToolDefinition(
         name=f"tract_{domain}",

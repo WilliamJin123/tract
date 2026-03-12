@@ -1,10 +1,11 @@
 """Built-in tool profiles with curated subsets and scenario-appropriate descriptions.
 
-Four profiles:
+Five profiles:
 - ``SELF_PROFILE``: Tools for an agent managing its OWN context.
 - ``SUPERVISOR_PROFILE``: Tools for managing ANOTHER agent's context.
 - ``FULL_PROFILE``: All tools with default descriptions.
 - ``COMPACT_PROFILE``: Domain-grouped tools for reduced token overhead (see compact.py).
+- ``DISCOVERY_PROFILE``: 3 meta-tools for progressive capability discovery (see discovery.py).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Profile name type
 # ---------------------------------------------------------------------------
-ProfileName = Literal["self", "supervisor", "full", "compact"]
+ProfileName = Literal["self", "supervisor", "full", "compact", "discovery"]
 
 # ---------------------------------------------------------------------------
 # All tool names — derived from the ToolName Literal (single source of truth)
@@ -343,6 +344,16 @@ COMPACT_PROFILE = ToolProfile(
     tool_configs={},  # Empty -- compact uses its own tool generation
 )
 
+# ---------------------------------------------------------------------------
+# DISCOVERY profile: 3 meta-tools for progressive capability discovery
+# ---------------------------------------------------------------------------
+# Like compact, discovery generates its own tools instead of filtering the
+# standard tool list. See discovery.py.
+DISCOVERY_PROFILE = ToolProfile(
+    name="discovery",
+    tool_configs={},  # Empty -- discovery uses its own tool generation
+)
+
 
 # ---------------------------------------------------------------------------
 # Profile lookup
@@ -352,6 +363,7 @@ _PROFILES: dict[str, ToolProfile] = {
     "supervisor": SUPERVISOR_PROFILE,
     "full": FULL_PROFILE,
     "compact": COMPACT_PROFILE,
+    "discovery": DISCOVERY_PROFILE,
 }
 
 

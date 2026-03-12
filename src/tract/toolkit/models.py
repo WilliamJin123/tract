@@ -154,15 +154,24 @@ class ToolResult:
         success: Whether execution succeeded.
         output: String output on success.
         error: Error message on failure.
+        hint: Actionable suggestion (from exception or discovery).
+        duration_ms: Execution time in milliseconds.
+        truncated: Whether output was truncated by presentation layer.
     """
 
     tool_name: str
     success: bool
     output: str = ""
     error: str = ""
+    hint: str = ""
+    duration_ms: float = 0
+    truncated: bool = False
 
     def __str__(self) -> str:
         """Return LLM-friendly string: output on success, error on failure."""
         if self.success:
             return self.output
-        return f"Error: {self.error}" if self.error else "Error: unknown"
+        msg = f"[error] {self.tool_name}: {self.error}" if self.error else f"[error] {self.tool_name}: unknown error"
+        if self.hint:
+            msg += f"\n[hint] {self.hint}"
+        return msg

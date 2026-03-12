@@ -121,6 +121,8 @@ try:
     from tract.toolkit.models import ToolDefinition, ToolName, ToolProfile, ToolConfig, ToolResult
     from tract.toolkit.profiles import ProfileName
     from tract.toolkit.executor import ToolExecutor
+    from tract.toolkit.presentation import ToolPresenter, PresentationConfig
+    from tract.toolkit.discovery import get_discovery_tools
 except ImportError:
     pass
 
@@ -316,6 +318,9 @@ __all__ = [
     "ToolConfig",
     "ToolResult",
     "ToolExecutor",
+    "ToolPresenter",
+    "PresentationConfig",
+    "get_discovery_tools",
     # Default loop
     "LoopConfig",
     "LoopResult",

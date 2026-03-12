@@ -129,6 +129,11 @@ class LoopConfig:
     ephemeral buffer (visible to the LLM for one turn) instead of committed
     to the DAG.  This keeps compiled context clean — only the *content*
     produced by tools (e.g. the blob from ``commit()``) persists."""
+    presentation: Any = True
+    """Layer 2 presentation for tool results sent to the LLM.
+    True (default): enabled with default config.
+    False/None: disabled (raw output sent to LLM).
+    PresentationConfig instance: enabled with custom config."""
 
 
 def run_loop(
@@ -205,6 +210,16 @@ def run_loop(
     step_metrics_list: list[StepMetrics] = []
     executor = ToolExecutor(tract)
     ephemeral_messages: list[dict[str, Any]] = []
+
+    # Build Layer 2 presenter if presentation is enabled
+    presenter = None
+    if cfg.presentation is not None and cfg.presentation is not False:
+        from tract.toolkit.presentation import ToolPresenter, PresentationConfig
+
+        if isinstance(cfg.presentation, PresentationConfig):
+            presenter = ToolPresenter(tract, cfg.presentation)
+        else:
+            presenter = ToolPresenter(tract)
 
     # Resolve config once (unlikely to change mid-loop)
     strategy: CompileStrategy = tract.get_config("compile_strategy") or cfg.strategy
@@ -515,6 +530,8 @@ def run_loop(
             else:
                 result = executor.execute(tc_name, tc_args)
                 output_text = result.output if result.success else result.error
+                if presenter:
+                    output_text = presenter.present_result(result)
                 if use_ephemeral:
                     _append_ephemeral_tool_result(ephemeral_messages, tc_id, output_text)
                 else:
@@ -1041,6 +1058,16 @@ async def arun_loop(
     executor = ToolExecutor(tract)
     ephemeral_messages: list[dict[str, Any]] = []
 
+    # Build Layer 2 presenter if presentation is enabled
+    presenter = None
+    if cfg.presentation is not None and cfg.presentation is not False:
+        from tract.toolkit.presentation import ToolPresenter, PresentationConfig
+
+        if isinstance(cfg.presentation, PresentationConfig):
+            presenter = ToolPresenter(tract, cfg.presentation)
+        else:
+            presenter = ToolPresenter(tract)
+
     strategy: CompileStrategy = tract.get_config("compile_strategy") or cfg.strategy
     strategy_k: int = tract.get_config("compile_strategy_k") or cfg.strategy_k
 
@@ -1343,6 +1370,8 @@ async def arun_loop(
             else:
                 result = await asyncio.to_thread(executor.execute, tc_name, tc_args)
                 output_text = result.output if result.success else result.error
+                if presenter:
+                    output_text = presenter.present_result(result)
                 if use_ephemeral:
                     _append_ephemeral_tool_result(ephemeral_messages, tc_id, output_text)
                 else:
