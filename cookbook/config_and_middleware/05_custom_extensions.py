@@ -54,23 +54,21 @@ def main():
         user_count = {"n": 0, "total_chars": 0}
 
         def count_user_messages(ctx):
-            """Post-commit: count user dialogue messages."""
-            if ctx.commit is None:
-                return
-            if ctx.commit.content_type == "dialogue":
-                # Check if it's a user message by reading the blob
-                import json
-                blob = ctx.tract._blob_repo.get(ctx.commit.content_hash)
-                if blob:
-                    try:
-                        payload = json.loads(blob.payload_json)
-                        if payload.get("role") == "user":
-                            user_count["n"] += 1
-                            user_count["total_chars"] += len(payload.get("text", ""))
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+            """Pre-commit: count user dialogue messages.
 
-        counter_id = t.use("post_commit", count_user_messages)
+            The pre_commit ctx.pending holds the content model (e.g.
+            DialogueContent) before it is persisted, so we can inspect
+            .role and .text without touching private storage APIs.
+            """
+            pending = ctx.pending
+            if pending is None:
+                return
+            if getattr(pending, "content_type", None) == "dialogue":
+                if getattr(pending, "role", None) == "user":
+                    user_count["n"] += 1
+                    user_count["total_chars"] += len(getattr(pending, "text", ""))
+
+        counter_id = t.use("pre_commit", count_user_messages)
         print(f"  Registered user counter: {counter_id}")
 
         # --- Build conversation ---

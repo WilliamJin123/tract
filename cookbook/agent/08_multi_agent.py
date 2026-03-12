@@ -75,8 +75,7 @@ def main():
 
     # Configure LLM
     from dataclasses import replace
-    from tract.llm.client import OpenAIClient
-    from tract.models.config import LLMConfig
+    from tract import OpenAIClient, LLMConfig
 
     parent_client = OpenAIClient(
         api_key=llm.api_key,

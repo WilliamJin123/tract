@@ -5,9 +5,10 @@ compress, merge, gc, or transition. They let you configure automatic
 reactions -- logging, validation, rate limiting -- without manual
 intervention.
 
-Valid middleware events:
+Valid middleware events (12 total):
   pre_commit, post_commit, pre_compile, pre_compress,
-  pre_merge, pre_gc, pre_transition, post_transition
+  pre_merge, pre_gc, pre_transition, post_transition,
+  pre_generate, post_generate, pre_tool_execute, post_tool_execute
 
 Pre-event handlers can raise BlockedError to prevent the operation.
 Post-event handlers run after the operation completes.
@@ -54,15 +55,20 @@ def main():
         print("\n=== Pre-Commit Validation ===\n")
 
         def block_secrets(ctx):
-            """Block commits that look like they contain secrets."""
-            if ctx.commit is None:
+            """Block commits that look like they contain secrets.
+
+            For pre_commit events, ctx.pending holds the content model
+            being committed (e.g. DialogueContent) while ctx.commit is None.
+            """
+            if ctx.pending is None:
                 return
-            text = (ctx.commit.message or "").lower()
+            text = getattr(ctx.pending, "text", "") or ""
+            text = text.lower()
             for pattern in ["api_key=", "secret=", "password="]:
                 if pattern in text:
                     raise BlockedError(
                         "pre_commit",
-                        [f"Potential secret detected: '{pattern}' in message"],
+                        [f"Potential secret detected: '{pattern}' in content"],
                     )
 
         secrets_id = t.use("pre_commit", block_secrets)
@@ -77,14 +83,18 @@ def main():
         print("\n=== Pre-Commit Token Limit ===\n")
 
         def limit_message_length(ctx):
-            """Block commits with messages longer than 500 characters."""
-            if ctx.commit is None:
+            """Block commits with content longer than 500 characters.
+
+            For pre_commit events, ctx.pending holds the content model
+            being committed while ctx.commit is None.
+            """
+            if ctx.pending is None:
                 return
-            msg = ctx.commit.message or ""
-            if len(msg) > 500:
+            text = getattr(ctx.pending, "text", "") or ""
+            if len(text) > 500:
                 raise BlockedError(
                     "pre_commit",
-                    [f"Message too long: {len(msg)} chars (limit 500)"],
+                    [f"Content too long: {len(text)} chars (limit 500)"],
                 )
 
         limit_id = t.use("pre_commit", limit_message_length)
@@ -137,7 +147,9 @@ def main():
         print("\n=== Summary ===\n")
         print("  Middleware events:  pre_commit, post_commit, pre_compile,")
         print("                     pre_compress, pre_merge, pre_gc,")
-        print("                     pre_transition, post_transition")
+        print("                     pre_transition, post_transition,")
+        print("                     pre_generate, post_generate,")
+        print("                     pre_tool_execute, post_tool_execute")
         print("  Block pattern:     raise BlockedError(event, [reasons])")
         print("  Remove pattern:    t.remove_middleware(handler_id)")
 

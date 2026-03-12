@@ -31,14 +31,14 @@ def main():
     # =================================================================
     # 2. LEVEL 3 — Per-operation config
     # =================================================================
-    # Override settings per operation type (chat, compress, merge, orchestrate).
+    # Override settings per operation type (chat, compress, merge, message).
 
     t = Tract.open(default_config=tract_default)
 
     t.configure_operations(
         chat=LLMConfig(temperature=0.8),             # creative chat
         compress=LLMConfig(temperature=0.1, seed=42), # deterministic compression
-        # merge and orchestrate inherit tract_default
+        # merge and message inherit tract_default
     )
 
     # Inspect current operation configs:

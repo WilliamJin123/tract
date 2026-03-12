@@ -38,9 +38,7 @@ from pathlib import Path
 # Windows console encoding fix
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from tract import Session, TractConfig, TokenBudgetConfig
-from tract.llm.client import OpenAIClient
-from tract.models.config import LLMConfig
+from tract import Session, TractConfig, TokenBudgetConfig, OpenAIClient, LLMConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _providers import groq as llm

@@ -4,7 +4,7 @@ Demonstrates how WorkflowProfile bundles (config + directives + stage gates)
 automate the transition through multi-phase workflows.
 
 Patterns shown:
-  1. Profile discovery      -- list_profiles(), get_profile() introspection
+  1. Profile discovery      -- list_workflow_profiles(), get_workflow_profile() introspection
   2. Profile loading        -- load_profile() applies config + directives
   3. Stage transitions      -- apply_stage() changes config per phase
   4. Directive templates    -- profile templates inject parameterized guidance
@@ -16,8 +16,7 @@ Demonstrates: t.load_profile(), t.apply_stage(), t.get_config(),
 No LLM required.
 """
 
-from tract import Tract, BlockedError
-from tract.profiles import get_profile, list_profiles
+from tract import Tract, BlockedError, get_workflow_profile, list_workflow_profiles
 
 
 def profile_discovery():
@@ -28,7 +27,7 @@ def profile_discovery():
     print("=" * 60)
     print()
 
-    profiles = list_profiles()
+    profiles = list_workflow_profiles()
     print(f"  Built-in profiles: {len(profiles)}")
     print()
 
@@ -49,7 +48,7 @@ def profile_discovery():
     assert "ecommerce" in names
 
     # Inspect one profile in detail
-    coding = get_profile("coding")
+    coding = get_workflow_profile("coding")
     assert "design" in coding.stages
     assert "implement" in coding.stages
     assert coding.config["temperature"] == 0.3
@@ -82,7 +81,7 @@ def profile_loading_and_stages():
         assert base_strategy == "messages"
 
         # Walk through each stage and show config changes
-        coding = get_profile("coding")
+        coding = get_workflow_profile("coding")
         stages_visited = []
 
         for stage_name, expected_config in coding.stages.items():
@@ -179,7 +178,7 @@ def stage_gating_with_middleware():
         gate_state = {"current_index": 0}
 
         # Map each stage to its unique temperature for identification
-        coding = get_profile("coding")
+        coding = get_workflow_profile("coding")
         temp_to_stage = {}
         for sname, sconfig in coding.stages.items():
             temp_to_stage[sconfig["temperature"]] = sname
@@ -254,7 +253,7 @@ def research_profile_walkthrough():
         print(f"  Profile: {t.active_profile.name}")
         print(f"  Base temp: {t.get_config('temperature')}")
 
-        research = get_profile("research")
+        research = get_workflow_profile("research")
         stage_data = {}
 
         for stage_name in research.stages:
@@ -317,7 +316,7 @@ def main():
     print()
     print("  Pattern                      Tract API Used")
     print("  ---------------------------  -----------------------------------")
-    print("  Profile discovery            list_profiles(), get_profile()")
+    print("  Profile discovery            list_workflow_profiles(), get_workflow_profile()")
     print("  Profile loading              t.load_profile(), t.active_profile")
     print("  Stage transitions            t.apply_stage(), t.get_config()")
     print("  Directive injection          t.directive() via profile.directives")

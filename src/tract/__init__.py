@@ -162,7 +162,11 @@ from tract.exceptions import (
     TagNotRegisteredError,
     CurationError,
     BlockedError,
+    RetryExhaustedError,
 )
+
+# Formatting utilities
+from tract.formatting import StreamPrinter
 
 __all__ = [
     "__version__",
@@ -268,6 +272,9 @@ __all__ = [
     "TagNotRegisteredError",
     "CurationError",
     "BlockedError",
+    "RetryExhaustedError",
+    # Formatting utilities
+    "StreamPrinter",
     # Tool tracking
     "hash_tool_schema",
     # Compression models

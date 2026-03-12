@@ -202,7 +202,9 @@ def main():
 
         print("\n=== Stage 2: Test Writing (TDD) ===\n")
 
-        # Transition to test_writing (creates branch + configures)
+        # The agent transitions to test_writing at the end of planning via
+        # the transition tool (which fires pre_transition middleware).
+        # Here we just set the temperature for the test-writing stage.
         t.configure(stage="test_writing", temperature=0.3)
 
         result = t.run(
@@ -237,6 +239,9 @@ def main():
 
         print("\n=== Stage 3: Implementation (attempt/1) ===\n")
 
+        # The agent transitions to implementation at the end of test_writing
+        # via the transition tool (gate requires test commits to exist).
+        # Here we just set the temperature for the implementation stage.
         t.configure(stage="implementation", temperature=0.3)
 
         # Create isolated branch for first attempt
@@ -269,6 +274,7 @@ def main():
 
         print("\n=== Stage 4: Verification (attempt/1) ===\n")
 
+        # Verification is harness-driven (no gate on this stage).
         t.configure(stage="verification", temperature=0.1)
 
         result = t.run(
@@ -424,7 +430,15 @@ def main():
             print(f"  Compressed iteration context: {pre_review_tokens} -> "
                   f"{post_review_tokens} tokens")
 
-        # Attempt to transition to review (gate checks for passing tests)
+        # Transition to review -- gate checks for passing tests.
+        # This is the one harness-driven transition: the agent does NOT have
+        # the transition tool during review, so we call t.transition() here
+        # to fire the pre_transition gate.
+        try:
+            t.transition("review")
+        except BlockedError as e:
+            print(f"  Review gate blocked: {e}")
+
         t.configure(stage="review", temperature=0.1)
 
         try:
@@ -443,7 +457,7 @@ def main():
                 on_tool_result=log.on_tool_result,
             )
         except BlockedError as e:
-            print(f"  Review gate blocked: {e}")
+            print(f"  Review run blocked: {e}")
 
         # =============================================================
         # 9. FINAL STATE -- Show why tract is superior

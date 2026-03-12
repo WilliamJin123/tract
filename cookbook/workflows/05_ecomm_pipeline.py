@@ -7,12 +7,15 @@ lean between stages.
 
 Stages:
   product_research   -- high temperature (0.8), gather product intel
-  landing_pages      -- creative temperature (0.9), branch per variant
-  ad_copy            -- moderate temperature (0.7), tagged ad segments
-  metrics_analysis   -- low temperature (0.2), evaluate variants
-  optimization       -- low temperature (0.3), select winner, iterate
+  landing_pages      -- branch per variant
+  ad_copy            -- tagged ad segments
+  metrics_analysis   -- evaluate variants
+  optimization       -- select winner, iterate
 
-Demonstrates: branching for A/B variants, t.configure() per stage,
+The initial stage is configured with temperature=0.8; subsequent stages
+inherit this setting as the agent drives transitions via t.transition().
+
+Demonstrates: branching for A/B variants, t.configure() for initial setup,
               t.directive() for stage instructions, t.tag() for segments,
               t.commit() with metadata for metrics, t.transition() with
               handoff summaries, t.compress() between stages, middleware
