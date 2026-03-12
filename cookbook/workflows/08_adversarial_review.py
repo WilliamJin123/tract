@@ -188,9 +188,16 @@ def main():
         t.switch("defense")
         t.configure(stage="defend", temperature=0.3)
 
-        # Compare critique branch against main to get the diff
-        diff = t.compare("main", "critique")
-        diff_text = diff.to_json(indent=2) if hasattr(diff, "to_json") else str(diff)
+        # Compile the critique branch to get the full conversation text.
+        # (compare().to_json() only has structural metadata — no message content.)
+        t.switch("critique")
+        critique_ctx = t.compile()
+        critique_messages = "\n\n".join(
+            f"[{m.get('role', '?')}]: {m.get('content', '')}"
+            for m in critique_ctx.to_dicts()
+            if m.get("role") != "system"
+        )
+        t.switch("defense")
 
         t.system(
             "You are an independent technical reviewer. You have the original "
@@ -205,7 +212,7 @@ def main():
         )
 
         t.user(
-            f"Here are the adversarial critiques to evaluate:\n\n{diff_text}",
+            f"Here are the adversarial critiques to evaluate:\n\n{critique_messages}",
             message="defense: critique findings for review",
         )
 

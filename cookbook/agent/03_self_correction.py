@@ -6,8 +6,8 @@ discover get_commit + edit to revise its own output in place?
 
 Tools available: commit (with edit), get_commit, diff, log
 
-Demonstrates: Does the model figure out the inspect-then-edit-in-place
-              pattern on its own?
+Demonstrates: Can the model use inspect-then-edit-in-place to revise
+              its own output when guided toward the pattern?
 """
 
 import io
@@ -59,7 +59,11 @@ def main():
         tool_profile=PROFILE,
     ) as t:
         t.system(
-            "You are a technical writer. Produce clear, thorough explanations."
+            "You are a technical writer. Produce clear, thorough explanations.\n"
+            "You have tools to manage your content: commit (with edit operation), "
+            "get_commit, diff, and log. When revising earlier work, use "
+            "get_commit to inspect the original, then commit with operation='edit' "
+            "and edit_target=<hash> to update it in place."
         )
 
         # Get a deliberately brief initial answer
@@ -72,7 +76,8 @@ def main():
         log = StepLogger()
         result = t.run(
             "Too brief. Expand to cover lexing, parsing, optimization, "
-            "and codegen. Replace the original, don't just append.",
+            "and codegen. Use get_commit to find the original, then use commit "
+            "with operation='edit' and edit_target to replace it in place.",
             max_steps=8, max_tokens=1024,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )

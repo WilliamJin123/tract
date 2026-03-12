@@ -149,10 +149,12 @@ def _extract_tool_calls(response: Any) -> list[dict]:
     return []
 
 
-def _format_args(args: dict, max_len: int = 80) -> str:
+def _format_args(args: dict | str, max_len: int = 80) -> str:
     """Format tool call arguments concisely."""
     if not args:
         return ""
+    if isinstance(args, str):
+        return args[:max_len] + ("..." if len(args) > max_len else "")
     parts = []
     for k, v in list(args.items())[:4]:
         v_str = json.dumps(v) if not isinstance(v, str) else repr(v)

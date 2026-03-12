@@ -859,6 +859,10 @@ def _handle_commit(
     if not edit_target:
         edit_target = None
 
+    # Resolve short hash prefixes to full hashes (LLMs use 8-char prefixes)
+    if edit_target:
+        edit_target = tract.resolve_commit(edit_target)
+
     # Auto-register unknown tags so commit never fails on unregistered tags
     if tags:
         for tag_name in tags:

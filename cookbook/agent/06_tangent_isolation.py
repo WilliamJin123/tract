@@ -7,8 +7,8 @@ tools but no "tangent protocol."
 
 Tools available: branch, switch, merge, compress, commit, status
 
-Demonstrates: Does the model isolate an obviously off-topic interruption
-              on a branch to protect the main conversation context?
+Demonstrates: Can the model isolate an off-topic interruption on a branch
+              to protect the main conversation context under budget pressure?
 """
 
 import io
@@ -66,7 +66,11 @@ def main():
         # System: role only
         t.system(
             "You are a senior API architect helping design a REST API "
-            "for a task management app."
+            "for a task management app.\n"
+            "IMPORTANT: You have a tight 2500-token context budget. Use your "
+            "branch and switch tools to isolate off-topic conversations so they "
+            "don't pollute the main API design thread. Always return to main "
+            "after handling tangents."
         )
 
         log = StepLogger()

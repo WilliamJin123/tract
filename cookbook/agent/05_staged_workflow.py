@@ -6,8 +6,8 @@ must discover the stage infrastructure, then navigate through it autonomously.
 
 Tools available: get_config, transition, commit, switch, list_branches
 
-Demonstrates: Can the model discover pre-built stages and navigate them
-              to complete a multi-phase task in a single run?
+Demonstrates: Can the model navigate pre-built stages to complete a
+              multi-phase task in a single run with concise deliverables?
 """
 
 import io
@@ -62,7 +62,10 @@ def main():
         # Developer pre-creates the stage infrastructure
         t.system(
             "You are a software architect. Complete the task by working "
-            "through each stage of the workflow."
+            "through each stage of the workflow.\n"
+            "IMPORTANT: You MUST complete ALL three stages (design, "
+            "implementation, validation). Keep each stage's output concise "
+            "(2-3 key points) and transition promptly. Budget your steps."
         )
 
         for stage, temp in [("design", 0.9), ("implementation", 0.3), ("validation", 0.5)]:

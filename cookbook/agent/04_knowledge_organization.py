@@ -7,8 +7,8 @@ cross-cutting retrieval. Tagging provides structured access.
 Tools available: register_tag, tag, untag, get_tags, list_tags,
                  query_by_tags, log, get_commit
 
-Demonstrates: Does the model build a taxonomy (tags) to handle large-scale
-              retrieval, rather than scanning manually?
+Demonstrates: Can the model build a taxonomy (tags) to organize large-scale
+              content and use structured retrieval for cross-cutting queries?
 """
 
 import io
@@ -99,7 +99,13 @@ def main():
         auto_message=llm.small,
         tool_profile=PROFILE,
     ) as t:
-        t.system("You are a knowledgeable research assistant.")
+        t.system(
+            "You are a knowledgeable research assistant with tagging tools.\n"
+            "When asked to organize content, ACT IMMEDIATELY using your tools: "
+            "register_tag to create categories, then tag to apply them to commits. "
+            "Use log to find commits by hash, then tag each one. Do not ask for "
+            "confirmation — just do it."
+        )
 
         # Build the large multi-topic conversation
         for q, a in CONVERSATION:
@@ -115,7 +121,9 @@ def main():
         print("\n  --- Task 1: Organize by discipline ---")
         result = t.run(
             "Organize everything by discipline — biology, physics, "
-            "chemistry, and CS. I'll be querying this repeatedly.",
+            "chemistry, and CS. Register a tag for each discipline, use log "
+            "to find each commit's hash, then tag each commit with its discipline. "
+            "I'll be querying this repeatedly.",
             max_steps=15, max_tokens=1024,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )
