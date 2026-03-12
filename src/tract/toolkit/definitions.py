@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tract.middleware import VALID_EVENTS
 from tract.toolkit.models import ToolDefinition
@@ -796,9 +796,26 @@ def get_all_tools(tract: Tract) -> list[ToolDefinition]:
 # return values to human-readable strings.
 
 
+def _parse_str_to_obj(value: str) -> Any:
+    """Try json.loads, then ast.literal_eval, to parse LLM-produced strings."""
+    import ast
+
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    try:
+        result = ast.literal_eval(value)
+        if isinstance(result, (dict, list)):
+            return result
+    except (ValueError, SyntaxError):
+        pass
+    return None  # could not parse
+
+
 def _handle_commit(
     tract: Tract,
-    content: dict,
+    content: dict | str,
     operation: str,
     message: str | None,
     edit_target: str | None,
@@ -807,6 +824,40 @@ def _handle_commit(
     tags: list[str] | None = None,
 ) -> str:
     from tract.models.commit import CommitOperation
+
+    # LLMs sometimes pass content as a JSON string instead of a dict — parse it.
+    # Small models (e.g. llama-3.1-8b) may use Python repr (single quotes) instead
+    # of valid JSON, so we also try ast.literal_eval.
+    if isinstance(content, str):
+        parsed = _parse_str_to_obj(content)
+        if isinstance(parsed, dict):
+            content = parsed
+        else:
+            # Treat plain text as a dialogue assistant message
+            content = {"content_type": "dialogue", "role": "assistant", "text": content}
+
+    # LLMs may also pass metadata/generation_config/tags as stringified JSON/repr
+    if isinstance(metadata, str):
+        parsed = _parse_str_to_obj(metadata)
+        metadata = parsed if isinstance(parsed, dict) else None
+
+    if isinstance(generation_config, str):
+        parsed = _parse_str_to_obj(generation_config)
+        generation_config = parsed if isinstance(parsed, dict) else None
+
+    if isinstance(tags, str):
+        parsed = _parse_str_to_obj(tags)
+        if isinstance(parsed, list):
+            tags = [str(t) for t in parsed]
+        else:
+            # Single tag name as a string
+            tags = [tags] if tags.strip() else None
+
+    # Normalize empty strings to None for optional fields
+    if not message:
+        message = None
+    if not edit_target:
+        edit_target = None
 
     # Auto-register unknown tags so commit never fails on unregistered tags
     if tags:

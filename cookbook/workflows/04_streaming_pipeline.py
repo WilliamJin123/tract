@@ -45,10 +45,10 @@ def main():
             if ctx.target != "synthesize":
                 return
             commits = len(ctx.tract.log())
-            if commits < 4:
+            if commits < 3:
                 raise BlockedError(
                     "pre_transition",
-                    [f"Need >= 4 commits for synthesis (have {commits})"],
+                    [f"Need >= 3 commits for synthesis (have {commits})"],
                 )
 
         t.use("pre_transition", synthesis_gate)

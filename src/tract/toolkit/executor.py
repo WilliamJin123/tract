@@ -7,6 +7,7 @@ invokes its handler with the provided arguments, and returns a structured
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -105,6 +106,13 @@ class ToolExecutor:
                 error=f"Unknown tool: {tool_name}",
                 hint=f"Available tools: {available}",
             )
+
+        # Strip hallucinated kwargs that the handler doesn't accept.
+        # Small LLMs often invent extra parameters not in the tool schema.
+        sig = inspect.signature(tool.handler)
+        if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+            valid_params = set(sig.parameters.keys())
+            arguments = {k: v for k, v in arguments.items() if k in valid_params}
 
         start = time.perf_counter()
         try:

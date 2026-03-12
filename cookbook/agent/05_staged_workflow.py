@@ -84,7 +84,7 @@ def main():
             "Design a task management REST API (title, status, assignee). "
             "Three phases: design (URLs + models), implementation (modules), "
             "validation (pre-ship checklist). Deliver output for each.",
-            max_steps=18, max_tokens=1024,
+            max_steps=18, max_tokens=4096,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )
         result.pprint()

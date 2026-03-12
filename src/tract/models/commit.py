@@ -71,9 +71,19 @@ class CommitInfo(BaseModel):
     @field_validator("generation_config", mode="before")
     @classmethod
     def _coerce_generation_config(cls, v: object) -> object:
-        """Auto-coerce dict input to LLMConfig for backward compatibility."""
+        """Auto-coerce dict/string input to LLMConfig for backward compatibility.
+
+        Small LLMs may send generation_config as a stringified dict (e.g. '{}'),
+        which can persist in the DB. Handle that gracefully.
+        """
+        if isinstance(v, str):
+            import json
+            try:
+                v = json.loads(v)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return None
         if isinstance(v, dict):
-            return LLMConfig.from_dict(v)
+            return LLMConfig.from_dict(v) if v else None
         return v
 
     def __str__(self) -> str:
