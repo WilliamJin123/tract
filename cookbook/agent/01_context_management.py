@@ -55,7 +55,7 @@ def main():
     print("  substantial deliverable — will it manage context to fit?")
     print()
 
-    config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=1500))
+    config = TractConfig(token_budget=TokenBudgetConfig(max_tokens=600))
     with Tract.open(
         config=config,
         api_key=llm.api_key,
@@ -65,7 +65,10 @@ def main():
         tool_profile=PROFILE,
     ) as t:
         t.system(
-            "You are a research analyst specializing in quantum computing."
+            "You are a research analyst specializing in quantum computing.\n"
+            "You have a TIGHT token budget. Use status to check your budget, "
+            "and compress or annotate(priority='skip') to free space before "
+            "committing large new content."
         )
 
         # Simulate a colleague's prior work: raw notes filling ~80% of budget
@@ -89,13 +92,14 @@ def main():
         t.compile().pprint(style="compact")
 
         # Task: the agent inherits a workspace and must produce new content.
-        # The framing naturally leads to checking status/log first.
         print("\n  --- Task ---")
         log = StepLogger()
         result = t.run(
             "A colleague loaded these research notes and you're taking over. "
-            "Assess what's here, then produce a short recommendation: "
-            "which 2 platforms are the best investment bets and why?",
+            "Your budget is very tight — first call status to check, then "
+            "compress the old notes to free space. After compressing, "
+            "produce a short recommendation: which 2 platforms are the best "
+            "investment bets and why? Commit your recommendation.",
             max_steps=10, max_tokens=1024,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )

@@ -62,8 +62,11 @@ def main():
     ) as t:
         # System: role only, no gate protocol
         t.system(
-            "You are a software engineer working on an API project. "
-            "Do thorough research before moving to implementation."
+            "You are a software engineer working on an API project.\n"
+            "WORKFLOW: Research each topic by committing artifact-type content, "
+            "then call transition('implementation') to move to the next phase. "
+            "You MUST attempt the transition after committing your research — "
+            "if blocked, read the error and fix what's missing."
         )
 
         # Developer sets up gated workflow infrastructure
@@ -94,15 +97,30 @@ def main():
         print(f"  Starting on: {t.current_branch}")
         print(f"  Branches: {[b.name for b in t.list_branches()]}")
 
-        # Task: natural research prompt, no mention of gates or requirements
-        print("\n  --- Task ---")
+        # Task: research then attempt transition
+        print("\n  --- Task: Research ---")
         result = t.run(
             "Research auth, DB schema, and error handling for a REST API. "
-            "When ready, transition to implementation.",
-            max_steps=12, max_tokens=1024,
+            "Commit each topic as an artifact, then transition to "
+            "'implementation'. If the transition is blocked, read the error "
+            "and commit more artifacts until it succeeds.",
+            max_steps=15, max_tokens=1024,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )
         result.pprint()
+
+        # If the agent didn't try transitioning, force an attempt to show the gate
+        if t.current_branch != "implementation":
+            print("\n  --- Agent didn't transition, forcing attempt ---")
+            entries = t.log(limit=50)
+            artifacts = [e for e in entries if e.content_type == "artifact"]
+            print(f"  Artifacts committed: {len(artifacts)}")
+            try:
+                t.transition("implementation")
+                print("  Transition succeeded!")
+            except BlockedError as e:
+                print(f"  Gate blocked: {e}")
+                print("  (This demonstrates the quality gate working)")
 
         # Report
         print("\n\n=== Final State ===\n")

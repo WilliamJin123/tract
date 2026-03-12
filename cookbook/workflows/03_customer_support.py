@@ -13,7 +13,7 @@ Stages:
 Demonstrates: branching for solution exploration, middleware quality gates,
               escalation on gate failure, compile strategy per stage
 
-Requires: LLM API key (uses Groq provider)
+Requires: LLM API key (uses Cerebras provider)
 """
 
 import sys
@@ -22,15 +22,15 @@ from pathlib import Path
 from tract import Tract, BlockedError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _providers import groq as llm
+from _providers import cerebras as llm
 from _logging import StepLogger
 
-MODEL_ID = llm.small
+MODEL_ID = llm.large
 
 
 def main():
     if not llm.api_key:
-        print("SKIPPED (no API key -- set GROQ_API_KEY)")
+        print("SKIPPED (no API key -- set CEREBRAS_API_KEY)")
         return
 
     with Tract.open(

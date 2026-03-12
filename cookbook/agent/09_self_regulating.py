@@ -19,7 +19,7 @@ from pathlib import Path
 # Windows console encoding fix
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from tract import Tract
+from tract import Tract, BlockedError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _providers import groq as llm
@@ -50,8 +50,34 @@ def main():
     ) as t:
 
         t.system(
-            "You are a technical writer who adapts style to the task."
+            "You are a technical writer who adapts style to the task.\n"
+            "IMPORTANT: Before writing, you MUST set a behavioral mode using "
+            "configure(mode='advocate') or configure(mode='critic') to declare "
+            "your current stance. Use directive() to set writing guidelines for "
+            "each phase. A middleware gate requires the mode config to be set "
+            "before any content can be committed."
         )
+
+        # Gate: require mode config before agent content commits
+        def mode_gate(ctx):
+            from tract.models.content import ConfigContent, InstructionContent
+            pending = ctx.pending
+            if pending is not None:
+                # Allow system/user messages, config changes, and directives through
+                role = getattr(pending, "role", None)
+                if role in ("system", "user"):
+                    return
+                if isinstance(pending, (ConfigContent, InstructionContent)):
+                    return
+            mode = ctx.tract.get_config("mode")
+            if not mode:
+                raise BlockedError(
+                    "pre_commit",
+                    ["Set a mode first: configure(mode='advocate') or "
+                     "configure(mode='critic')"],
+                )
+
+        t.use("pre_commit", mode_gate)
 
         log = StepLogger()
         _tool_names = [
