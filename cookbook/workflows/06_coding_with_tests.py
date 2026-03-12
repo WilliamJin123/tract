@@ -318,6 +318,7 @@ def main():
         #    Use diff to understand what went wrong in attempt/1.
         # =============================================================
 
+        attempt2_passed = False  # only set True if attempt 2 is needed and passes
         if not attempt1_passed:
             print("\n=== Stage 5: Iteration (attempt/2) ===\n")
 
@@ -430,18 +431,35 @@ def main():
             print(f"  Compressed iteration context: {pre_review_tokens} -> "
                   f"{post_review_tokens} tokens")
 
+        # Record test verification on main so the review gate can find it.
+        # Why: get_ancestors() walks only the primary parent chain, so metadata
+        # committed on attempt branches is invisible from main after merge.
+        # This commit lands after compression, so it won't be wiped.
+        any_passed = attempt1_passed or attempt2_passed
+        if any_passed:
+            t.commit(
+                content="All tests passing after merge.",
+                message="Post-merge test verification",
+                metadata={"test_status": "pass"},
+            )
+            print("  Recorded test_status=pass on main (post-merge)")
+
         # Transition to review -- gate checks for passing tests.
         # This is the one harness-driven transition: the agent does NOT have
         # the transition tool during review, so we call t.transition() here
         # to fire the pre_transition gate.
+        review_allowed = True
         try:
             t.transition("review")
+            print("  Review gate passed -- transition to review allowed")
         except BlockedError as e:
-            print(f"  Review gate blocked: {e}")
+            review_allowed = False
+            print(f"  GATE BLOCKED: {e}")
+            print("  (Review stage skipped because quality gate rejected transition)")
 
-        t.configure(stage="review", temperature=0.1)
+        if review_allowed:
+            t.configure(stage="review", temperature=0.1)
 
-        try:
             result = t.run(
                 "Perform a final code review of the email validator.\n\n"
                 "Evaluate:\n"
@@ -456,8 +474,6 @@ def main():
                 on_step=log.on_step,
                 on_tool_result=log.on_tool_result,
             )
-        except BlockedError as e:
-            print(f"  Review run blocked: {e}")
 
         # =============================================================
         # 9. FINAL STATE -- Show why tract is superior

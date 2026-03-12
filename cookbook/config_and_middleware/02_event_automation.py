@@ -78,6 +78,15 @@ def main():
         t.user("Tell me about security best practices.")
         print("  Normal commit: OK")
 
+        # This commit should be BLOCKED -- contains a secret pattern
+        blocked = False
+        try:
+            t.user("Set api_key=sk-12345 in the config file.")
+        except BlockedError as e:
+            blocked = True
+            print(f"  Blocked: {e.reasons[0]}")
+        assert blocked, "Secret-containing commit should have been blocked"
+
         # --- Pre-commit token limit middleware ---
 
         print("\n=== Pre-Commit Token Limit ===\n")
@@ -103,6 +112,16 @@ def main():
         # Short commit goes through
         t.assistant("Here are some security tips.")
         print("  Short commit: OK")
+
+        # Long commit should be BLOCKED -- exceeds 500 chars
+        long_text = "A" * 501
+        blocked = False
+        try:
+            t.user(long_text)
+        except BlockedError as e:
+            blocked = True
+            print(f"  Blocked: {e.reasons[0]}")
+        assert blocked, "Over-length commit should have been blocked"
 
         # --- Pre-compile middleware ---
 
