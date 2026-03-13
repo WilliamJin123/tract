@@ -1,9 +1,10 @@
 """E-Commerce Optimization Pipeline: research -> landing pages -> ads -> metrics -> optimize
 
-A multi-stage pipeline for e-commerce product optimization. Uses branches for
-A/B variant management, config for per-stage LLM tuning, tags for segment
-tracking, metadata for performance metrics, and compression to keep context
-lean between stages.
+A developer-orchestrated, agent-content pipeline for e-commerce product
+optimization.  The developer drives stage transitions while the agent generates
+content per stage.  Uses branches for A/B variant management, config for
+per-stage LLM tuning, tags for segment tracking, metadata for performance
+metrics, and compression to keep context lean between stages.
 
 Stages:
   product_research   -- high temperature (0.8), gather product intel
@@ -12,11 +13,8 @@ Stages:
   metrics_analysis   -- evaluate variants
   optimization       -- select winner, iterate
 
-The initial stage is configured with temperature=0.8; subsequent stages
-inherit this setting as the agent drives transitions via t.transition().
-
-Demonstrates: branching for A/B variants, t.configure() for initial setup,
-              t.directive() for stage instructions, t.tag() for segments,
+Demonstrates: branching for A/B variants, t.configure() for per-stage setup,
+              t.directive() for instructions, t.tag() for segments,
               t.commit() with metadata for metrics, t.transition() with
               handoff summaries, t.compress() between stages, middleware
               gates for stage progression
@@ -53,7 +51,6 @@ def main():
 
         print("=== Setting Up E-Commerce Pipeline ===\n")
 
-        # Start in product research stage
         t.configure(
             stage="product_research",
             temperature=0.8,
@@ -62,19 +59,6 @@ def main():
             target_audience="remote workers and home office professionals",
             price_point="$299",
             min_variants=2,
-        )
-
-        # Directives: pipeline-wide instructions
-        t.directive(
-            "pipeline-overview",
-            "This is a 5-stage e-commerce optimization pipeline:\n"
-            "1. PRODUCT_RESEARCH -- Analyze product, competitors, USPs\n"
-            "2. LANDING_PAGES -- Create A/B landing page variants (use branches)\n"
-            "3. AD_COPY -- Write targeted ad copy for each variant\n"
-            "4. METRICS_ANALYSIS -- Evaluate variant performance\n"
-            "5. OPTIMIZATION -- Select winner, plan next iteration\n\n"
-            "Use get_config to check the current stage and product details.\n"
-            "Use transition to advance between stages.",
         )
 
         t.directive(
@@ -86,171 +70,156 @@ def main():
             "- CTAs should be action-oriented and urgent",
         )
 
-        # Transition gates: enforce minimum work before advancing
-        def landing_page_gate(ctx):
-            """Require research before creating landing pages."""
-            if ctx.target != "landing_pages":
-                return
-            count = len(ctx.tract.log())
-            if count < 6:
-                raise BlockedError(
-                    "pre_transition",
-                    [f"Need >= 6 commits for landing pages (have {count})"],
-                )
+        # Transition gates
+        def stage_gate(min_commits, stage_name):
+            def gate(ctx):
+                if ctx.target != stage_name:
+                    return
+                count = len(ctx.tract.log())
+                if count < min_commits:
+                    raise BlockedError(
+                        "pre_transition",
+                        [f"Need >= {min_commits} commits for {stage_name} (have {count})"],
+                    )
+            return gate
 
-        def ad_copy_gate(ctx):
-            """Require landing pages before writing ads."""
-            if ctx.target != "ad_copy":
-                return
-            count = len(ctx.tract.log())
-            if count < 3:
-                raise BlockedError(
-                    "pre_transition",
-                    [f"Need >= 3 commits for ad copy (have {count})"],
-                )
+        t.use("pre_transition", stage_gate(6, "landing_pages"))
+        t.use("pre_transition", stage_gate(3, "ad_copy"))
+        t.use("pre_transition", stage_gate(3, "metrics_analysis"))
+        t.use("pre_transition", stage_gate(3, "optimization"))
 
-        def metrics_gate(ctx):
-            """Require ad copy before analyzing metrics."""
-            if ctx.target != "metrics_analysis":
-                return
-            count = len(ctx.tract.log())
-            if count < 3:
-                raise BlockedError(
-                    "pre_transition",
-                    [f"Need >= 3 commits for metrics analysis (have {count})"],
-                )
-
-        def optimization_gate(ctx):
-            """Require metrics analysis before optimization."""
-            if ctx.target != "optimization":
-                return
-            count = len(ctx.tract.log())
-            if count < 3:
-                raise BlockedError(
-                    "pre_transition",
-                    [f"Need >= 3 commits for optimization (have {count})"],
-                )
-
-        t.use("pre_transition", landing_page_gate)
-        t.use("pre_transition", ad_copy_gate)
-        t.use("pre_transition", metrics_gate)
-        t.use("pre_transition", optimization_gate)
-
-        print(f"  Product: {t.get_config('product')}")
-        print(f"  Target audience: {t.get_config('target_audience')}")
-        print(f"  Price: {t.get_config('price_point')}")
-        print(f"  Initial configs: {t.get_all_configs()}")
-
-        # =============================================================
-        # Register tags for e-commerce segments
-        # =============================================================
-
+        # Register tags
         for tag_name in [
             "research", "competitor", "feature", "pain-point",
             "variant-a", "variant-b", "headline", "cta",
-            "social-proof", "urgency", "benefit",
-            "ad-search", "ad-social", "ad-retargeting",
-            "metrics", "winner", "optimization",
+            "ad-search", "ad-social", "metrics", "winner", "optimization",
         ]:
             t.register_tag(tag_name)
 
-        print(f"  Registered 17 e-commerce tags")
-
-        # =============================================================
-        # System prompt: e-commerce optimization context
-        # =============================================================
+        print(f"  Product: {t.get_config('product')}")
+        print(f"  Price: {t.get_config('price_point')}")
 
         t.system(
-            "You are an e-commerce growth strategist and copywriter.\n\n"
-            "PIPELINE STAGES:\n"
-            "1. PRODUCT_RESEARCH -- Analyze the product, identify competitors,\n"
-            "   extract unique selling propositions. Tag with 'research',\n"
-            "   'competitor', 'feature', and 'pain-point'.\n"
-            "2. LANDING_PAGES -- Create 2 landing page variants. Use branch\n"
-            "   for each variant ('variant/a' and 'variant/b'). Tag content\n"
-            "   with 'variant-a' or 'variant-b' plus 'headline', 'cta', etc.\n"
-            "3. AD_COPY -- Write ad copy for each variant. Tag with\n"
-            "   'ad-search', 'ad-social', or 'ad-retargeting'.\n"
-            "4. METRICS_ANALYSIS -- Evaluate variants with simulated metrics.\n"
-            "   Use create_metadata to store conversion rates and costs.\n"
-            "5. OPTIMIZATION -- Select the winner and propose improvements.\n\n"
-            "Tools: commit, tag, register_tag, branch, switch, transition,\n"
-            "create_metadata, get_config, status, compile, log.\n\n"
-            "Use get_config to check the current stage and product details.\n"
-            "Use transition to advance. Tag EVERY commit appropriately."
+            "You are an e-commerce growth strategist and copywriter.\n"
+            "Use commit() to save every piece of content. Include tags "
+            "in your commit calls. Keep responses focused and actionable."
         )
 
-        # =============================================================
-        # Seed: product brief
-        # =============================================================
-
         t.user(
-            "Product: Ergonomic Standing Desk Converter -- $299\n\n"
-            "Key details:\n"
-            "- Converts any desk to a sit-stand workstation in 3 seconds\n"
+            "Product: Ergonomic Standing Desk Converter -- $299\n"
+            "- Converts any desk to sit-stand in 3 seconds\n"
             "- Supports dual monitors (up to 35 lbs)\n"
             "- 15 height positions with pneumatic lift\n"
             "- Built-in cable management and phone holder\n"
-            "- Ships flat, assembles in under 10 minutes\n"
-            "- 30-day money-back guarantee, 5-year warranty\n\n"
-            "Target audience: Remote workers spending 8+ hours at desks\n"
-            "Key competitor: VariDesk Pro Plus ($395)\n"
-            "Main differentiator: 25% cheaper, faster setup, better cable management"
+            "- 30-day money-back guarantee, 5-year warranty\n"
+            "Competitor: VariDesk Pro Plus ($395)\n"
+            "Differentiator: 25% cheaper, faster setup, better cable management"
         )
-
-        # =============================================================
-        # Run: agent drives through all 5 stages
-        # =============================================================
-
-        print("\n=== Running Pipeline (5 stages) ===\n")
 
         log = StepLogger()
+        _tool_names = ["commit", "tag", "get_config", "status"]
+
+        # =============================================================
+        # Stage 1: Product Research
+        # =============================================================
+        print("\n=== Stage 1: Product Research ===\n")
 
         result = t.run(
-            "Execute the full e-commerce optimization pipeline for the "
-            "Ergonomic Standing Desk Converter:\n\n"
-            "STAGE 1 -- PRODUCT_RESEARCH:\n"
-            "- Commit a competitor analysis (compare to VariDesk Pro Plus)\n"
-            "- Commit a target audience pain points analysis\n"
-            "- Commit a unique selling propositions summary\n"
-            "- Tag each with 'research' and relevant sub-tags\n"
-            "Then transition to 'landing_pages'.\n\n"
-            "STAGE 2 -- LANDING_PAGES:\n"
-            "- Create branch 'variant/a' for a pain-point-led variant\n"
-            "  (headline focuses on back pain and posture)\n"
-            "- Switch back to main, create branch 'variant/b' for a\n"
-            "  value-proposition-led variant (headline focuses on price\n"
-            "  and productivity gains)\n"
-            "- On each branch, commit the headline and CTA\n"
-            "- Tag with 'variant-a'/'variant-b' and 'headline'/'cta'\n"
-            "Then transition to 'ad_copy'.\n\n"
-            "STAGE 3 -- AD_COPY:\n"
-            "- Commit a Google search ad for the product\n"
-            "- Commit a social media ad (Facebook/Instagram style)\n"
-            "- Tag with 'ad-search' or 'ad-social'\n"
-            "Then transition to 'metrics_analysis'.\n\n"
-            "STAGE 4 -- METRICS_ANALYSIS:\n"
-            "- Create metadata entries with simulated metrics for each variant:\n"
-            "  Variant A: conversion_rate=3.2%, cpc=$1.45, ctr=4.8%\n"
-            "  Variant B: conversion_rate=4.1%, cpc=$1.20, ctr=5.6%\n"
-            "- Commit an analysis comparing the two variants\n"
-            "Then transition to 'optimization'.\n\n"
-            "STAGE 5 -- OPTIMIZATION:\n"
-            "- Declare the winner (should be Variant B based on metrics)\n"
-            "- Tag the winning analysis with 'winner'\n"
-            "- Commit 2-3 specific optimization recommendations for the next\n"
-            "  iteration (headline tweaks, CTA improvements, audience targeting)\n"
-            "- Tag recommendations with 'optimization'",
-            max_steps=25,
-            profile="full",
-            tool_names=[
-                "commit", "tag", "register_tag", "branch", "switch",
-                "transition", "create_metadata", "get_config", "status",
-            ],
-            on_step=log.on_step,
-            on_tool_result=log.on_tool_result,
+            "Commit 3 research artifacts:\n"
+            "1. Competitor analysis vs VariDesk Pro Plus. Tag=['research','competitor']\n"
+            "2. Target audience pain points. Tag=['research','pain-point']\n"
+            "3. Unique selling propositions. Tag=['research','feature']",
+            max_steps=6, max_tokens=1024,
+            profile="full", tool_names=_tool_names,
+            on_step=log.on_step, on_tool_result=log.on_tool_result,
+        )
+        result.pprint()
+
+        # =============================================================
+        # Stage 2: Landing Pages (developer drives transition)
+        # =============================================================
+        print("\n\n=== Stage 2: Landing Pages ===\n")
+
+        t.transition("landing_pages", handoff="summary")
+        t.configure(stage="landing_pages", temperature=0.7)
+
+        result = t.run(
+            "Create 2 landing page variants:\n"
+            "1. Variant A: pain-point-led (back pain, posture). "
+            "Commit headline + CTA, tag=['variant-a','headline']\n"
+            "2. Variant B: value-led (price savings, productivity). "
+            "Commit headline + CTA, tag=['variant-b','headline']",
+            max_steps=6, max_tokens=1024,
+            profile="full", tool_names=_tool_names,
+            on_step=log.on_step, on_tool_result=log.on_tool_result,
+        )
+        result.pprint()
+
+        # =============================================================
+        # Stage 3: Ad Copy
+        # =============================================================
+        print("\n\n=== Stage 3: Ad Copy ===\n")
+
+        t.transition("ad_copy", handoff="summary")
+        t.configure(stage="ad_copy", temperature=0.6)
+
+        result = t.run(
+            "Write 2 ads for the standing desk converter:\n"
+            "1. Google search ad (headline + description). Tag=['ad-search']\n"
+            "2. Social media ad (Facebook/Instagram hook + body). Tag=['ad-social']",
+            max_steps=6, max_tokens=1024,
+            profile="full", tool_names=_tool_names,
+            on_step=log.on_step, on_tool_result=log.on_tool_result,
+        )
+        result.pprint()
+
+        # =============================================================
+        # Stage 4: Metrics Analysis
+        # =============================================================
+        print("\n\n=== Stage 4: Metrics Analysis ===\n")
+
+        t.transition("metrics_analysis", handoff="summary")
+        t.configure(stage="metrics_analysis", temperature=0.3)
+
+        # Seed simulated metrics via metadata
+        t.commit(
+            {"content_type": "freeform", "payload": {
+                "variant_a": {"conversion_rate": "3.2%", "cpc": "$1.45", "ctr": "4.8%"},
+                "variant_b": {"conversion_rate": "4.1%", "cpc": "$1.20", "ctr": "5.6%"},
+            }},
+            message="Simulated A/B test metrics",
+            metadata={"source": "simulation"},
+            tags=["metrics"],
         )
 
+        result = t.run(
+            "Analyze the metrics above. Variant A: 3.2% conversion, $1.45 CPC. "
+            "Variant B: 4.1% conversion, $1.20 CPC. Commit your analysis "
+            "comparing the two variants. Tag=['metrics']",
+            max_steps=4, max_tokens=1024,
+            profile="full", tool_names=_tool_names,
+            on_step=log.on_step, on_tool_result=log.on_tool_result,
+        )
+        result.pprint()
+
+        # =============================================================
+        # Stage 5: Optimization
+        # =============================================================
+        print("\n\n=== Stage 5: Optimization ===\n")
+
+        t.transition("optimization", handoff="summary")
+        t.configure(stage="optimization", temperature=0.5)
+
+        result = t.run(
+            "Declare Variant B the winner (better conversion + lower CPC). "
+            "Commit 2 items:\n"
+            "1. Winner declaration with reasoning. Tag=['winner']\n"
+            "2. 3 optimization recommendations for next iteration. "
+            "Tag=['optimization']",
+            max_steps=6, max_tokens=1024,
+            profile="full", tool_names=_tool_names,
+            on_step=log.on_step, on_tool_result=log.on_tool_result,
+        )
         result.pprint()
 
         # =============================================================
@@ -267,7 +236,7 @@ def main():
             marker = "*" if b.is_current else " "
             print(f"    {marker} {b.name}")
 
-        print(f"\n  Registered tags:")
+        print(f"\n  Tags with content:")
         for entry in t.list_tags():
             if entry["count"] > 0:
                 print(f"    {entry['name']:20s} count={entry['count']}")
@@ -275,18 +244,13 @@ def main():
         print(f"\n  Log (last 12 commits):")
         for ci in t.log()[-12:]:
             tags_str = f" [{', '.join(ci.tags)}]" if ci.tags else ""
-            meta_str = ""
-            if ci.metadata:
-                # Show key metrics if present
-                for key in ("conversion_rate", "cpc", "ctr"):
-                    if key in ci.metadata:
-                        meta_str += f" {key}={ci.metadata[key]}"
             print(
                 f"    {ci.commit_hash[:8]}  {ci.content_type:10s}{tags_str}"
-                f"{meta_str}  {(ci.message or '')[:40]}"
+                f"  {(ci.message or '')[:40]}"
             )
 
         print(f"\n  Total commits: {len(t.log())}")
+        print(f"  Stages completed: 5/5")
 
 
 if __name__ == "__main__":

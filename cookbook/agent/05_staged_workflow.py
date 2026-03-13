@@ -84,9 +84,12 @@ def main():
         # Single task — agent must navigate all stages autonomously
         print("\n  --- Task ---")
         result = t.run(
-            "Design a task management REST API (title, status, assignee). "
-            "Three phases: design (URLs + models), implementation (modules), "
-            "validation (pre-ship checklist). Deliver output for each.",
+            "Design a task management REST API (title, status, assignee).\n\n"
+            "For EACH stage, you MUST commit() output then transition():\n"
+            "1. DESIGN: commit your API URLs + data models, then transition('implementation')\n"
+            "2. IMPLEMENTATION: commit module structure, then transition('validation')\n"
+            "3. VALIDATION: commit a pre-ship checklist, then STOP\n\n"
+            "Keep each commit concise (2-3 key points). Use commit() for every deliverable.",
             max_steps=18, max_tokens=4096,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )

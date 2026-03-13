@@ -1,17 +1,18 @@
 """Customer Support Workflow: triage -> resolve -> escalate
 
-An agent-driven support workflow. The agent triages a customer issue,
-attempts resolution, and escalates if the quality gate fails. Branches
-are used to explore alternative solutions, and middleware gates enforce
-quality standards at each stage transition.
+A developer-orchestrated, agent-content support workflow.  The developer drives
+stage transitions while the agent generates content per stage.  Branches explore
+alternative solutions, middleware gates enforce quality standards, and tags
+classify support artifacts.
 
 Stages:
   triage   -- classify severity, gather context (temperature 0.5)
   resolve  -- propose and test solutions (temperature 0.3)
   escalate -- document failure, prepare handoff (temperature 0.1)
 
-Demonstrates: branching for solution exploration, middleware quality gates,
-              escalation on gate failure, compile strategy per stage
+Demonstrates: per-stage config, middleware quality gates, branching for
+              solution exploration, escalation workflow, tagging for
+              support classification
 
 Requires: LLM API key (uses Cerebras provider)
 """
@@ -45,7 +46,6 @@ def main():
 
         print("=== Setting Up Support Workflow ===\n")
 
-        # Initial stage config
         t.configure(
             stage="triage",
             temperature=0.5,
@@ -53,9 +53,8 @@ def main():
             max_resolution_attempts=2,
         )
 
-        # Transition gates via middleware
+        # Transition gates
         def resolve_gate(ctx):
-            """Require enough triage context before resolving."""
             if ctx.target != "resolve":
                 return
             count = len(ctx.tract.log())
@@ -66,7 +65,6 @@ def main():
                 )
 
         def escalate_gate(ctx):
-            """Low bar -- agent can always escalate after minimal context."""
             if ctx.target != "escalate":
                 return
             count = len(ctx.tract.log())
@@ -79,43 +77,18 @@ def main():
         t.use("pre_transition", resolve_gate)
         t.use("pre_transition", escalate_gate)
 
-        configs = t.get_all_configs()
-        print(f"  Initial configs: {configs}")
-
-        # =============================================================
-        # Register support tags
-        # =============================================================
-
         for tag_name in ["bug", "feature-request", "billing", "critical",
                          "solution", "workaround", "escalated"]:
             t.register_tag(tag_name)
 
+        print(f"  Initial configs: {t.get_all_configs()}")
         print(f"  Registered 7 support tags")
 
-        # =============================================================
-        # System prompt: describe the support workflow
-        # =============================================================
-
         t.system(
-            "You are a customer support agent working through a structured workflow.\n\n"
-            "WORKFLOW STAGES:\n"
-            "1. TRIAGE -- Classify the issue (bug/feature/billing), assess severity.\n"
-            "   Tag with appropriate category. Gather all needed context.\n"
-            "2. RESOLVE -- Propose solutions. Use branching to explore alternatives.\n"
-            "   Create a branch for each solution attempt. If a solution works,\n"
-            "   tag it 'solution'. Check get_config('max_resolution_attempts').\n"
-            "3. ESCALATE -- If resolution fails, transition here. Document what\n"
-            "   was tried, tag as 'escalated', prepare handoff summary.\n\n"
-            "Tools: commit, compile, status, log, branch, switch, tag,\n"
-            "register_tag, create_metadata, get_config, transition.\n\n"
-            "Use get_config to check stage and max_resolution_attempts.\n"
-            "Use transition to move between stages. If you cannot resolve\n"
-            "the issue after attempting solutions, transition to 'escalate'."
+            "You are a customer support agent. Use commit() to save every "
+            "analysis, classification, or recommendation. Include tags in "
+            "your commit calls to classify content."
         )
-
-        # =============================================================
-        # Customer issue
-        # =============================================================
 
         t.user(
             "Hi, I'm having a critical issue. Our API integration stopped "
@@ -125,34 +98,66 @@ def main():
             "our client code but the errors persist. Order ID: ORD-2847."
         )
 
-        # =============================================================
-        # Run: agent triages, attempts resolution, escalates if needed
-        # =============================================================
-
-        print("\n=== Running Agent (triage -> resolve -> escalate) ===\n")
-
         log = StepLogger()
+        _tool_names = ["commit", "tag", "get_config", "status"]
+
+        # =============================================================
+        # Stage 1: Triage
+        # =============================================================
+        print("\n=== Stage 1: Triage ===\n")
 
         result = t.run(
-            "Handle this customer support case. Follow the workflow:\n\n"
-            "1. TRIAGE: Classify the issue severity and type. Tag appropriately.\n"
-            "   Gather context about what's failing (POST 500s, /api/v2/orders).\n"
-            "   When triage is complete, transition to 'resolve'.\n\n"
-            "2. RESOLVE: Propose a fix. Create a branch 'solution/api-fix' to\n"
-            "   explore the solution. Suggest the likely cause (breaking API change\n"
-            "   in v2, possible schema validation issue). If the solution seems\n"
-            "   viable, tag it as 'solution'. If not, and you've hit the\n"
-            "   max_resolution_attempts, transition to 'escalate'.\n\n"
-            "3. ESCALATE (if needed): Document what was tried, create a metadata\n"
-            "   entry with the escalation summary, tag as 'escalated'.",
-            max_steps=20,
-            profile="full",
-            tool_names=["commit", "tag", "register_tag", "branch", "switch",
-                        "transition", "create_metadata", "get_config", "status"],
-            on_step=log.on_step,
-            on_tool_result=log.on_tool_result,
+            "Triage this support case. Commit 2 items:\n"
+            "1. Issue classification (type=bug, severity=critical, "
+            "endpoint=/api/v2/orders, symptom=500 on POST). "
+            "Tag=['bug','critical']\n"
+            "2. Context summary (GET works, POST fails, client rollback "
+            "didn't help, suggests server-side breaking change). "
+            "Tag=['bug']",
+            max_steps=6, max_tokens=1024,
+            profile="full", tool_names=_tool_names,
+            on_step=log.on_step, on_tool_result=log.on_tool_result,
         )
+        result.pprint()
 
+        # =============================================================
+        # Stage 2: Resolve (developer drives transition)
+        # =============================================================
+        print("\n\n=== Stage 2: Resolve ===\n")
+
+        t.transition("resolve", handoff="summary")
+        t.configure(stage="resolve", temperature=0.3)
+
+        result = t.run(
+            "Propose solutions for the API 500 error. Commit 2 items:\n"
+            "1. Root cause analysis (likely: v2 API schema change broke POST "
+            "validation, old request body format rejected). Tag=['solution']\n"
+            "2. Proposed workaround (update POST body to match new v2 schema, "
+            "or use v1 endpoint as temporary fallback). Tag=['workaround']",
+            max_steps=6, max_tokens=1024,
+            profile="full", tool_names=_tool_names,
+            on_step=log.on_step, on_tool_result=log.on_tool_result,
+        )
+        result.pprint()
+
+        # =============================================================
+        # Stage 3: Escalate (developer drives transition)
+        # =============================================================
+        print("\n\n=== Stage 3: Escalate ===\n")
+
+        t.transition("escalate", handoff="summary")
+        t.configure(stage="escalate", temperature=0.1)
+
+        result = t.run(
+            "Prepare an escalation summary. Commit 1 item:\n"
+            "Document what was tried (root cause identified, workaround "
+            "proposed) and recommend next action (engineering team should "
+            "add backward compatibility to v2 POST endpoint). "
+            "Tag=['escalated']",
+            max_steps=4, max_tokens=1024,
+            profile="full", tool_names=_tool_names,
+            on_step=log.on_step, on_tool_result=log.on_tool_result,
+        )
         result.pprint()
 
         # =============================================================
@@ -169,11 +174,18 @@ def main():
             marker = "*" if b.is_current else " "
             print(f"    {marker} {b.name}")
 
+        print(f"\n  Tags with content:")
+        for entry in t.list_tags():
+            if entry["count"] > 0:
+                print(f"    {entry['name']:20s} count={entry['count']}")
+
         print(f"\n  Log (last 8 commits):")
         for ci in t.log()[-8:]:
             tags_str = f" [{', '.join(ci.tags)}]" if ci.tags else ""
             print(f"    {ci.commit_hash[:8]}  {ci.content_type:10s}{tags_str}  "
                   f"{(ci.message or '')[:45]}")
+
+        print(f"\n  Stages completed: 3/3")
 
 
 if __name__ == "__main__":
