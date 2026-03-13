@@ -107,7 +107,7 @@ class ResolverCallable(Protocol):
 
     Can be a function, lambda, or class with __call__.
     The issue parameter is typed as object because the concrete types
-    (ConflictInfo, RebaseWarning, ImportIssue) are defined in Plan 03-03.
+    (ConflictInfo, RebaseWarning, ImportIssue) vary by caller.
     """
 
     def __call__(self, issue: object) -> Resolution:
@@ -120,9 +120,8 @@ class AgentLoop(Protocol):
     """Protocol for pluggable agent loops.
 
     Any object implementing ``run()`` and ``stop()`` can serve as tract's
-    orchestrator.  The built-in :class:`~tract.orchestrator.loop.Orchestrator`
-    is the default; external adapters (Agno, LangGraph, CrewAI) implement
-    this protocol to plug into ``t.orchestrate(agent_loop=...)``.
+    agent loop.  External adapters (Agno, LangGraph, CrewAI) implement
+    this protocol to plug into ``t.run_loop(agent_loop=...)``.
 
     The protocol parallels :class:`LLMClient`: LLMClient swaps the LLM
     transport layer, AgentLoop swaps the orchestration layer.
@@ -149,8 +148,7 @@ class AgentLoop(Protocol):
                 that dispatches to tract's tool executor.
 
         Returns:
-            An :class:`~tract.orchestrator.models.AgentLoopResult` with steps
-            taken and optional provenance data.
+            A result object with steps taken and optional provenance data.
         """
         ...
 

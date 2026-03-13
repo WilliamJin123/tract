@@ -4,7 +4,7 @@ Defines 8 built-in content types as Pydantic models with a discriminated union
 (ContentPayload). Each content type has behavioral hints (ContentTypeHints) for
 compilation and compression.
 
-The content type registry is per-Repo instance (implemented in Plan 03).
+The content type registry is per-Tract instance.
 Built-in types and the discriminated union remain module-level.
 """
 

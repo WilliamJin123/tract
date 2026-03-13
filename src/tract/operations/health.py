@@ -86,13 +86,12 @@ def check_health(
     report.branch_count = len(branches)
 
     # Check 1: Blob integrity -- every commit should reference an existing blob
+    content_hashes = [c.content_hash for c in all_commits.values() if c.content_hash]
+    existing_blobs = blob_repo.batch_get(content_hashes) if content_hashes else {}
     for commit_hash, commit in all_commits.items():
-        content_hash = commit.content_hash
-        if content_hash:
-            blob = blob_repo.get(content_hash)
-            if blob is None:
-                report.missing_blobs.append(commit_hash)
-                report.healthy = False
+        if commit.content_hash and commit.content_hash not in existing_blobs:
+            report.missing_blobs.append(commit_hash)
+            report.healthy = False
 
     # Check 2: Parent integrity -- every parent_hash should point to an existing commit
     for commit_hash, commit in all_commits.items():
@@ -101,11 +100,13 @@ def check_health(
             report.missing_parents.append((commit_hash, parent_hash))
             report.healthy = False
 
-    # Check 3: Reachability -- find orphans (commits not reachable from any branch)
+    # Check 3 & 4: Reachability + branch HEAD validity (single pass over branches)
     reachable: set[str] = set()
+    branch_tips: dict[str, str | None] = {}
 
     for branch_name in branches:
         tip = ref_repo.get_branch(tract_id, branch_name)
+        branch_tips[branch_name] = tip
         if tip is not None:
             reachable |= get_all_ancestors(
                 tip, commit_repo, parent_repo, stop_at=reachable
@@ -127,9 +128,8 @@ def check_health(
             f"{len(orphans)} unreachable commits (run gc to clean)"
         )
 
-    # Check 4: Branch HEAD validity -- every branch tip should point to an existing commit
-    for branch_name in branches:
-        tip = ref_repo.get_branch(tract_id, branch_name)
+    # Check 4: Branch HEAD validity (reuses tips fetched in check 3)
+    for branch_name, tip in branch_tips.items():
         if tip and tip not in all_commits:
             report.warnings.append(
                 f"Branch '{branch_name}' HEAD points to missing commit {tip[:8]}"

@@ -1,6 +1,6 @@
 """Protocol definitions for Trace.
 
-Defines pluggable interfaces (TokenCounter, ContextCompiler, TokenUsageExtractor)
+Defines pluggable interfaces (TokenCounter, ContextCompiler)
 and frozen dataclasses for structured output (Message, CompiledContext, TokenUsage).
 
 No SQLAlchemy imports allowed in this module -- pure domain protocols.
@@ -473,21 +473,4 @@ class ContextCompiler(Protocol):
         include_reasoning: bool = False,
     ) -> CompiledContext:
         """Compile commits into structured messages for LLM consumption."""
-        ...
-
-
-# NOTE: unused but part of public API
-@runtime_checkable
-class TokenUsageExtractor(Protocol):
-    """Protocol for extracting token usage from LLM API responses.
-
-    Defined in Phase 1 for interface stability; provider-specific
-    implementations added in Phase 3.
-    """
-
-    def extract(self, api_response: dict) -> TokenUsage | None:
-        """Extract token usage from an API response dict.
-
-        Returns None if the response format is not recognized.
-        """
         ...

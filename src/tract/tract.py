@@ -376,7 +376,7 @@ class Tract:
         self._tool_profile: str | ToolProfile | None = None
         self._tool_result_format: Literal["minimal", "json", "verbose"] = "minimal"
 
-        # Config index (replaces rule engine)
+        # Config index (per-key resolution from DAG ancestry)
         self._config_index: ConfigIndex | None = None
 
         # Middleware state

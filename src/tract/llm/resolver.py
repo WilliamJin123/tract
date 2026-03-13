@@ -83,15 +83,21 @@ class OpenAIResolver:
             max_tokens=self._max_tokens,
         )
         try:
-            content_text = response["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
+            if hasattr(self._client, "extract_content"):
+                content_text = self._client.extract_content(response)
+            else:
+                content_text = response["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             from tract.llm.errors import LLMResponseError
 
             raise LLMResponseError(
                 f"Cannot extract content from LLM response: {exc}. "
                 f"Response: {response}"
             ) from exc
-        usage = response.get("usage")
+        if hasattr(self._client, "extract_usage"):
+            usage = self._client.extract_usage(response)
+        else:
+            usage = response.get("usage")
         gen_config: dict[str, Any] = {
             "model": response.get("model", self._model),
             "temperature": self._temperature,
