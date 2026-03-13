@@ -489,6 +489,13 @@ class Tract:
             ValueError: If mutually exclusive params are combined
                 (e.g. *url* + *engine*, *model* + *default_config*).
         """
+        # Auto-discover .tract/tract.db when no explicit path/url/engine
+        if path == ":memory:" and url is None and engine is None:
+            from pathlib import Path as _Path
+            auto_db = _Path(".tract") / "tract.db"
+            if auto_db.is_file():
+                path = str(auto_db)
+
         # Validate mutual exclusivity of database params
         _has_path = path != ":memory:"
         _has_url = url is not None

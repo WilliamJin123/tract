@@ -53,6 +53,9 @@ dev = [
     "mypy>=1.14",
 ]
 
+[project.scripts]
+tract = "tract.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/WilliamJin123/tract"
 Documentation = "https://github.com/WilliamJin123/tract#readme"
