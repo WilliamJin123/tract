@@ -51,7 +51,7 @@ def _load_content_model(blob_repo: BlobRepository, content_hash: str) -> BaseMod
     try:
         data = json.loads(blob.payload_json)
         return validate_content(data)
-    except (json.JSONDecodeError, TypeError, Exception):
+    except Exception:
         return None
 
 
