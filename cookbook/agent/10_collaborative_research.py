@@ -228,25 +228,19 @@ def main():
 
     children = {}
     for analyst in ANALYSTS:
+        # spawn-with-persona: directives + config applied in one call
         child = session.spawn(
             coordinator,
             purpose=f"{analyst['title']}: evaluate PostgreSQL vs MongoDB",
             display_name=analyst["name"],
+            directives={f"role-{analyst['name']}": analyst["directive"]},
+            configure={
+                "stage": "research",
+                "analyst_role": analyst["name"],
+                "temperature": analyst["temperature"],
+            },
         )
         _configure_child(child, temperature=analyst["temperature"])
-
-        # Per-child directive: constrains what this analyst focuses on
-        child.directive(
-            name=f"role-{analyst['name']}",
-            text=analyst["directive"],
-        )
-
-        # Per-child config: mark the analysis stage
-        child.configure(
-            stage="research",
-            analyst_role=analyst["name"],
-            temperature=analyst["temperature"],
-        )
 
         children[analyst["name"]] = {
             "tract": child,

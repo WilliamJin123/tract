@@ -358,6 +358,11 @@ class Session:
         exclude_tags: list[str] | None = None,
         include_types: list[str] | None = None,
         include_instructions: bool = True,
+        # Spawn-with-persona parameters
+        profile: str | None = None,
+        stage: str | None = None,
+        directives: dict[str, str] | None = None,
+        configure: dict[str, object] | None = None,
     ) -> Tract:
         """Spawn a child tract from a parent.
 
@@ -373,10 +378,26 @@ class Session:
             include_types: For selective mode: include these content types.
             include_instructions: For selective mode: always include instruction
                 and config commits even when filtered out. Default True.
+            profile: Optional workflow profile name to load (e.g. ``"coding"``,
+                ``"research"``).  Calls ``child.load_profile(profile)``.
+            stage: Optional stage name to apply from the loaded profile.
+                Requires ``profile`` to be set.  Calls ``child.apply_stage(stage)``.
+            directives: Optional ``{name: text}`` dict of named directives to
+                commit on the child.  Applied **after** profile directives, so
+                they override any same-named directive from the profile.
+            configure: Optional ``{key: value}`` dict passed to
+                ``child.configure(**configure)``.  Applied last, so explicit
+                config wins over profile/stage defaults.
 
         Returns:
             The new child Tract instance.
+
+        Raises:
+            ValueError: If ``stage`` is set without ``profile``.
         """
+        if stage is not None and profile is None:
+            raise ValueError("stage requires profile to be set")
+
         child = spawn_tract(
             session_factory=self._session_factory,
             engine=self._engine,
@@ -394,6 +415,18 @@ class Session:
         )
         self._tracts[child.tract_id] = child
         child._seed_base_tags()
+
+        # Apply persona: profile → stage → directives → configure
+        if profile is not None:
+            child.load_profile(profile)
+        if stage is not None:
+            child.apply_stage(stage)
+        if directives:
+            for dir_name, dir_text in directives.items():
+                child.directive(dir_name, dir_text)
+        if configure:
+            child.configure(**configure)
+
         return child
 
     def collapse(

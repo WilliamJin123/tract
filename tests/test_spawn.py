@@ -203,6 +203,149 @@ class TestSpawn:
 
         session.close()
 
+    # ------------------------------------------------------------------
+    # Spawn-with-persona tests
+    # ------------------------------------------------------------------
+
+    def test_spawn_with_profile(self, tmp_path):
+        """Spawn with profile= loads the workflow profile on the child."""
+        session, parent = _create_session_with_parent(tmp_path)
+        child = session.spawn(
+            parent,
+            purpose="coding task",
+            profile="coding",
+        )
+
+        # Profile should be loaded — active_profile set
+        assert child._active_profile is not None
+        assert child._active_profile.name == "coding"
+        # Profile directives should be committed
+        compiled = child.compile()
+        # At least the inherited snapshot + profile directives
+        assert compiled.commit_count >= 2
+
+        session.close()
+
+    def test_spawn_with_profile_and_stage(self, tmp_path):
+        """Spawn with profile + stage applies stage-specific config."""
+        session, parent = _create_session_with_parent(tmp_path)
+        child = session.spawn(
+            parent,
+            purpose="implement feature",
+            profile="coding",
+            stage="implement",
+        )
+
+        # Stage config applies — implement stage sets temperature=0.2
+        assert child.get_config("temperature") == 0.2
+        assert child.get_config("compile_strategy") == "messages"
+
+        session.close()
+
+    def test_spawn_with_directives(self, tmp_path):
+        """Spawn with directives= commits named directives on the child."""
+        session, parent = _create_session_with_parent(tmp_path)
+        child = session.spawn(
+            parent,
+            purpose="scoped task",
+            directives={
+                "role": "You are a security analyst.",
+                "scope": "Only analyze the auth module.",
+            },
+        )
+
+        compiled = child.compile()
+        text = " ".join(m.content for m in compiled.messages)
+        assert "security analyst" in text
+        assert "auth module" in text
+
+        session.close()
+
+    def test_spawn_with_configure(self, tmp_path):
+        """Spawn with configure= applies config to the child."""
+        session, parent = _create_session_with_parent(tmp_path)
+        child = session.spawn(
+            parent,
+            purpose="configured task",
+            configure={"temperature": 0.1, "analyst_role": "performance"},
+        )
+
+        assert child.get_config("temperature") == 0.1
+        assert child.get_config("analyst_role") == "performance"
+
+        session.close()
+
+    def test_spawn_directives_override_profile(self, tmp_path):
+        """Directives passed to spawn override same-named profile directives."""
+        session, parent = _create_session_with_parent(tmp_path)
+        child = session.spawn(
+            parent,
+            purpose="override test",
+            profile="coding",
+            directives={"methodology": "Custom methodology override."},
+        )
+
+        # The custom directive should win (closest-to-HEAD deduplication)
+        compiled = child.compile()
+        text = " ".join(m.content for m in compiled.messages)
+        assert "Custom methodology override" in text
+
+        session.close()
+
+    def test_spawn_configure_overrides_stage(self, tmp_path):
+        """Explicit configure overrides stage defaults from profile."""
+        session, parent = _create_session_with_parent(tmp_path)
+        child = session.spawn(
+            parent,
+            purpose="explicit config",
+            profile="coding",
+            stage="implement",
+            configure={"temperature": 0.9},
+        )
+
+        # Explicit temperature (0.9) should win over implement stage default (0.2)
+        assert child.get_config("temperature") == 0.9
+        # compile_strategy from stage still applies (not overridden)
+        assert child.get_config("compile_strategy") == "messages"
+
+        session.close()
+
+    def test_spawn_stage_without_profile_raises(self, tmp_path):
+        """Passing stage without profile raises ValueError."""
+        session, parent = _create_session_with_parent(tmp_path)
+        with pytest.raises(ValueError, match="stage requires profile"):
+            session.spawn(
+                parent,
+                purpose="bad combo",
+                stage="implement",
+            )
+
+        session.close()
+
+    def test_spawn_all_persona_params(self, tmp_path):
+        """Full persona: profile + stage + directives + configure."""
+        session, parent = _create_session_with_parent(tmp_path)
+        child = session.spawn(
+            parent,
+            purpose="full persona",
+            profile="research",
+            stage="ingest",
+            directives={"focus": "Focus only on primary sources."},
+            configure={"domain": "machine-learning"},
+        )
+
+        assert child._active_profile is not None
+        assert child._active_profile.name == "research"
+        # ingest stage sets temperature=0.3
+        assert child.get_config("temperature") == 0.3
+        # explicit configure applied last
+        assert child.get_config("domain") == "machine-learning"
+        compiled = child.compile()
+        text = " ".join(m.content for m in compiled.messages)
+        assert "primary sources" in text
+
+        session.close()
+
 
 # ---------------------------------------------------------------------------
 # Collapse tests
