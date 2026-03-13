@@ -121,7 +121,7 @@ class TestOpenLLMConfig:
             lambda **kwargs: mock_client,
         )
         t = Tract.open(api_key="test-key")
-        assert hasattr(t, "_llm_client")
+        assert t.llm_client is not None
         assert t._owns_llm_client is True
         t.close()
 
@@ -153,7 +153,7 @@ class TestOpenLLMConfig:
 
     def test_open_without_api_key_no_llm(self):
         t = Tract.open()
-        assert not hasattr(t, "_llm_client")
+        assert t.llm_client is None
         assert t._owns_llm_client is False
         t.close()
 
@@ -630,8 +630,8 @@ class TestCustomLLMClient:
         client = MockLLMClient(responses=["injected!"])
         t = Tract.open(llm_client=client)
 
-        assert hasattr(t, "_llm_client")
-        assert t._llm_client is client
+        assert t.llm_client is not None
+        assert t.llm_client is client
         assert t._owns_llm_client is False  # caller owns lifecycle
         t.system("System")
         resp = t.chat("Hi")

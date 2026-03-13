@@ -804,7 +804,7 @@ class TestMergeIntegration:
                 pass
 
         t.configure_llm(FakeLLMClient())
-        assert hasattr(t, "_llm_client")
+        assert t.llm_client is not None
         assert hasattr(t, "_default_resolver")
         t.close()
 

@@ -184,6 +184,17 @@ class BlobRepository(ABC):
         ...
 
     @abstractmethod
+    def batch_get(self, content_hashes: list[str]) -> dict[str, BlobRow]:
+        """Get multiple blobs by content hash in a single query.
+
+        Returns a dict mapping content_hash to BlobRow.
+        Hashes with no matching blob are omitted from the result.
+
+        This avoids N+1 queries during compilation.
+        """
+        ...
+
+    @abstractmethod
     def delete_if_orphaned(self, content_hash: str) -> bool:
         """Delete a blob if no commit still references it.
 

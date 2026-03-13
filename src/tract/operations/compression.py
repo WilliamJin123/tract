@@ -371,9 +371,9 @@ def _build_messages_text(
             if "content" in data and isinstance(data["content"], str):
                 text = data["content"]
             elif "payload" in data:
-                text = json.dumps(data["payload"], sort_keys=True)
+                text = json.dumps(data["payload"])
             else:
-                text = json.dumps(data, sort_keys=True)
+                text = json.dumps(data)
 
         # Enrich label with tool metadata when available
         meta = row.metadata_json or {}

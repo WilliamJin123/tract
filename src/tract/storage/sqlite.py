@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from collections.abc import Sequence
 
-from sqlalchemy import func, select, and_, or_
+from sqlalchemy import delete, func, select, update, and_, or_
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -76,6 +76,14 @@ class SqliteBlobRepository(BlobRepository):
         ).on_conflict_do_nothing(index_elements=["content_hash"])
         self._session.execute(stmt)
         self._session.flush()
+
+    def batch_get(self, content_hashes: list[str]) -> dict[str, BlobRow]:
+        """Get multiple blobs by content hash in a single query."""
+        if not content_hashes:
+            return {}
+        stmt = select(BlobRow).where(BlobRow.content_hash.in_(content_hashes))
+        rows = self._session.execute(stmt).scalars().all()
+        return {row.content_hash: row for row in rows}
 
     def delete_if_orphaned(self, content_hash: str) -> bool:
         """Delete a blob if no commit still references it.
@@ -290,64 +298,58 @@ class SqliteCommitRepository(CommitRepository):
         parent_hash/edit_target references from other commits, before
         deleting the commit itself.
         """
-        # Delete CommitParentRow entries where this commit is child or parent
-        parent_stmts = select(CommitParentRow).where(
-            (CommitParentRow.commit_hash == commit_hash)
-            | (CommitParentRow.parent_hash == commit_hash)
+        # Bulk delete CommitParentRow entries where this commit is child or parent
+        self._session.execute(
+            delete(CommitParentRow).where(
+                (CommitParentRow.commit_hash == commit_hash)
+                | (CommitParentRow.parent_hash == commit_hash)
+            )
         )
-        for row in self._session.execute(parent_stmts).scalars().all():
-            self._session.delete(row)
 
-        # Delete AnnotationRow entries referencing this commit
-        annotation_stmts = select(AnnotationRow).where(
-            AnnotationRow.target_hash == commit_hash
+        # Bulk delete AnnotationRow entries referencing this commit
+        self._session.execute(
+            delete(AnnotationRow).where(AnnotationRow.target_hash == commit_hash)
         )
-        for row in self._session.execute(annotation_stmts).scalars().all():
-            self._session.delete(row)
 
-        # Delete RefRow entries pointing to this commit (e.g., ORIG_HEAD)
-        ref_stmts = select(RefRow).where(
-            RefRow.commit_hash == commit_hash
+        # Bulk delete RefRow entries pointing to this commit (e.g., ORIG_HEAD)
+        self._session.execute(
+            delete(RefRow).where(RefRow.commit_hash == commit_hash)
         )
-        for row in self._session.execute(ref_stmts).scalars().all():
-            self._session.delete(row)
 
-        # Delete CompileEffectiveRow entries referencing this commit
-        effective_stmts = select(CompileEffectiveRow).where(
-            CompileEffectiveRow.commit_hash == commit_hash
+        # Bulk delete CompileEffectiveRow entries referencing this commit
+        self._session.execute(
+            delete(CompileEffectiveRow).where(
+                CompileEffectiveRow.commit_hash == commit_hash
+            )
         )
-        for row in self._session.execute(effective_stmts).scalars().all():
-            self._session.delete(row)
 
-        # Delete CommitToolRow entries referencing this commit
-        tool_stmts = select(CommitToolRow).where(
-            CommitToolRow.commit_hash == commit_hash
+        # Bulk delete CommitToolRow entries referencing this commit
+        self._session.execute(
+            delete(CommitToolRow).where(CommitToolRow.commit_hash == commit_hash)
         )
-        for row in self._session.execute(tool_stmts).scalars().all():
-            self._session.delete(row)
 
-        # Nullify parent_hash on children (SET NULL semantics)
-        child_stmts = select(CommitRow).where(
-            CommitRow.parent_hash == commit_hash
+        # Bulk nullify parent_hash on children (SET NULL semantics)
+        self._session.execute(
+            update(CommitRow)
+            .where(CommitRow.parent_hash == commit_hash)
+            .values(parent_hash=None)
         )
-        for child in self._session.execute(child_stmts).scalars().all():
-            child.parent_hash = None
 
-        # Nullify edit_target references (SET NULL semantics)
-        resp_stmts = select(CommitRow).where(
-            CommitRow.edit_target == commit_hash
+        # Bulk nullify edit_target references (SET NULL semantics)
+        self._session.execute(
+            update(CommitRow)
+            .where(CommitRow.edit_target == commit_hash)
+            .values(edit_target=None)
         )
-        for resp in self._session.execute(resp_stmts).scalars().all():
-            resp.edit_target = None
 
-        # Flush all modifications BEFORE deleting the commit itself
+        # Now delete the commit itself
+        self._session.execute(
+            delete(CommitRow).where(CommitRow.commit_hash == commit_hash)
+        )
+
+        # Expire all to sync identity map with bulk changes above
+        self._session.expire_all()
         self._session.flush()
-
-        # Now delete the commit
-        commit = self.get(commit_hash)
-        if commit is not None:
-            self._session.delete(commit)
-            self._session.flush()
 
 
 class SqliteRefRepository(RefRepository):
@@ -747,30 +749,29 @@ class SqliteOperationEventRepository(OperationEventRepository):
 
     def delete_commit(self, commit_hash: str) -> None:
         """Delete all OperationCommitRow entries for a commit hash."""
-        stmt = select(OperationCommitRow).where(
-            OperationCommitRow.commit_hash == commit_hash
+        self._session.execute(
+            delete(OperationCommitRow).where(
+                OperationCommitRow.commit_hash == commit_hash
+            )
         )
-        for row in self._session.execute(stmt).scalars().all():
-            self._session.delete(row)
+        self._session.expire_all()
         self._session.flush()
 
     def delete_event(self, event_id: str) -> None:
         """Delete an event and all its commit associations."""
-        # Delete commit associations first
-        for row in self._session.execute(
-            select(OperationCommitRow).where(
+        # Bulk delete commit associations first
+        self._session.execute(
+            delete(OperationCommitRow).where(
                 OperationCommitRow.event_id == event_id
             )
-        ).scalars().all():
-            self._session.delete(row)
-        # Delete the event itself
-        event = self._session.execute(
-            select(OperationEventRow).where(
+        )
+        # Bulk delete the event itself
+        self._session.execute(
+            delete(OperationEventRow).where(
                 OperationEventRow.event_id == event_id
             )
-        ).scalar_one_or_none()
-        if event is not None:
-            self._session.delete(event)
+        )
+        self._session.expire_all()
         self._session.flush()
 
 

@@ -329,10 +329,18 @@ class Session:
             raise SessionError(f"Tract not held in session: {tract_id}")
         tract = self._tracts.pop(tract_id)
         tract._cache.clear()
+        # Close the LLM client if the tract owns one
+        if tract._owns_llm_client and tract._llm_client is not None:
+            try:
+                tract._llm_client.close()
+            except Exception as e:
+                logger.warning("Failed to close LLM client for tract %s: %s", tract_id, e, exc_info=True)
+            # Prevent tract.close() from double-closing
+            tract._owns_llm_client = False
         try:
             tract._session.close()
         except Exception as e:
-            logger.debug("Failed to close session for tract %s: %s", tract_id, e, exc_info=True)
+            logger.warning("Failed to close session for tract %s: %s", tract_id, e, exc_info=True)
 
     def list_tracts(self) -> list[dict]:
         """List all tracts in the session.
@@ -469,10 +477,10 @@ class Session:
 
         Returns *result* unchanged when no config attachment is needed.
         """
-        llm_client = getattr(into, "_llm_client", None)
+        llm_client = into.llm_client
         if llm_client is not None and content is None:
             import dataclasses as _dc
-            effective_config = getattr(into, "_default_config", None)
+            effective_config = into.default_config
             if effective_config is not None:
                 result = _dc.replace(result, config=effective_config)
         return result
@@ -502,7 +510,7 @@ class Session:
         """
         auto_commit = self._resolve_auto_commit(auto_commit)
 
-        llm_client = getattr(into, "_llm_client", None)
+        llm_client = into.llm_client
 
         result = collapse_tract(
             parent_tract=into,
@@ -537,7 +545,7 @@ class Session:
 
         auto_commit = self._resolve_auto_commit(auto_commit)
 
-        llm_client = getattr(into, "_llm_client", None)
+        llm_client = into.llm_client
 
         result = await acollapse_tract(
             parent_tract=into,

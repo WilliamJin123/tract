@@ -443,6 +443,15 @@ class DefaultContextCompiler:
             effective.append(c)
 
         # Deduplicate named InstructionContent (directive override-by-name)
+        # Batch-fetch all blobs needed for instruction dedup in one query
+        instruction_hashes: list[str] = []
+        for c in effective:
+            if c.content_type == "instruction":
+                row = edit_map.get(c.commit_hash, c)
+                instruction_hashes.append(row.content_hash)
+
+        blob_cache = self._blob_repo.batch_get(instruction_hashes) if instruction_hashes else {}
+
         seen_names: dict[str, int] = {}
         remove_indices: set[int] = set()
         for i in range(len(effective) - 1, -1, -1):  # walk HEAD -> root
@@ -450,7 +459,7 @@ class DefaultContextCompiler:
                 continue
             # Resolve blob (use edit_map if available)
             row = edit_map.get(effective[i].commit_hash, effective[i])
-            blob = self._blob_repo.get(row.content_hash)
+            blob = blob_cache.get(row.content_hash)
             if blob is None:
                 continue
             payload = _json.loads(blob.payload_json)
@@ -537,6 +546,23 @@ class DefaultContextCompiler:
         else:
             full_start = 0
 
+        # Batch-fetch blobs needed for messages-only commits (role resolution)
+        messages_only_hashes: list[str] = []
+        for i, c in enumerate(effective_commits):
+            is_messages_only = (
+                strategy == "messages"
+                or (strategy == "adaptive" and i < full_start)
+            )
+            if is_messages_only:
+                source_commit = edit_map.get(c.commit_hash, c)
+                messages_only_hashes.append(source_commit.content_hash)
+
+        messages_blob_cache = (
+            self._blob_repo.batch_get(messages_only_hashes)
+            if messages_only_hashes
+            else {}
+        )
+
         for i, c in enumerate(effective_commits):
             # Decide whether this commit gets messages-only treatment
             messages_only = (
@@ -549,7 +575,7 @@ class DefaultContextCompiler:
                 summary = c.message or f"[{c.content_type}] commit"
                 # Still need to resolve the role from the source commit
                 source_commit = edit_map.get(c.commit_hash, c)
-                blob = self._blob_repo.get(source_commit.content_hash)
+                blob = messages_blob_cache.get(source_commit.content_hash)
                 if blob is not None:
                     content_data = json.loads(blob.payload_json)
                     role = self._map_role(source_commit.content_type, content_data)

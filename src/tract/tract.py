@@ -358,6 +358,7 @@ class Tract:
         self._in_batch: bool = False
         self._closed = False
         self._owns_llm_client: bool = False
+        self._llm_client: LLMClient | None = None  # type: ignore[assignment]
         self._default_config: LLMConfig | None = None
         self._operation_configs: OperationConfigs = OperationConfigs()
         self._operation_prompts: OperationPrompts = OperationPrompts()
@@ -2194,7 +2195,7 @@ class Tract:
             client: The LLM client that produced the response.  If None,
                 falls back to the tract-level default.
         """
-        c = client if client is not None else getattr(self, "_llm_client", None)
+        c = client if client is not None else self._llm_client
         if c is not None and hasattr(c, "extract_content"):
             return c.extract_content(response)
         # Default: OpenAI format
@@ -2219,7 +2220,7 @@ class Tract:
             client: The LLM client that produced the response.  If None,
                 falls back to the tract-level default.
         """
-        c = client if client is not None else getattr(self, "_llm_client", None)
+        c = client if client is not None else self._llm_client
         if c is not None and hasattr(c, "extract_usage"):
             return c.extract_usage(response)
         # Default: OpenAI format
@@ -5555,8 +5556,8 @@ class Tract:
         return loaded
 
     @property
-    def llm_client(self) -> LLMClient:
-        """The configured LLM client for direct access.
+    def llm_client(self) -> LLMClient | None:
+        """The configured LLM client, or ``None`` if not configured.
 
         Use this for advanced agent patterns that need raw LLM calls
         without committing to conversation history (e.g. custom
@@ -5566,17 +5567,29 @@ class Tract:
         or :meth:`run`.
 
         Returns:
-            The LLM client instance.
-
-        Raises:
-            RuntimeError: If no LLM client is configured.
+            The LLM client instance, or ``None``.
         """
-        if not hasattr(self, "_llm_client"):
-            raise RuntimeError(
-                "No LLM client configured. Pass api_key= to Tract.open() "
-                "or call configure_llm(client)."
-            )
         return self._llm_client
+
+    @property
+    def default_config(self) -> LLMConfig | None:
+        """The default LLM configuration, or ``None`` if not set."""
+        return self._default_config
+
+    @property
+    def retry_config(self) -> RetryConfig | None:
+        """The retry configuration for LLM calls, or ``None``."""
+        return self._retry_config
+
+    @property
+    def commit_reasoning(self) -> bool:
+        """Whether reasoning traces are committed during agent loops."""
+        return self._commit_reasoning
+
+    @property
+    def tool_summarization_config(self) -> ToolSummarizationConfig | None:
+        """Tool summarization configuration, or ``None`` if disabled."""
+        return self._tool_summarization_config
 
     def configure_llm(
         self,
@@ -5890,13 +5903,17 @@ class Tract:
             The resolved LLM client.
 
         Raises:
-            AttributeError: If no client is configured at any level.
+            RuntimeError: If no client is configured at any level.
         """
         client = getattr(self._operation_clients, operation, None)
         if client is not None:
             return client
-        # Fall back to tract-level default (AttributeError if not set)
-        return self._llm_client
+        if self._llm_client is not None:
+            return self._llm_client
+        raise RuntimeError(
+            "No LLM client configured. Pass api_key= to Tract.open() "
+            "or call configure_llm(client)."
+        )
 
     def _has_llm_client(self, operation: str | None = None) -> bool:
         """Check if an LLM client is available.
@@ -5911,7 +5928,7 @@ class Tract:
             op_client = getattr(self._operation_clients, operation, None)
             if op_client is not None:
                 return True
-        return hasattr(self, "_llm_client")
+        return self._llm_client is not None
 
     def _resolve_resolver(
         self, resolver: ResolverCallable | str | None, operation: str = "merge",
@@ -7484,7 +7501,7 @@ class Tract:
             return
         self._closed = True
         # Close internally-created LLM client (not externally-provided ones)
-        if self._owns_llm_client and hasattr(self, "_llm_client"):
+        if self._owns_llm_client and self._llm_client is not None:
             try:
                 self._llm_client.close()
             except Exception:
@@ -7508,6 +7525,39 @@ class Tract:
 
     def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> None:
         self.close()
+
+    async def aclose(self) -> None:
+        """Close the tract, releasing async LLM resources first.
+
+        If the LLM client supports ``aclose()``, it is awaited for clean
+        async teardown.  All remaining (sync) resources are then released
+        via :meth:`close`.
+        """
+        if self._closed:
+            return
+        # Async-close the LLM client if it supports it
+        if self._owns_llm_client and self._llm_client is not None:
+            _aclose = getattr(self._llm_client, "aclose", None)
+            if _aclose is not None:
+                try:
+                    await _aclose()
+                except Exception:
+                    logger.debug("Failed to async-close LLM client", exc_info=True)
+                # Prevent sync close() from double-closing the client
+                self._owns_llm_client = False
+        # Delegate remaining teardown to sync close()
+        self.close()
+
+    async def __aenter__(self) -> Tract:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        await self.aclose()
 
     # ------------------------------------------------------------------
     # Repr

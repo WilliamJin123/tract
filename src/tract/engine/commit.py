@@ -58,7 +58,7 @@ def extract_text_from_content(content: BaseModel) -> str:
     if hasattr(content, "content") and isinstance(content.content, str):  # type: ignore[union-attr]  # ArtifactContent
         return content.content  # type: ignore[return-value]
     if hasattr(content, "payload"):
-        return json.dumps(content.payload, sort_keys=True)  # type: ignore[attr-defined]  # ToolIOContent, FreeformContent
+        return json.dumps(content.payload)  # type: ignore[attr-defined]  # ToolIOContent, FreeformContent
     return ""
 
 

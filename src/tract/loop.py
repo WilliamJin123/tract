@@ -186,7 +186,7 @@ def run_loop(
     from tract.tract import _retry_with_backoff
 
     cfg = config or LoopConfig()
-    client = llm_client or getattr(tract, "_llm_client", None)
+    client = llm_client or tract.llm_client
     if client is None:
         raise ValueError(
             "No LLM client available. Pass llm_client= or configure on Tract.open()."
@@ -196,7 +196,7 @@ def run_loop(
         tools = tract.as_tools(format="openai")
 
     # Grab effective LLM config for the result
-    effective_config = getattr(tract, "_default_config", None)
+    effective_config = tract.default_config
 
     # Commit task as initial user message
     if task:
@@ -300,7 +300,7 @@ def run_loop(
                 step_metrics=tuple(step_metrics_list),
             )
 
-        retry_cfg: RetryConfig | None = getattr(tract, "_retry_config", None)
+        retry_cfg: RetryConfig | None = tract.retry_config
         llm_start = time.monotonic()
         try:
             if use_streaming:
@@ -598,7 +598,7 @@ def _handle_reasoning(
             think_match = re.search(r"<think>(.*?)</think>", content, re.DOTALL)
             if think_match:
                 reasoning_text = think_match.group(1).strip()
-                if reasoning_text and getattr(tract, "_commit_reasoning", True):
+                if reasoning_text and tract.commit_reasoning:
                     tract.reasoning(reasoning_text, format="think_tags")
                 content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
                 # Also strip unclosed <think> (model hit max_tokens mid-thought)
@@ -612,7 +612,7 @@ def _handle_reasoning(
     reasoning_text, reasoning_format = reasoning_result
 
     # Commit reasoning as a separate commit (SKIP by default)
-    if reasoning_text and getattr(tract, "_commit_reasoning", True):
+    if reasoning_text and tract.commit_reasoning:
         tract.reasoning(reasoning_text, format=reasoning_format)
 
     # Strip <think> tags from content when that was the extraction format
@@ -677,7 +677,7 @@ def _maybe_summarize_tool_result(
     If summarization is not configured or the result is under threshold,
     the original output and metadata are returned unchanged.
     """
-    config = getattr(tract, "_tool_summarization_config", None)
+    config = tract.tool_summarization_config
     if config is None:
         return output, metadata
 
@@ -1034,7 +1034,7 @@ async def arun_loop(
     from tract.tract import _aretry_with_backoff
 
     cfg = config or LoopConfig()
-    client = llm_client or getattr(tract, "_llm_client", None)
+    client = llm_client or tract.llm_client
     if client is None:
         raise ValueError(
             "No LLM client available. Pass llm_client= or configure on Tract.open()."
@@ -1043,7 +1043,7 @@ async def arun_loop(
     if tools is None:
         tools = tract.as_tools(format="openai")
 
-    effective_config = getattr(tract, "_default_config", None)
+    effective_config = tract.default_config
 
     # Commit task as initial user message (sync — local operation)
     if task:
@@ -1145,7 +1145,7 @@ async def arun_loop(
                 step_metrics=tuple(step_metrics_list),
             )
 
-        retry_cfg: RetryConfig | None = getattr(tract, "_retry_config", None)
+        retry_cfg: RetryConfig | None = tract.retry_config
         llm_start = time.monotonic()
         try:
             if use_streaming:

@@ -179,7 +179,7 @@ class TestResolveLLMClient:
 
     def test_raises_when_no_client_at_all(self):
         t = Tract.open()
-        with pytest.raises(AttributeError):
+        with pytest.raises(RuntimeError):
             t._resolve_llm_client("chat")
         t.close()
 
@@ -190,7 +190,7 @@ class TestResolveLLMClient:
         t.configure_clients(chat=chat_client)
         assert t._resolve_llm_client("chat") is chat_client
         # Other operations still raise
-        with pytest.raises(AttributeError):
+        with pytest.raises(RuntimeError):
             t._resolve_llm_client("merge")
         t.close()
 

@@ -50,8 +50,8 @@ def _load_content_text(blob_repo: BlobRepository, content_hash: str) -> str:
         if "content" in data and isinstance(data["content"], str):
             return data["content"]
         if "payload" in data:
-            return json.dumps(data["payload"], sort_keys=True)
-        return json.dumps(data, sort_keys=True)
+            return json.dumps(data["payload"])
+        return json.dumps(data)
     except (json.JSONDecodeError, TypeError) as exc:
         logger.warning("Failed to parse blob %s: %s", content_hash, exc)
         return "[content unavailable]"
