@@ -520,7 +520,13 @@ class Tract:
                 (e.g. *url* + *engine*, *model* + *default_config*).
         """
         # Auto-discover .tract/tract.db when no explicit path/url/engine
-        if path == ":memory:" and url is None and engine is None:
+        import os as _os
+        if (
+            path == ":memory:"
+            and url is None
+            and engine is None
+            and not _os.environ.get("TRACT_NO_AUTO_DISCOVER")
+        ):
             from pathlib import Path as _Path
             auto_db = _Path(".tract") / "tract.db"
             if auto_db.is_file():

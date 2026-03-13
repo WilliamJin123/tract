@@ -356,55 +356,75 @@ class TestResumeAndCrashRecovery:
 
 
 class TestConcurrency:
-    """Tests for concurrent access from multiple threads."""
+    """Tests for concurrent access from multiple threads.
+
+    Each thread must use its own Tract instance (SQLAlchemy sessions are
+    not thread-safe).  These tests validate the per-thread pattern works
+    correctly on a shared file-backed database.
+    """
 
     def test_concurrent_commits_from_different_threads(self, tmp_path):
-        """Two tracts, each in its own thread, both commit simultaneously."""
+        """Two threads, each with its own Tract, commit simultaneously."""
+        from tract import Tract
         db_path = str(tmp_path / "test.db")
-        session = Session.open(db_path)
-        t1 = session.create_tract()
-        t2 = session.create_tract()
 
-        def commit_messages(tract, count):
+        # Create two tracts on the main thread, record their IDs
+        t1 = Tract.open(db_path, tract_id="tract-1")
+        t2 = Tract.open(db_path, tract_id="tract-2")
+        tid1, tid2 = t1.tract_id, t2.tract_id
+        t1.close()
+        t2.close()
+
+        def commit_messages(tract_id, count):
+            from tract import Tract
+            t = Tract.open(db_path, tract_id=tract_id)
             for i in range(count):
-                tract.commit(
-                    DialogueContent(role="user", text=f"msg-{i}")
-                )
+                t.commit(DialogueContent(role="user", text=f"msg-{i}"))
+            t.close()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            f1 = pool.submit(commit_messages, t1, 10)
-            f2 = pool.submit(commit_messages, t2, 10)
+            f1 = pool.submit(commit_messages, tid1, 10)
+            f2 = pool.submit(commit_messages, tid2, 10)
             f1.result(timeout=30)
             f2.result(timeout=30)
 
-        # Verify all commits exist
+        # Verify via session
+        session = Session.open(db_path)
         tl = session.timeline()
         assert len(tl) == 20
-
         session.close()
 
     def test_read_while_write(self, tmp_path):
-        """One thread commits, another reads timeline -- no errors."""
+        """One thread commits, another reads -- no errors."""
+        from tract import Tract
         db_path = str(tmp_path / "test.db")
-        session = Session.open(db_path)
-        t = session.create_tract()
+
+        # Seed a tract
+        t = Tract.open(db_path, tract_id="rw-tract")
+        tid = t.tract_id
+        t.close()
 
         errors = []
 
         def writer():
+            from tract import Tract
+            t = Tract.open(db_path, tract_id=tid)
             for i in range(10):
                 try:
                     t.commit(DialogueContent(role="user", text=f"msg-{i}"))
                 except Exception as e:
                     errors.append(e)
+            t.close()
 
         def reader():
+            s = Session.open(db_path)
             for _ in range(10):
                 try:
-                    session.timeline()
+                    s.timeline()
                     time.sleep(0.001)
                 except Exception as e:
                     errors.append(e)
+            s.close()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             f1 = pool.submit(writer)
@@ -414,45 +434,24 @@ class TestConcurrency:
 
         assert errors == [], f"Errors during concurrent read/write: {errors}"
 
-        session.close()
+    def test_cross_thread_tract_raises(self):
+        """Using a Tract from a different thread raises ThreadSafetyError."""
+        from tract import Tract, ThreadSafetyError
+        t = Tract.open()
+        error_holder = [None]
 
-    def test_concurrent_spawn_and_commit(self, tmp_path):
-        """One thread spawns a child from t1, another commits to t2 simultaneously."""
-        db_path = str(tmp_path / "test.db")
-        session = Session.open(db_path)
-        t1 = session.create_tract()
-        t1.commit(InstructionContent(text="root for spawn"))
-        t2 = session.create_tract()
-        t2.commit(InstructionContent(text="root for commits"))
-
-        errors = []
-        child_holder = [None]
-
-        def spawner():
+        def access_from_other_thread():
             try:
-                child_holder[0] = session.spawn(t1, purpose="concurrent spawn")
-            except Exception as e:
-                errors.append(e)
+                t.commit(DialogueContent(role="user", text="cross-thread"))
+            except ThreadSafetyError as e:
+                error_holder[0] = e
 
-        def committer():
-            try:
-                for i in range(5):
-                    t2.commit(
-                        DialogueContent(role="user", text=f"concurrent-{i}")
-                    )
-            except Exception as e:
-                errors.append(e)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(access_from_other_thread).result(timeout=10)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            f1 = pool.submit(spawner)
-            f2 = pool.submit(committer)
-            f1.result(timeout=30)
-            f2.result(timeout=30)
-
-        assert errors == [], f"Errors during concurrent spawn+commit: {errors}"
-        assert child_holder[0] is not None
-
-        session.close()
+        assert error_holder[0] is not None
+        assert "thread" in str(error_holder[0]).lower()
+        t.close()
 
 
 # ---------------------------------------------------------------------------

@@ -3,8 +3,17 @@
 Provides in-memory SQLite engine, session, and repository fixtures.
 """
 
+import os
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _disable_auto_discover():
+    """Prevent Tract.open() from auto-discovering .tract/tract.db in the CWD."""
+    os.environ["TRACT_NO_AUTO_DISCOVER"] = "1"
+    yield
+    os.environ.pop("TRACT_NO_AUTO_DISCOVER", None)
 
 from tract.storage.engine import create_trace_engine, init_db
 from tract.storage.sqlite import (

@@ -1,3 +1,6 @@
+# Tract runtime state (auto-created by Tract.open())
+.tract/
+
 # Byte-compiled / optimized / DLL files
 **/.claude/
 __pycache__/
