@@ -6,6 +6,8 @@ session factory creation, and database initialization.
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import Engine, create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -103,8 +105,6 @@ def _migrate_compressions_v5_to_v6(engine: Engine) -> None:
             instructions = row[7] if len(row) > 7 else None
 
             # Build params_json
-            import json
-
             params = {}
             if target_tokens is not None:
                 params["target_tokens"] = target_tokens

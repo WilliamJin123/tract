@@ -371,6 +371,7 @@ class Tract:
         self._commit_reasoning: bool = True
         self._auto_message_enabled: bool = False
         self._retry_config: RetryConfig | None = None
+        self._default_resolver: ResolverCallable | None = None  # type: ignore[assignment]
 
         # Tool defaults (set via open() or set_tool_profile/set_tool_result_format)
         self._tool_profile: str | ToolProfile | None = None
@@ -5631,7 +5632,14 @@ class Tract:
                 from *client* (suitable for OpenAI-compatible APIs).
                 Pass a custom resolver for non-OpenAI clients.
         """
+        # Close the old client if we own it (prevents resource leak on swap)
+        if self._owns_llm_client and self._llm_client is not None:
+            try:
+                self._llm_client.close()
+            except Exception:
+                pass
         self._llm_client = client
+        self._owns_llm_client = False  # External client — caller owns lifecycle
         if resolver is not None:
             self._default_resolver = resolver
         else:
@@ -5984,7 +5992,7 @@ class Tract:
                 max_tokens=llm_cfg.get("max_tokens", 2048),
             )
         if resolver is None:
-            return getattr(self, "_default_resolver", None)
+            return self._default_resolver
         return resolver
 
     def _auto_message(self, content_type: str, text: str) -> str:
@@ -6091,7 +6099,7 @@ class Tract:
 
         # If using default resolver AND per-call config overrides exist,
         # create a tailored resolver with those overrides.
-        if effective_resolver is getattr(self, "_default_resolver", None):
+        if effective_resolver is self._default_resolver:
             merge_config = self._resolve_llm_config(
                 "merge", model=model, temperature=temperature,
                 max_tokens=max_tokens, llm_config=llm_config,

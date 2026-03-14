@@ -79,6 +79,7 @@ class CacheManager:
         self._cache[head_hash] = snapshot
         while len(self._cache) > self._maxsize:
             evicted_key, _ = self._cache.popitem(last=False)
+            self._api_overrides.pop(evicted_key, None)
             logger.debug("Cache evict: %s", evicted_key[:12])
         logger.debug("Cache put: %s (size=%d)", head_hash[:12], len(self._cache))
 

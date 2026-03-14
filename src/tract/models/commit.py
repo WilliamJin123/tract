@@ -7,6 +7,7 @@ CommitOperation is the enum for commit operations (APPEND, EDIT).
 from __future__ import annotations
 
 import enum
+import json
 from datetime import datetime
 from typing import Optional, TypedDict
 
@@ -77,7 +78,6 @@ class CommitInfo(BaseModel):
         which can persist in the DB. Handle that gracefully.
         """
         if isinstance(v, str):
-            import json
             try:
                 v = json.loads(v)
             except (json.JSONDecodeError, TypeError, ValueError):

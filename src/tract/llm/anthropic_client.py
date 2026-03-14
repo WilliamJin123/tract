@@ -7,7 +7,6 @@ so the rest of tract (loop, compression, spawn, resolver) works unchanged.
 from __future__ import annotations
 
 import json
-import logging
 import os
 import uuid
 from collections.abc import AsyncIterator, Iterator
@@ -21,8 +20,6 @@ from tract.llm.errors import (
     LLMRateLimitError,
     LLMResponseError,
 )
-
-logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_TOKENS = 8192
 
