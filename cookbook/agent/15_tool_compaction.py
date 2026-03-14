@@ -75,9 +75,7 @@ def main():
 
         # Show what compilation looks like after the edit
         print(f"\n  Compiled context:")
-        for m in t.compile().messages:
-            preview = (m.content or "")[:65].replace("\n", " ")
-            print(f"    [{m.role:9s}] {preview}")
+        t.compile().pprint(style="compact")
 
     # =================================================================
     # 2. Drop failed tool turns
@@ -124,9 +122,7 @@ def main():
         print(f"  Dropped {drop.turns_dropped} failed turn(s) ({drop.commits_skipped} commits)")
 
         print(f"\n  Compiled context (failed turns removed):")
-        for m in t.compile().messages:
-            preview = (m.content or "")[:65].replace("\n", " ")
-            print(f"    [{m.role:9s}] {preview}")
+        t.compile().pprint(style="compact")
 
     # =================================================================
     # 3. Batch compaction with compress_tool_calls()
@@ -217,9 +213,7 @@ def main():
 
             # Show what the compacted context looks like
             print(f"\n  Compiled context after compaction:")
-            for m in t.compile().messages:
-                preview = (m.content or "")[:70].replace("\n", " ")
-                print(f"    [{m.role:9s}] {preview}")
+            t.compile().pprint(style="compact")
 
     # =================================================================
     # 4. Auto-compact middleware pattern

@@ -212,10 +212,8 @@ def main():
             msg = (ci.message or "")[:55]
             print(f"    {ci.commit_hash[:8]}  {ci.content_type:12s}  {msg}")
 
-        print(f"\n  Compiled context ({t.compile().commit_count} messages):")
-        for m in t.compile().messages:
-            preview = (m.content or "")[:70].replace("\n", " ")
-            print(f"    [{m.role:9s}] {preview}")
+        print(f"\n  Compiled context:")
+        t.compile().pprint(style="compact")
 
 
 if __name__ == "__main__":

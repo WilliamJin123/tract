@@ -60,11 +60,9 @@ def main():
             skip = " [SKIPPED]" if ci.effective_priority == "skip" else ""
             print(f"    {ci.content_type:12s} {(ci.message or '')[:45]}{skip}")
         print()
-        print(f"  Compiled context ({compiled.commit_count} of {total} commits):")
-        for m in compiled.messages:
-            print(f"    [{m.role:9s}] {(m.content or '')[:60]}")
-        print()
-        print(f"  Auto-skipped: {skipped} (config + reasoning)")
+        print(f"\n  Compiled context ({compiled.commit_count} of {total} commits):")
+        compiled.pprint(style="compact")
+        print(f"\n  Auto-skipped: {skipped} (config + reasoning)")
         assert skipped == 2, f"Expected 2 skipped, got {skipped}"
 
     # =================================================================
