@@ -216,7 +216,7 @@ class SemanticGate:
         tract = ctx.tract
         try:
             client = tract._resolve_llm_client("gate")
-        except RuntimeError:
+        except RuntimeError as exc:
             self.last_result = GateResult(
                 gate_name=self.name,
                 passed=True,
@@ -227,7 +227,7 @@ class SemanticGate:
                 f"SemanticGate '{self.name}' requires an LLM client but none "
                 f"is configured.  Call t.configure_llm() or pass api_key= to "
                 f"Tract.open()."
-            )
+            ) from exc
 
         # 3. Build manifest and messages
         manifest = self._build_manifest(tract)
@@ -275,7 +275,7 @@ class SemanticGate:
         try:
             usage = client.extract_usage(response) if hasattr(client, "extract_usage") else None
             if usage and isinstance(usage, dict):
-                tokens_used = usage.get("total_tokens", 0)
+                tokens_used = int(usage.get("total_tokens", 0))
         except Exception:
             pass  # Usage tracking is best-effort
 

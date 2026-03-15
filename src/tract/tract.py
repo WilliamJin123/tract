@@ -4830,6 +4830,27 @@ class Tract:
         entries = self.log(limit=limit)
         return [e for e in entries if e.effective_priority == Priority.PINNED.value]
 
+    def manifest(self, max_log_entries: int = 30) -> str:
+        """Build a lightweight text manifest of current context.
+
+        Returns a formatted summary including branch/HEAD info, a
+        commit log table (metadata only, newest first), active
+        configuration, and tag frequency summary.
+
+        Unlike :meth:`status` and :meth:`compile`, this method is
+        **safe to call from middleware handlers** (gates, maintainers)
+        because it uses only :meth:`log` and :meth:`get_all_configs`
+        — never :meth:`compile` — avoiding middleware recursion.
+
+        Args:
+            max_log_entries: Maximum commits to include (default 30).
+
+        Returns:
+            Formatted text string suitable for human or LLM inspection.
+        """
+        from tract.gate import build_manifest
+        return build_manifest(self, max_log_entries)
+
     def status(self) -> StatusInfo:
         """Get current tract status.
 

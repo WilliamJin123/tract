@@ -693,3 +693,51 @@ class TestGatePostEventValidation:
             handler_id = t.gate(f"gate-{event}", event=event, check="test")  # type: ignore[arg-type]
             assert isinstance(handler_id, str)
             assert f"gate-{event}" in t.list_gates()
+
+
+class TestManifestMethod:
+    """Tests for t.manifest() — the public API for build_manifest."""
+
+    def test_manifest_returns_string(self):
+        with Tract.open() as t:
+            t.system("Hello")
+            m = t.manifest()
+            assert isinstance(m, str)
+            assert "CONTEXT MANIFEST" in m
+
+    def test_manifest_contains_commits(self):
+        with Tract.open() as t:
+            t.system("System prompt")
+            t.user("User message")
+            m = t.manifest()
+            assert "COMMIT LOG" in m
+            assert "Commits shown: 2" in m
+
+    def test_manifest_contains_config(self):
+        with Tract.open() as t:
+            t.configure(stage="research")
+            m = t.manifest()
+            assert "research" in m
+
+    def test_manifest_max_log_entries(self):
+        with Tract.open() as t:
+            for i in range(10):
+                t.user(f"Message {i}")
+            m = t.manifest(max_log_entries=3)
+            assert "Commits shown: 3" in m
+
+    def test_manifest_safe_from_middleware(self):
+        """manifest() does not trigger compile or middleware recursion."""
+        from tract import MiddlewareContext
+
+        calls = []
+
+        def spy(ctx: MiddlewareContext):
+            calls.append(ctx.event)
+
+        with Tract.open() as t:
+            t.use("pre_compile", spy)
+            t.system("Hello")
+            _ = t.manifest()
+            # pre_compile should NOT have been called by manifest()
+            assert "pre_compile" not in calls

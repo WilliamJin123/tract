@@ -237,7 +237,7 @@ class SemanticMaintainer:
         tract = ctx.tract
         try:
             client = tract._resolve_llm_client("maintain")
-        except RuntimeError:
+        except RuntimeError as exc:
             self.last_result = MaintainResult(
                 maintainer_name=self.name,
                 actions_requested=0, actions_executed=0, actions_failed=0,
@@ -249,7 +249,7 @@ class SemanticMaintainer:
                 f"SemanticMaintainer '{self.name}' requires an LLM client but none "
                 f"is configured.  Call t.configure_llm() or pass api_key= to "
                 f"Tract.open()."
-            )
+            ) from exc
 
         # 3. Build manifest
         manifest = build_manifest(tract, self.max_log_entries)
@@ -410,7 +410,7 @@ class SemanticMaintainer:
                 else:
                     peeked_content[h] = str(content)[:2000]
             except Exception as exc:
-                peeked_content[h] = f"(could not retrieve: {exc})"
+                peeked_content[h] = f"(could not retrieve: {str(exc)[:200]})"
 
         performed = len(peeked_content)
 
@@ -464,7 +464,7 @@ class SemanticMaintainer:
         try:
             usage = client.extract_usage(response) if hasattr(client, "extract_usage") else None
             if usage and isinstance(usage, dict):
-                tokens_used = usage.get("total_tokens", 0)
+                tokens_used = int(usage.get("total_tokens", 0))
         except Exception:
             pass
 
