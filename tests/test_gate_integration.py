@@ -648,3 +648,48 @@ class TestParseResponseNullReason:
         # Should be ambiguous (no word-boundary match), defaulting to pass
         assert passed is True
         assert "defaulting to pass" in reason.lower() or "passive" in reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# Post_* event validation
+# ---------------------------------------------------------------------------
+
+class TestGatePostEventValidation:
+    """Gates block via BlockedError. Post_* events fire after the operation
+    is already complete, making blocking misleading.  t.gate() should reject
+    post_* events at registration time."""
+
+    @pytest.mark.parametrize("event", [
+        "post_commit",
+        "post_transition",
+        "post_generate",
+        "post_tool_execute",
+    ])
+    def test_post_event_raises_value_error(self, event):
+        """Registering a gate on a post_* event raises ValueError."""
+        with Tract.open() as t:
+            mock = MockLLMClient(_pass_response())
+            t.configure_llm(mock)
+
+            with pytest.raises(ValueError, match="post_\\*"):
+                t.gate("bad-gate", event=event, check="test")  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("event", [
+        "pre_commit",
+        "pre_compile",
+        "pre_compress",
+        "pre_merge",
+        "pre_gc",
+        "pre_transition",
+        "pre_generate",
+        "pre_tool_execute",
+    ])
+    def test_pre_events_are_allowed(self, event):
+        """All pre_* events should be valid for gate registration."""
+        with Tract.open() as t:
+            mock = MockLLMClient(_pass_response())
+            t.configure_llm(mock)
+
+            handler_id = t.gate(f"gate-{event}", event=event, check="test")  # type: ignore[arg-type]
+            assert isinstance(handler_id, str)
+            assert f"gate-{event}" in t.list_gates()

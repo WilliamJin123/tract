@@ -384,6 +384,7 @@ class Tract:
         self._middleware: dict[str, list[tuple[str, Callable]]] = {}
         self._in_middleware_events: set[str] = set()
         self._gates: dict[str, str] = {}  # gate_name -> handler_id
+        self._maintainers: dict[str, str] = {}  # maintainer_name -> handler_id
 
         # Persistence state
         self._db_path: str = ":memory:"
@@ -1049,6 +1050,10 @@ class Tract:
                     stale = [n for n, gid in self._gates.items() if gid == handler_id]
                     for n in stale:
                         del self._gates[n]
+                    # Clean up _maintainers if this was a maintainer handler
+                    stale_m = [n for n, mid in self._maintainers.items() if mid == handler_id]
+                    for n in stale_m:
+                        del self._maintainers[n]
                     return
         raise ValueError(f"Middleware handler '{handler_id}' not found")
 
@@ -1099,6 +1104,17 @@ class Tract:
         if name in self._gates:
             raise ValueError(f"Gate '{name}' already registered. Remove it first.")
 
+        # Gates block operations; post_* events fire after the operation is
+        # already complete, so blocking is misleading.  Use a regular middleware
+        # handler (or a maintainer) for post_* events instead.
+        if event.startswith("post_"):
+            raise ValueError(
+                f"Gates cannot be registered on post_* events (got '{event}'). "
+                f"Gates block operations via BlockedError, but post_* events fire "
+                f"after the operation is already complete. Use t.use() with a "
+                f"regular middleware handler for post_* auditing."
+            )
+
         from tract.gate import SemanticGate
 
         handler = SemanticGate(
@@ -1130,6 +1146,94 @@ class Tract:
     def list_gates(self) -> list[str]:
         """Return names of all registered semantic gates."""
         return list(self._gates.keys())
+
+    def maintain(
+        self,
+        name: str,
+        *,
+        event: MiddlewareEvent,
+        instructions: str,
+        actions: list[str] | None = None,
+        model: str | None = None,
+        condition: Callable | None = None,
+        temperature: float = 0.1,
+        max_log_entries: int = 30,
+    ) -> str:
+        """Register a semantic maintainer (LLM-powered context maintenance).
+
+        A semantic maintainer is a middleware handler that uses an LLM to decide
+        what maintenance actions to take on the context. Unlike gates (which block),
+        maintainers execute actions (annotate, compress, configure, etc.).
+
+        Args:
+            name: Unique name for this maintainer.
+            event: Middleware event to fire on (e.g., "post_commit", "post_transition").
+            instructions: Natural language description of what maintenance to perform.
+            actions: List of allowed action types. If None, all actions are allowed.
+                Valid types: "annotate", "compress", "configure", "directive", "tag", "gc".
+            model: LLM model override. Uses tract's default if None.
+            condition: Optional deterministic pre-check. If provided and returns False,
+                the LLM call is skipped (maintainer does nothing). Use this to
+                avoid unnecessary LLM calls.
+            temperature: LLM temperature (default 0.1 for deterministic judgment).
+            max_log_entries: Maximum commits to include in the manifest.
+
+        Returns:
+            Handler ID (can be used with remove_middleware() or remove_maintainer()).
+
+        Raises:
+            ValueError: If a maintainer with this name already exists, or event is invalid,
+                or action types are invalid.
+
+        Example::
+
+            t.maintain(
+                "context-cleanup",
+                event="post_commit",
+                instructions="Mark tool_io commits older than 10 entries as SKIP",
+                actions=["annotate"],
+                condition=lambda ctx: ctx.tract.log(limit=1)[0].content_type == "tool_io",
+            )
+        """
+        if name in self._maintainers:
+            raise ValueError(f"Maintainer '{name}' already registered. Remove it first.")
+
+        from tract.maintain import SemanticMaintainer
+
+        # Default to all valid actions if none specified
+        if actions is None:
+            actions = sorted(SemanticMaintainer.VALID_ACTIONS)
+
+        handler = SemanticMaintainer(
+            name=name,
+            instructions=instructions,
+            actions=actions,
+            model=model,
+            condition=condition,
+            temperature=temperature,
+            max_log_entries=max_log_entries,
+        )
+        handler_id = self.use(event, handler)
+        self._maintainers[name] = handler_id
+        return handler_id
+
+    def remove_maintainer(self, name: str) -> None:
+        """Remove a named semantic maintainer.
+
+        Args:
+            name: The maintainer name passed to maintain().
+
+        Raises:
+            ValueError: If no maintainer with this name exists.
+        """
+        handler_id = self._maintainers.pop(name, None)
+        if handler_id is None:
+            raise ValueError(f"Maintainer '{name}' not found")
+        self.remove_middleware(handler_id)
+
+    def list_maintainers(self) -> list[str]:
+        """Return names of all registered semantic maintainers."""
+        return list(self._maintainers.keys())
 
     def _run_middleware(self, event: str, **kwargs: Any) -> None:
         """Run middleware handlers for an event.
