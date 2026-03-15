@@ -112,4 +112,4 @@ if __name__ == "__main__":
 # --- See also ---
 # Basic streaming:    getting_started/04_streaming.py
 # Coding assistant:   workflows/01_coding_assistant.py
-# Research pipeline:  workflows/02_research_pipeline.py
+# Self-routing:       workflows/09_self_routing.py

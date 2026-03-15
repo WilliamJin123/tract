@@ -1,13 +1,9 @@
-"""Full Showcase: AI Product Analyst -- Every Major Feature in One Workflow
+"""Feature Reference: Product Analysis Walkthrough -- Every Major API in One Script
 
-An AI product analyst evaluates a startup idea end-to-end: researches the
-market, branches for parallel analysis, compares perspectives, merges insights,
-compresses verbose research, transitions to drafting, applies quality gates,
-searches prior findings, and produces a final pitch with full observability.
-
-This is tract's "crown jewel" example -- a single natural workflow that
-exercises every major feature of the library. Each feature appears because the
-workflow demands it, not because we need to check a box.
+Walks through a product analysis scenario exercising 25+ tract features in
+sequence. All content is manually seeded (no LLM calls) to keep the example
+self-contained, fast, and runnable in CI. This is an API reference and
+feature catalog, not an agent demonstration.
 
 Features demonstrated (in order of appearance):
   1.  load_profile()           -- load the "research" workflow profile
@@ -115,11 +111,11 @@ def build_quality_gate(required_tag="draft", min_draft_commits=4):
 
 def main() -> None:
     print("=" * 70)
-    print("FULL SHOWCASE: AI Product Analyst Workflow")
+    print("FEATURE REFERENCE: Product Analysis Walkthrough")
     print("=" * 70)
     print()
-    print("  Scenario: Evaluate 'AI-powered code review' as a product idea.")
-    print("  This single workflow demonstrates every major tract feature.")
+    print("  Scenario: Product analysis for 'AI-powered code review'.")
+    print("  All content manually seeded -- no LLM. Demonstrates 25+ tract APIs.")
     print()
 
     with Tract.open() as t:

@@ -1,15 +1,20 @@
-"""Supervisor-Worker Orchestration -- hierarchical multi-agent patterns.
+"""Session Topology Patterns -- spawn, collapse, and multi-tract coordination.
 
-Demonstrates patterns for coordinating multiple specialized agents
-through a supervisor that delegates, monitors, and synthesizes.
+Demonstrates how to structure multi-tract sessions using Session primitives:
+spawn (create child tracts), collapse (summarize child back into parent),
+and hierarchical coordination. All content is manually seeded -- no LLM
+calls are made. These patterns show the *plumbing* for multi-agent
+workflows; pair with real LLM calls (see agent/10_collaborative_research.py
+or workflows/08_adversarial_review.py) for genuine agent behavior.
+
 All examples run locally -- no API keys needed.
 
 Patterns:
-  1. Basic Supervisor-Worker     -- delegate, work, collect
-  2. Parallel Workers + Quality  -- 3 approaches, compare, select best
+  1. Basic Spawn-Collapse        -- parent spawns children, collapses results
+  2. Parallel Workers + Selection -- 3 branches, compare, select best
   3. Pipeline (Sequential)       -- stage A -> B -> C with collapse handoff
-  4. Debate Pattern              -- opposing positions, synthesized conclusion
-  5. Hierarchical Delegation     -- supervisor -> sub-supervisors -> workers
+  4. Debate Topology             -- opposing tracts, collapsed into judge
+  5. Hierarchical Delegation     -- parent -> sub-parents -> workers
 """
 
 import io
@@ -512,7 +517,7 @@ def pattern_5_hierarchical():
 
 def main() -> None:
     print()
-    print("Supervisor-Worker Orchestration Patterns")
+    print("Session Topology Patterns (no LLM -- manual content)")
     print("All patterns run locally -- no API keys needed.")
     print()
 

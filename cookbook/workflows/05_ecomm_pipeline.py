@@ -1,10 +1,13 @@
 """E-Commerce Optimization Pipeline: research -> landing pages -> ads -> metrics -> optimize
 
-A developer-orchestrated, agent-content pipeline for e-commerce product
-optimization.  The developer drives stage transitions while the agent generates
-content per stage.  Uses branches for A/B variant management, config for
-per-stage LLM tuning, tags for segment tracking, metadata for performance
-metrics, and compression to keep context lean between stages.
+Developer-driven 5-stage pipeline. The developer controls all transitions;
+the agent generates content per stage following explicit instructions.
+This is a template-execution pattern -- each stage prompt tells the agent
+exactly what artifacts to produce (e.g., "Commit 3 research artifacts",
+"Create 2 landing page variants"). The agent has no workflow autonomy.
+
+NOTE: Prompts prescribe content structure and tags. Marked for rewrite
+to give the agent a problem statement instead of a numbered recipe.
 
 Stages:
   product_research   -- high temperature (0.8), gather product intel
@@ -13,11 +16,8 @@ Stages:
   metrics_analysis   -- evaluate variants
   optimization       -- select winner, iterate
 
-Demonstrates: branching for A/B variants, t.configure() for per-stage setup,
-              t.directive() for instructions, t.tag() for segments,
-              t.commit() with metadata for metrics, t.transition() with
-              handoff summaries, t.compress() between stages, middleware
-              gates for stage progression
+Demonstrates: branching for A/B variants, per-stage config, directives,
+              tags, metadata, transitions with handoff, middleware gates
 
 Requires: LLM API key (uses Cerebras provider)
 """
@@ -255,6 +255,5 @@ if __name__ == "__main__":
 
 # --- See also ---
 # Coding workflow:       workflows/01_coding_assistant.py
-# Research pipeline:     workflows/02_research_pipeline.py
 # Customer support:      workflows/03_customer_support.py
-# Branching patterns:    agent/06_tangent_isolation.py
+# Self-routing:          workflows/09_self_routing.py

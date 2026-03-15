@@ -232,4 +232,4 @@ if __name__ == "__main__":
 # --- See also ---
 # Discovery profile:     agent/13_discovery_profile.py
 # Tool executor basics:  getting_started/03_custom_tools.py
-# Agent context mgmt:    agent/01_context_management.py
+# Tangent isolation:     agent/06_tangent_isolation.py

@@ -1,18 +1,22 @@
 """Customer Support Workflow: triage -> resolve -> escalate
 
-A developer-orchestrated, agent-content support workflow.  The developer drives
-stage transitions while the agent generates content per stage.  Branches explore
-alternative solutions, middleware gates enforce quality standards, and tags
-classify support artifacts.
+Developer-driven staged workflow. The developer controls all transitions;
+the agent generates content per stage following explicit instructions.
+This is a template-execution pattern -- the agent fills in stage-specific
+templates, it does not make workflow decisions autonomously.
+
+NOTE: The prompts currently prescribe exactly what to commit (numbered items
+with specific tags). This is scripted, not emergent. To make this a genuine
+agent demo, the prompts would need to describe the *problem* and let the
+agent decide what to produce. Marked for rewrite.
 
 Stages:
   triage   -- classify severity, gather context (temperature 0.5)
   resolve  -- propose and test solutions (temperature 0.3)
   escalate -- document failure, prepare handoff (temperature 0.1)
 
-Demonstrates: per-stage config, middleware quality gates, branching for
-              solution exploration, escalation workflow, tagging for
-              support classification
+Demonstrates: per-stage config, middleware quality gates, developer-driven
+              transitions, tagging for support classification
 
 Requires: LLM API key (uses Cerebras provider)
 """
@@ -192,5 +196,5 @@ if __name__ == "__main__":
 
 # --- See also ---
 # Coding workflow:       workflows/01_coding_assistant.py
-# Research pipeline:     workflows/02_research_pipeline.py
+# Self-routing:          workflows/09_self_routing.py
 # Branch patterns:       agent/06_tangent_isolation.py
