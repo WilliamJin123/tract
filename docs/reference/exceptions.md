@@ -1,0 +1,3 @@
+# Exceptions
+
+::: tract.exceptions

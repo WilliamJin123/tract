@@ -1,0 +1,134 @@
+site_name: Tract
+site_description: Git-like version control for LLM context windows
+site_url: https://williamjin123.github.io/tract
+repo_url: https://github.com/WilliamJin123/tract
+repo_name: WilliamJin123/tract
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 2
+            members_order: source
+            show_signature_annotations: true
+            separate_signature: true
+            docstring_style: google
+            merge_init_into_class: true
+            show_if_no_docstring: false
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Core Concepts: getting-started/concepts.md
+      - Agent Loop: getting-started/agent-loop.md
+  - Guides:
+      - Configuration & Directives: guides/config-and-directives.md
+      - Branching & Merge: guides/branching-and-merge.md
+      - Compression: guides/compression.md
+      - Middleware: guides/middleware.md
+      - Semantic Gates: guides/gates.md
+      - Semantic Maintainers: guides/maintainers.md
+      - Templates & Profiles: guides/templates-and-profiles.md
+      - Multi-Agent Sessions: guides/multi-agent.md
+      - Persistence & Recovery: guides/persistence.md
+      - Error Handling: guides/error-handling.md
+  - Cookbook:
+      - Overview: cookbook/index.md
+      - Getting Started:
+          - Quick Start: cookbook/getting-started.md
+          - Config & Directives: cookbook/config-directives.md
+          - Custom Tools: cookbook/custom-tools.md
+          - Streaming: cookbook/streaming.md
+          - Async: cookbook/async.md
+          - Agent Loop: cookbook/agent-loop.md
+      - Agent Patterns:
+          - Branching Strategies: cookbook/branching.md
+          - Self-Correction: cookbook/self-correction.md
+          - Staged Workflows: cookbook/staged-workflows.md
+          - Multi-Agent: cookbook/multi-agent.md
+          - Supervisor-Worker: cookbook/supervisor-worker.md
+      - Workflows:
+          - Coding Assistant: cookbook/coding-assistant.md
+          - E-Commerce Pipeline: cookbook/ecommerce.md
+          - Adversarial Review: cookbook/adversarial-review.md
+  - API Reference:
+      - Tract: reference/tract.md
+      - Models:
+          - Content Types: reference/content.md
+          - Config: reference/config.md
+          - Annotations: reference/annotations.md
+          - Commit: reference/commit.md
+      - CompiledContext: reference/compiled.md
+      - Middleware: reference/middleware.md
+      - Gate: reference/gate.md
+      - Maintainer: reference/maintain.md
+      - Templates: reference/templates.md
+      - Profiles: reference/profiles.md
+      - Session: reference/session.md
+      - Formatting: reference/formatting.md
+      - LLM Clients:
+          - Protocols: reference/llm-protocols.md
+          - OpenAI Client: reference/openai-client.md
+          - Anthropic Client: reference/anthropic-client.md
+      - Toolkit:
+          - Tool Definitions: reference/toolkit.md
+          - Executor: reference/executor.md
+      - Loop: reference/loop.md
+      - Exceptions: reference/exceptions.md
+  - Changelog: changelog.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/WilliamJin123/tract

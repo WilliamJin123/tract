@@ -1,0 +1,3 @@
+# Configuration
+
+::: tract.models.config
