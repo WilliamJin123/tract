@@ -433,7 +433,7 @@ def main() -> None:
         if any_passed:
             t.commit(
                 content={
-                    "content_type": "note",
+                    "content_type": "freeform",
                     "text": "All tests passing after merge.",
                 },
                 message="Post-merge test verification",

@@ -95,10 +95,11 @@ def build_router(stages: dict, *, min_signals: int = 1) -> tuple:
         if not ctx.commit or ctx.commit.content_type != "dialogue":
             return
         content = ctx.tract.get_content(ctx.commit)
-        if not content or getattr(content, "role", None) != "assistant":
+        if not content:
             return
 
-        text = (getattr(content, "text", "") or "").lower()
+        # get_content() returns str for dialogue; use it directly
+        text = (str(content) if not isinstance(content, dict) else content.get("text", "")).lower()
         if not text:
             return
 

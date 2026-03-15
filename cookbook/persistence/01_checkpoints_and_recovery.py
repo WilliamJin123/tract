@@ -200,7 +200,7 @@ def main() -> None:
         print("    Verified: HEAD, branch, and commits all persisted")
 
         # Read back the content from the last commit
-        last_content = t.get_content(t.head)
+        last_content = str(t.get_content(t.head) or "")
         assert "Market size: $47B" in last_content
         print(f"    Last content recovered: {last_content[:50]}...")
 
@@ -539,7 +539,7 @@ def main() -> None:
         risks = t.query_by_tags(["risk"], match="any")
         print(f"  a) Risks found on main: {len(risks)}")
         for r in risks:
-            content = t.get_content(r)
+            content = str(t.get_content(r) or "")
             preview = (content[:70] + "...") if len(content) > 70 else content
             print(f"     [{r.commit_hash[:8]}] {preview}")
 
@@ -547,7 +547,7 @@ def main() -> None:
         decisions = t.query_by_tags(["decision"], match="any")
         print(f"\n  b) Decisions found: {len(decisions)}")
         for d in decisions:
-            content = t.get_content(d)
+            content = str(t.get_content(d) or "")
             preview = (content[:70] + "...") if len(content) > 70 else content
             print(f"     [{d.commit_hash[:8]}] {preview}")
 
