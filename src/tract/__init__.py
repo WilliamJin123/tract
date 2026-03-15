@@ -89,6 +89,9 @@ from tract.middleware import MiddlewareContext, MiddlewareEvent
 # Semantic gates
 from tract.gate import SemanticGate, GateResult
 
+# Semantic maintainers
+from tract.maintain import SemanticMaintainer, MaintainResult
+
 # Directive templates
 from tract.templates import DirectiveTemplate, list_templates, get_template, register_template
 
@@ -244,6 +247,9 @@ __all__ = [
     # Semantic gates
     "SemanticGate",
     "GateResult",
+    # Semantic maintainers
+    "SemanticMaintainer",
+    "MaintainResult",
     "MiddlewareContext",
     "MiddlewareEvent",
     # Directive templates
