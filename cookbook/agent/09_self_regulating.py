@@ -2,14 +2,16 @@
 
 The agent is given two tasks with dramatically conflicting behavioral
 requirements: first write enthusiastic marketing copy, then write a
-brutally honest security audit of the same product. The shift from
-"advocate" to "adversary" creates natural pressure for self-regulation.
+brutally honest security audit of the same product. A middleware gate
+requires a declared behavioral mode before content commits are allowed,
+but the agent is not told the exact API calls -- it must discover the
+mechanism from the BlockedError.
 
 Tools available: configure, directive, create_middleware, remove_middleware,
                  get_config, commit, transition
 
-Demonstrates: Does the model proactively set directives, configure behavior,
-              or create middleware to enforce phase-specific constraints?
+Demonstrates: Can the model discover and satisfy a mode-declaration
+              requirement, then shift behavior between advocate and critic?
 """
 
 import io
@@ -50,12 +52,10 @@ def main() -> None:
     ) as t:
 
         t.system(
-            "You are a technical writer who adapts style to the task.\n"
-            "IMPORTANT: Before writing, you MUST set a behavioral mode using "
-            "configure(mode='advocate') or configure(mode='critic') to declare "
-            "your current stance. Use directive() to set writing guidelines for "
-            "each phase. A middleware gate requires the mode config to be set "
-            "before any content can be committed."
+            "You are a technical writer who adapts style to the task. "
+            "You have tools to configure your behavior and set guidelines. "
+            "A middleware gate requires a declared behavioral mode before "
+            "content commits are allowed."
         )
 
         # Gate: require mode config before agent content commits
@@ -90,10 +90,7 @@ def main() -> None:
         print("=== Phase 1: Marketing copy ===\n")
         result = t.run(
             "Write short marketing copy for 'Nexus' API framework. "
-            "Selling points: 1M req/sec, built-in auth, auto OpenAPI docs.\n\n"
-            "STEPS: 1) configure(mode='advocate') 2) Then IMMEDIATELY commit "
-            "your marketing copy using commit(). Do NOT call configure or "
-            "directive more than once — set mode, then write.",
+            "Selling points: 1M req/sec, built-in auth, auto OpenAPI docs.",
             profile="full",
             tool_names=_tool_names,
             max_steps=8, max_tokens=1024,
@@ -108,9 +105,7 @@ def main() -> None:
         result = t.run(
             "Now write a security audit of Nexus as a penetration tester. "
             "Be ruthlessly critical — find gaps in the auth claims, "
-            "question the performance numbers, flag what was left out.\n\n"
-            "STEPS: 1) configure(mode='critic') 2) Then IMMEDIATELY commit "
-            "your security audit using commit(). One configure call, then write.",
+            "question the performance numbers, flag what was left out.",
             profile="full",
             tool_names=_tool_names,
             max_steps=8, max_tokens=2048,

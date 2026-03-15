@@ -1,14 +1,8 @@
 """Customer Support Workflow: triage -> resolve -> escalate
 
 Developer-driven staged workflow. The developer controls all transitions;
-the agent generates content per stage following explicit instructions.
-This is a template-execution pattern -- the agent fills in stage-specific
-templates, it does not make workflow decisions autonomously.
-
-NOTE: The prompts currently prescribe exactly what to commit (numbered items
-with specific tags). This is scripted, not emergent. To make this a genuine
-agent demo, the prompts would need to describe the *problem* and let the
-agent decide what to produce. Marked for rewrite.
+the agent decides what content to produce at each stage based on the
+problem context. The prompts describe the goal, not the deliverables.
 
 Stages:
   triage   -- classify severity, gather context (temperature 0.5)
@@ -112,13 +106,9 @@ def main() -> None:
         print("\n=== Stage 1: Triage ===\n")
 
         result = t.run(
-            "Triage this support case. Commit 2 items:\n"
-            "1. Issue classification (type=bug, severity=critical, "
-            "endpoint=/api/v2/orders, symptom=500 on POST). "
-            "Tag=['bug','critical']\n"
-            "2. Context summary (GET works, POST fails, client rollback "
-            "didn't help, suggests server-side breaking change). "
-            "Tag=['bug']",
+            "Analyze this support ticket. Classify its severity and gather "
+            "relevant context. What type of issue is this, what's affected, "
+            "and what has the customer already tried?",
             max_steps=6, max_tokens=1024,
             profile="full", tool_names=_tool_names,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
@@ -134,11 +124,9 @@ def main() -> None:
         t.configure(stage="resolve", temperature=0.3)
 
         result = t.run(
-            "Propose solutions for the API 500 error. Commit 2 items:\n"
-            "1. Root cause analysis (likely: v2 API schema change broke POST "
-            "validation, old request body format rejected). Tag=['solution']\n"
-            "2. Proposed workaround (update POST body to match new v2 schema, "
-            "or use v1 endpoint as temporary fallback). Tag=['workaround']",
+            "Based on the triage, propose solutions. What's the likely root "
+            "cause of the 500 errors on POST? What workarounds can the "
+            "customer use right now while a permanent fix is developed?",
             max_steps=6, max_tokens=1024,
             profile="full", tool_names=_tool_names,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
@@ -154,11 +142,9 @@ def main() -> None:
         t.configure(stage="escalate", temperature=0.1)
 
         result = t.run(
-            "Prepare an escalation summary. Commit 1 item:\n"
-            "Document what was tried (root cause identified, workaround "
-            "proposed) and recommend next action (engineering team should "
-            "add backward compatibility to v2 POST endpoint). "
-            "Tag=['escalated']",
+            "Prepare an escalation summary for the engineering team. "
+            "Document what was investigated, what was tried, and recommend "
+            "specific next actions to permanently resolve this issue.",
             max_steps=4, max_tokens=1024,
             profile="full", tool_names=_tool_names,
             on_step=log.on_step, on_tool_result=log.on_tool_result,

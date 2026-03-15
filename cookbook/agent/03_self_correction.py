@@ -1,13 +1,15 @@
 """Agent Self-Correction (Implicit)
 
 The agent gives a deliberately brief answer, then is asked to improve it.
-It has edit tools available but is never told how to use them. Will it
-discover get_commit + edit to revise its own output in place?
+It has edit tools available but receives no instructions on how to use
+them. The correction prompt asks for better content without prescribing
+the mechanism -- the agent must discover whether to edit in place or
+append on its own.
 
 Tools available: commit (with edit), get_commit, diff, log
 
-Demonstrates: Can the model use inspect-then-edit-in-place to revise
-              its own output when guided toward the pattern?
+Demonstrates: Can the model discover edit-in-place or choose its own
+              revision strategy when given only a content improvement request?
 """
 
 import io
@@ -59,11 +61,8 @@ def main() -> None:
         tool_profile=PROFILE,
     ) as t:
         t.system(
-            "You are a technical writer. Produce clear, thorough explanations.\n"
-            "You have tools to manage your content: commit (with edit operation), "
-            "get_commit, diff, and log. When revising earlier work, use "
-            "get_commit to inspect the original, then commit with operation='edit' "
-            "and edit_target=<hash> to update it in place."
+            "You are a technical writer. Produce clear, thorough explanations. "
+            "You have tools to manage your content."
         )
 
         # Get a deliberately brief initial answer
@@ -75,9 +74,9 @@ def main() -> None:
         print("\n  --- Task ---")
         log = StepLogger()
         result = t.run(
-            "Too brief. Expand to cover lexing, parsing, optimization, "
-            "and codegen. Use get_commit to find the original, then use commit "
-            "with operation='edit' and edit_target to replace it in place.",
+            "That answer is too brief. Expand it to cover lexing, parsing, "
+            "optimization, and code generation. Improve your original answer "
+            "rather than writing a new one from scratch.",
             max_steps=8, max_tokens=1024,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )

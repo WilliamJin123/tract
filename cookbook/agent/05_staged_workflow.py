@@ -1,13 +1,14 @@
 """Agent-Driven Staged Workflow (Implicit)
 
 The developer pre-creates stage branches (design, implementation, validation)
-with config metadata. The agent is given a single comprehensive task and
-must discover the stage infrastructure, then navigate through it autonomously.
+with config metadata. The agent is given a task description and must
+discover the stage infrastructure, decide what to produce at each stage,
+and navigate through the workflow autonomously.
 
 Tools available: get_config, transition, commit, switch, list_branches
 
-Demonstrates: Can the model navigate pre-built stages to complete a
-              multi-phase task in a single run with concise deliverables?
+Demonstrates: Can the model discover pre-built stages, decide what
+              deliverables to produce, and navigate a multi-phase workflow?
 """
 
 import io
@@ -62,10 +63,8 @@ def main() -> None:
         # Developer pre-creates the stage infrastructure
         t.system(
             "You are a software architect. Complete the task by working "
-            "through each stage of the workflow.\n"
-            "IMPORTANT: You MUST complete ALL three stages (design, "
-            "implementation, validation). Keep each stage's output concise "
-            "(2-3 key points) and transition promptly. Budget your steps."
+            "through each stage of the workflow. Use get_config and "
+            "list_branches to understand the available infrastructure."
         )
 
         for stage, temp in [("design", 0.9), ("implementation", 0.3), ("validation", 0.5)]:
@@ -84,12 +83,10 @@ def main() -> None:
         # Single task — agent must navigate all stages autonomously
         print("\n  --- Task ---")
         result = t.run(
-            "Design a task management REST API (title, status, assignee).\n\n"
-            "For EACH stage, you MUST commit() output then transition():\n"
-            "1. DESIGN: commit your API URLs + data models, then transition('implementation')\n"
-            "2. IMPLEMENTATION: commit module structure, then transition('validation')\n"
-            "3. VALIDATION: commit a pre-ship checklist, then STOP\n\n"
-            "Keep each commit concise (2-3 key points). Use commit() for every deliverable.",
+            "Design a task management REST API (title, status, assignee). "
+            "Work through the available stages (design, implementation, "
+            "validation) to produce a complete specification. Commit your "
+            "deliverables at each stage and transition when ready.",
             max_steps=18, max_tokens=4096,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )

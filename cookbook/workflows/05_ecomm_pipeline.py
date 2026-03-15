@@ -1,13 +1,8 @@
 """E-Commerce Optimization Pipeline: research -> landing pages -> ads -> metrics -> optimize
 
 Developer-driven 5-stage pipeline. The developer controls all transitions;
-the agent generates content per stage following explicit instructions.
-This is a template-execution pattern -- each stage prompt tells the agent
-exactly what artifacts to produce (e.g., "Commit 3 research artifacts",
-"Create 2 landing page variants"). The agent has no workflow autonomy.
-
-NOTE: Prompts prescribe content structure and tags. Marked for rewrite
-to give the agent a problem statement instead of a numbered recipe.
+the agent decides what content to produce at each stage based on the
+product context and marketing goals.
 
 Stages:
   product_research   -- high temperature (0.8), gather product intel
@@ -126,10 +121,10 @@ def main() -> None:
         print("\n=== Stage 1: Product Research ===\n")
 
         result = t.run(
-            "Commit 3 research artifacts:\n"
-            "1. Competitor analysis vs VariDesk Pro Plus. Tag=['research','competitor']\n"
-            "2. Target audience pain points. Tag=['research','pain-point']\n"
-            "3. Unique selling propositions. Tag=['research','feature']",
+            "Research the competitive landscape and target audience for this "
+            "product. What insights should inform our marketing strategy? "
+            "Consider the competition, customer pain points, and our key "
+            "differentiators.",
             max_steps=6, max_tokens=1024,
             profile="full", tool_names=_tool_names,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
@@ -145,11 +140,9 @@ def main() -> None:
         t.configure(stage="landing_pages", temperature=0.7)
 
         result = t.run(
-            "Create 2 landing page variants:\n"
-            "1. Variant A: pain-point-led (back pain, posture). "
-            "Commit headline + CTA, tag=['variant-a','headline']\n"
-            "2. Variant B: value-led (price savings, productivity). "
-            "Commit headline + CTA, tag=['variant-b','headline']",
+            "Create landing page variants with different value propositions. "
+            "Each variant should target a different customer motivation. "
+            "Include compelling headlines and calls to action.",
             max_steps=6, max_tokens=1024,
             profile="full", tool_names=_tool_names,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
@@ -165,9 +158,9 @@ def main() -> None:
         t.configure(stage="ad_copy", temperature=0.6)
 
         result = t.run(
-            "Write 2 ads for the standing desk converter:\n"
-            "1. Google search ad (headline + description). Tag=['ad-search']\n"
-            "2. Social media ad (Facebook/Instagram hook + body). Tag=['ad-social']",
+            "Write ad copy for search and social channels that aligns with "
+            "the landing page strategy. Adapt the messaging for each "
+            "platform's format and audience expectations.",
             max_steps=6, max_tokens=1024,
             profile="full", tool_names=_tool_names,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
@@ -194,9 +187,9 @@ def main() -> None:
         )
 
         result = t.run(
-            "Analyze the metrics above. Variant A: 3.2% conversion, $1.45 CPC. "
-            "Variant B: 4.1% conversion, $1.20 CPC. Commit your analysis "
-            "comparing the two variants. Tag=['metrics']",
+            "Analyze these A/B test results and determine which variant is "
+            "performing better and why. What do the conversion rates and "
+            "cost metrics tell us about customer preferences?",
             max_steps=4, max_tokens=1024,
             profile="full", tool_names=_tool_names,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
@@ -212,11 +205,9 @@ def main() -> None:
         t.configure(stage="optimization", temperature=0.5)
 
         result = t.run(
-            "Declare Variant B the winner (better conversion + lower CPC). "
-            "Commit 2 items:\n"
-            "1. Winner declaration with reasoning. Tag=['winner']\n"
-            "2. 3 optimization recommendations for next iteration. "
-            "Tag=['optimization']",
+            "Based on the metrics analysis, declare a winner and explain "
+            "the reasoning. What optimizations should we pursue in the "
+            "next iteration to improve performance further?",
             max_steps=6, max_tokens=1024,
             profile="full", tool_names=_tool_names,
             on_step=log.on_step, on_tool_result=log.on_tool_result,

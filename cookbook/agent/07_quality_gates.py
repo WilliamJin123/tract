@@ -1,9 +1,9 @@
 """Agent Quality Gates (Implicit)
 
 The developer sets up middleware gates that block premature transitions.
-The agent is given a research task and told to move to implementation
-when ready. It must discover the gate requirements by hitting them,
-then adapt.
+The agent is given a research problem and must produce enough work to
+satisfy quality requirements it doesn't know about in advance. When
+the gate blocks a transition, the agent reads the error and adapts.
 
 Tools available: transition, commit, get_config, status, log
 
@@ -62,11 +62,8 @@ def main() -> None:
     ) as t:
         # System: role only, no gate protocol
         t.system(
-            "You are a software engineer working on an API project.\n"
-            "WORKFLOW: Research each topic by committing artifact-type content, "
-            "then call transition('implementation') to move to the next phase. "
-            "You MUST attempt the transition after committing your research — "
-            "if blocked, read the error and fix what's missing."
+            "You are a software engineer working on an API project. "
+            "Research topics thoroughly before moving to implementation."
         )
 
         # Developer sets up gated workflow infrastructure
@@ -100,10 +97,9 @@ def main() -> None:
         # Task: research then attempt transition
         print("\n  --- Task: Research ---")
         result = t.run(
-            "Research auth, DB schema, and error handling for a REST API. "
-            "Commit each topic as an artifact, then transition to "
-            "'implementation'. If the transition is blocked, read the error "
-            "and commit more artifacts until it succeeds.",
+            "Research authentication, database schema, and error handling "
+            "patterns for a REST API. When you feel your research is "
+            "thorough, move to implementation.",
             max_steps=15, max_tokens=1024,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )
