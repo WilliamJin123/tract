@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 from tract.exceptions import BlockedError
-from tract.gate import SemanticGate
+from tract.gate import build_manifest as _build_manifest
 
 if TYPE_CHECKING:
     from tract.middleware import MiddlewareContext
@@ -94,12 +94,9 @@ Maximum commits you may peek at: {max_peeks}
 def build_manifest(tract: Tract, max_log_entries: int = 30) -> str:
     """Build a text manifest from log entries and active config.
 
-    Shared between SemanticGate and SemanticMaintainer.
-    Uses only ``t.log()`` and ``t.get_all_configs()`` -- never
-    ``t.status()`` or ``t.compile()`` to avoid recursion.
+    Delegates to :func:`tract.gate.build_manifest`.
     """
-    _gate = SemanticGate(name="_manifest_builder", check="_", max_log_entries=max_log_entries)
-    return _gate._build_manifest(tract)
+    return _build_manifest(tract, max_log_entries)
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +306,7 @@ class SemanticMaintainer:
         self.last_result = MaintainResult(
             maintainer_name=self.name,
             actions_requested=len(filtered_actions),
-            actions_executed=executed + len(block_actions),  # blocks count as executed
+            actions_executed=executed,
             actions_failed=failed,
             tokens_used=tokens_used,
             reasoning=reasoning,
@@ -721,8 +718,7 @@ class SemanticMaintainer:
 
         tract.directive(name, text)
 
-    @staticmethod
-    def _exec_tag(tract: Tract, action: dict[str, Any]) -> None:
+    def _exec_tag(self, tract: Tract, action: dict[str, Any]) -> None:
         """Execute a tag action: t.tag(hash, tag_name)."""
         target = action.get("target", "")
         tag_name = action.get("tag", "")
@@ -734,11 +730,8 @@ class SemanticMaintainer:
 
         full_hash = tract.resolve_commit(target)
 
-        try:
-            tract.register_tag(tag_name, f"Auto-registered by maintainer '{__name__}'")
-        except Exception:
-            pass
-
+        # Auto-register the tag (idempotent — no-ops if already registered).
+        tract.register_tag(tag_name, f"Auto-registered by maintainer '{self.name}'")
         tract.tag(full_hash, tag_name)
 
     @staticmethod

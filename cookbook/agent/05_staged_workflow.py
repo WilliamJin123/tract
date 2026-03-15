@@ -119,4 +119,4 @@ if __name__ == "__main__":
 
 # --- See also ---
 # Branching basics (no LLM):  getting_started/04_branches.py
-# Config per branch:           config_and_middleware/01_config_basics.py
+# Config per branch:           config_and_middleware/01_config_and_strategy.py

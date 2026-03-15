@@ -35,9 +35,76 @@ if TYPE_CHECKING:
 __all__: list[str] = [
     "SemanticGate",
     "GateResult",
+    "build_manifest",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Shared manifest builder
+# ---------------------------------------------------------------------------
+def build_manifest(tract: Tract, max_log_entries: int = 30) -> str:
+    """Build a text manifest from log entries and active config.
+
+    Shared by :class:`SemanticGate` and
+    :class:`~tract.maintain.SemanticMaintainer`.  Uses only ``t.log()``
+    and ``t.get_all_configs()`` — never ``t.status()`` or ``t.compile()``
+    to avoid middleware recursion.
+    """
+    branch = tract.current_branch or "(detached)"
+    head = tract.head
+    head_short = head[:8] if head else "(empty)"
+
+    entries = tract.log(limit=max_log_entries)
+    shown = len(entries)
+
+    lines: list[str] = [
+        "=== CONTEXT MANIFEST ===",
+        f"Branch: {branch} | HEAD: {head_short} | Commits shown: {shown}",
+        "",
+    ]
+
+    # Commit log table
+    if entries:
+        lines.append("COMMIT LOG (newest first):")
+        for entry in entries:
+            h = entry.commit_hash[:8]
+            ctype = entry.content_type
+            tokens = entry.token_count
+            tags_str = ",".join(entry.tags) if entry.tags else ""
+            priority = entry.effective_priority or "NORMAL"
+            msg = entry.message if entry.message else "(no message)"
+            if len(msg) > 60:
+                msg = msg[:57] + "..."
+            lines.append(
+                f"  [{h}] {ctype:<12} | {tokens:>5} tok | "
+                f"tags:[{tags_str}] | {priority:<9} | \"{msg}\""
+            )
+        lines.append("")
+
+    # Active configuration
+    try:
+        config = tract.get_all_configs()
+    except Exception:
+        config = {}
+    if config:
+        lines.append(f"ACTIVE CONFIG: {json.dumps(config, default=str)}")
+
+    # Tag summary
+    if entries:
+        tag_counter: Counter[str] = Counter()
+        for entry in entries:
+            for tag in entry.tags:
+                tag_counter[tag] += 1
+        if tag_counter:
+            tag_summary = ", ".join(
+                f"{tag}({count})" for tag, count in tag_counter.most_common()
+            )
+            lines.append(f"TAGS: {tag_summary}")
+
+    return "\n".join(lines)
+
 
 # ---------------------------------------------------------------------------
 # System prompt for the gate LLM
@@ -226,63 +293,8 @@ class SemanticGate:
     # Manifest construction
     # ------------------------------------------------------------------
     def _build_manifest(self, tract: Tract) -> str:
-        """Build a text manifest from log entries and active config.
-
-        Uses only ``t.log()`` and ``t.get_all_configs()`` — never
-        ``t.status()`` or ``t.compile()`` to avoid recursion.
-        """
-        branch = tract.current_branch or "(detached)"
-        head = tract.head
-        head_short = head[:8] if head else "(empty)"
-
-        entries = tract.log(limit=self.max_log_entries)
-        total_commits = len(entries)
-
-        lines: list[str] = [
-            "=== CONTEXT MANIFEST ===",
-            f"Branch: {branch} | HEAD: {head_short} | Commits shown: {total_commits}",
-            "",
-        ]
-
-        # Commit log table
-        if entries:
-            lines.append("COMMIT LOG (newest first):")
-            for entry in entries:
-                h = entry.commit_hash[:8]
-                ctype = entry.content_type
-                tokens = entry.token_count
-                tags_str = ",".join(entry.tags) if entry.tags else ""
-                priority = entry.effective_priority or "NORMAL"
-                msg = entry.message if entry.message else "(no message)"
-                if len(msg) > 60:
-                    msg = msg[:57] + "..."
-                lines.append(
-                    f"  [{h}] {ctype:<12} | {tokens:>5} tok | "
-                    f"tags:[{tags_str}] | {priority:<9} | \"{msg}\""
-                )
-            lines.append("")
-
-        # Active configuration
-        try:
-            config = tract.get_all_configs()
-        except Exception:
-            config = {}
-        if config:
-            lines.append(f"ACTIVE CONFIG: {json.dumps(config, default=str)}")
-
-        # Tag summary
-        if entries:
-            tag_counter: Counter[str] = Counter()
-            for entry in entries:
-                for tag in entry.tags:
-                    tag_counter[tag] += 1
-            if tag_counter:
-                tag_summary = ", ".join(
-                    f"{tag}({count})" for tag, count in tag_counter.most_common()
-                )
-                lines.append(f"TAGS: {tag_summary}")
-
-        return "\n".join(lines)
+        """Delegate to the module-level :func:`build_manifest`."""
+        return build_manifest(tract, self.max_log_entries)
 
     # ------------------------------------------------------------------
     # Message construction

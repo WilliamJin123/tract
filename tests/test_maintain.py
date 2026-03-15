@@ -556,20 +556,24 @@ class TestActionExecution:
         tract_mock = MagicMock()
         tract_mock.resolve_commit.return_value = "c" * 40
 
-        SemanticMaintainer._exec_tag(tract_mock, {
+        m = SemanticMaintainer(name="tagger", instructions="x", actions=["tag"])
+        m._exec_tag(tract_mock, {
             "type": "tag",
             "target": "c1c2c3",
             "tag": "key-finding",
         })
 
         tract_mock.resolve_commit.assert_called_once_with("c1c2c3")
-        tract_mock.register_tag.assert_called_once()
+        tract_mock.register_tag.assert_called_once_with(
+            "key-finding", "Auto-registered by maintainer 'tagger'"
+        )
         tract_mock.tag.assert_called_once_with("c" * 40, "key-finding")
 
     def test_tag_no_target_raises(self):
         tract_mock = MagicMock()
+        m = SemanticMaintainer(name="t", instructions="x", actions=["tag"])
         with pytest.raises(ValueError, match="requires a 'target'"):
-            SemanticMaintainer._exec_tag(tract_mock, {
+            m._exec_tag(tract_mock, {
                 "type": "tag",
                 "target": "",
                 "tag": "x",
@@ -577,8 +581,9 @@ class TestActionExecution:
 
     def test_tag_no_tag_name_raises(self):
         tract_mock = MagicMock()
+        m = SemanticMaintainer(name="t", instructions="x", actions=["tag"])
         with pytest.raises(ValueError, match="requires a 'tag'"):
-            SemanticMaintainer._exec_tag(tract_mock, {
+            m._exec_tag(tract_mock, {
                 "type": "tag",
                 "target": "abc",
                 "tag": "",
@@ -958,10 +963,10 @@ class TestBlockAction:
         # last_result should still be set before the raise
         assert m.last_result is not None
         assert m.last_result.actions_requested == 1
-        assert m.last_result.actions_executed == 1  # block counts as executed
+        assert m.last_result.actions_executed == 0  # block raises, not counted as executed
 
     def test_block_result_tracks_execution(self):
-        """MaintainResult counts block actions as executed, non-block failures as failed."""
+        """MaintainResult counts non-block executed actions; block raises separately."""
         from tract.exceptions import BlockedError
 
         response = _action_response("Block after gc", [
@@ -982,7 +987,7 @@ class TestBlockAction:
 
         assert m.last_result is not None
         assert m.last_result.actions_requested == 2
-        assert m.last_result.actions_executed == 2  # gc + block
+        assert m.last_result.actions_executed == 1  # only gc; block raises
         assert m.last_result.actions_failed == 0
 
 

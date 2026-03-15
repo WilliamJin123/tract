@@ -111,5 +111,4 @@ if __name__ == "__main__":
 
 
 # --- See also ---
-# Branching basics (no LLM):  getting_started/04_branches.py
-# Merge patterns (no LLM):     branching/02_merge_patterns.py
+# Branching basics (no LLM):  reference/04_branching.py

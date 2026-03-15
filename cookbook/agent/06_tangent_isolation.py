@@ -143,5 +143,5 @@ if __name__ == "__main__":
 
 
 # --- See also ---
-# Branching basics (no LLM):  getting_started/04_branches.py
+# Branching basics (no LLM):  reference/04_branching.py
 # Multi-agent delegation:     agent/08_multi_agent.py
