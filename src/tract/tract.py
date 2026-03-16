@@ -1188,6 +1188,13 @@ class Tract:
         )
         handler_id = self.use(event, handler)
         self._gates[name] = handler_id
+        # Auto-persist gate spec (includes the event in spec_data)
+        try:
+            spec_data = handler.to_spec()
+            spec_data["event"] = event
+            self.persist_behavioral_spec("gate", name, spec_data)
+        except Exception:
+            logger.debug("Failed to auto-persist gate spec '%s'", name, exc_info=True)
         return handler_id
 
     def remove_gate(self, name: str) -> None:
@@ -1203,6 +1210,8 @@ class Tract:
         if handler_id is None:
             raise ValueError(f"Gate '{name}' not found")
         self.remove_middleware(handler_id)
+        # Remove persisted spec
+        self.remove_behavioral_spec("gate", name)
 
     def list_gates(self) -> list[str]:
         """Return names of all registered semantic gates."""
@@ -1286,6 +1295,13 @@ class Tract:
         )
         handler_id = self.use(event, handler)
         self._maintainers[name] = handler_id
+        # Auto-persist maintainer spec (includes the event in spec_data)
+        try:
+            spec_data = handler.to_spec()
+            spec_data["event"] = event
+            self.persist_behavioral_spec("maintainer", name, spec_data)
+        except Exception:
+            logger.debug("Failed to auto-persist maintainer spec '%s'", name, exc_info=True)
         return handler_id
 
     def remove_maintainer(self, name: str) -> None:
@@ -1301,6 +1317,8 @@ class Tract:
         if handler_id is None:
             raise ValueError(f"Maintainer '{name}' not found")
         self.remove_middleware(handler_id)
+        # Remove persisted spec
+        self.remove_behavioral_spec("maintainer", name)
 
     def list_maintainers(self) -> list[str]:
         """Return names of all registered semantic maintainers."""
@@ -8273,22 +8291,6 @@ class Tract:
         if deleted:
             self._commit_session()
         return deleted
-
-    def _auto_persist_gate_spec(self, name: str, gate: object) -> None:
-        """Auto-persist a gate spec when ``t.gate()`` is called."""
-        try:
-            spec_data = gate.to_spec()  # type: ignore[union-attr]
-            self.persist_behavioral_spec("gate", name, spec_data)
-        except Exception:
-            logger.debug("Failed to auto-persist gate spec '%s'", name, exc_info=True)
-
-    def _auto_persist_maintainer_spec(self, name: str, maintainer: object) -> None:
-        """Auto-persist a maintainer spec when ``t.maintain()`` is called."""
-        try:
-            spec_data = maintainer.to_spec()  # type: ignore[union-attr]
-            self.persist_behavioral_spec("maintainer", name, spec_data)
-        except Exception:
-            logger.debug("Failed to auto-persist maintainer spec '%s'", name, exc_info=True)
 
     def save_workflow(
         self,

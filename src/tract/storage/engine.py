@@ -167,18 +167,19 @@ def init_db(engine: Engine) -> None:
     """Initialize the database: create all tables and set schema version.
 
     Creates all tables defined in Base.metadata, then sets schema_version.
-    For new databases, schema_version is set to "12".
-    For existing v1 databases, migrates v1->v2->...->v12.
-    For existing v2 databases, migrates v2->v3->...->v12.
-    For existing v3 databases, migrates v3->v4->...->v12.
-    For existing v4 databases, migrates v4->v5->...->v12 (trigger tables).
-    For existing v5 databases, migrates v5->v6->...->v12 (unified operation events).
-    For existing v6 databases, migrates v6->v7->v8->v9->v10->v11->v12 (retention_json on annotations).
-    For existing v7 databases, migrates v7->v8->v9->v10->v11->v12 (tool tracking tables).
-    For existing v8 databases, migrates v8->v9->v10->v11->v12 (instruction columns on operation_events).
-    For existing v9 databases, migrates v9->v10->v11->v12 (tags system).
-    For existing v10 databases, migrates v10->v11->v12 (persistence tables).
-    For existing v11 databases, migrates v11->v12 (config provenance).
+    For new databases, schema_version is set to "13".
+    For existing v1 databases, migrates v1->v2->...->v13.
+    For existing v2 databases, migrates v2->v3->...->v13.
+    For existing v3 databases, migrates v3->v4->...->v13.
+    For existing v4 databases, migrates v4->v5->...->v13 (trigger tables).
+    For existing v5 databases, migrates v5->v6->...->v13 (unified operation events).
+    For existing v6 databases, migrates v6->v7->v8->v9->v10->v11->v12->v13 (retention_json on annotations).
+    For existing v7 databases, migrates v7->v8->v9->v10->v11->v12->v13 (tool tracking tables).
+    For existing v8 databases, migrates v8->v9->v10->v11->v12->v13 (instruction columns on operation_events).
+    For existing v9 databases, migrates v9->v10->v11->v12->v13 (tags system).
+    For existing v10 databases, migrates v10->v11->v12->v13 (persistence tables).
+    For existing v11 databases, migrates v11->v12->v13 (config provenance).
+    For existing v12 databases, migrates v12->v13 (behavioral specs).
     """
     from sqlalchemy import text
 
@@ -191,8 +192,8 @@ def init_db(engine: Engine) -> None:
         ).scalar_one_or_none()
 
         if existing is None:
-            # New database: set schema version to 12
-            session.add(TraceMetaRow(key="schema_version", value="12"))
+            # New database: set schema version to 13
+            session.add(TraceMetaRow(key="schema_version", value="13"))
             session.commit()
         elif existing.value == "1":
             # Migrate v1 -> v2: create commit_parents table
@@ -448,4 +449,9 @@ def init_db(engine: Engine) -> None:
                         )
                 conn.commit()
             existing.value = "12"
+            session.commit()
+        if existing is not None and existing.value == "12":
+            # Migrate v12 -> v13: add behavioral_specs table
+            Base.metadata.tables["behavioral_specs"].create(engine, checkfirst=True)
+            existing.value = "13"
             session.commit()

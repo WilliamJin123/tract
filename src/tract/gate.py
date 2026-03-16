@@ -180,6 +180,40 @@ class SemanticGate:
     # Stored after each invocation so callers can inspect.
     last_result: GateResult | None = field(default=None, init=False, repr=False)
 
+    def to_spec(self) -> dict[str, Any]:
+        """Serialize gate configuration to a dict for persistence.
+
+        Callables (``condition``) are NOT serialized -- only a flag
+        indicating whether one was present.
+
+        Returns:
+            Dict with all declarative gate configuration.
+        """
+        return {
+            "name": self.name,
+            "check": self.check,
+            "model": self.model,
+            "has_condition": self.condition is not None,
+            "temperature": self.temperature,
+            "max_log_entries": self.max_log_entries,
+        }
+
+    @classmethod
+    def from_spec(cls, data: dict[str, Any]) -> SemanticGate:
+        """Reconstruct a SemanticGate from a persisted spec dict.
+
+        The ``condition`` callback is NOT restored (it is not serializable).
+        Callers must re-register it manually if needed.
+        """
+        return cls(
+            name=data["name"],
+            check=data["check"],
+            model=data.get("model"),
+            condition=None,  # not restorable
+            temperature=data.get("temperature", 0.1),
+            max_log_entries=data.get("max_log_entries", 30),
+        )
+
     # ------------------------------------------------------------------
     # __call__ — middleware handler interface
     # ------------------------------------------------------------------

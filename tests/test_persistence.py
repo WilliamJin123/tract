@@ -46,7 +46,7 @@ class TestSchemaMigration:
         t = _make_file_tract(tmp_path)
         stmt = select(TraceMetaRow).where(TraceMetaRow.key == "schema_version")
         row = t._session.execute(stmt).scalar_one()
-        assert row.value == "12"
+        assert row.value == "13"
         t.close()
 
     def test_persistence_tables_exist(self, tmp_path: Path) -> None:
@@ -98,9 +98,10 @@ class TestSchemaMigration:
                 ).fetchall()
             ]
 
-        assert version == "12"
+        assert version == "13"
         assert "operation_configs" in tables
         assert "config_change_log" in tables
+        assert "behavioral_specs" in tables
 
         engine.dispose()
 

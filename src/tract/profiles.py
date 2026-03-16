@@ -8,6 +8,7 @@ stage definitions into a single reusable package. Load a profile with
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 __all__: list[str] = [
     "WorkflowProfile",
@@ -49,6 +50,37 @@ class WorkflowProfile:
     tool_profile: str = "self"
     # Stage definitions (name -> config overrides for that stage)
     stages: dict[str, dict[str, object]] = field(default_factory=dict)
+
+    def to_spec(self) -> dict[str, Any]:
+        """Serialize profile to a dict for persistence.
+
+        All fields are JSON-serializable (no callables).
+
+        Returns:
+            Dict with all profile configuration.
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "config": dict(self.config),
+            "directive_templates": {k: dict(v) for k, v in self.directive_templates.items()},
+            "directives": dict(self.directives),
+            "tool_profile": self.tool_profile,
+            "stages": {k: dict(v) for k, v in self.stages.items()},
+        }
+
+    @classmethod
+    def from_spec(cls, data: dict[str, Any]) -> WorkflowProfile:
+        """Reconstruct a WorkflowProfile from a persisted spec dict."""
+        return cls(
+            name=data["name"],
+            description=data.get("description", ""),
+            config=data.get("config", {}),
+            directive_templates=data.get("directive_templates", {}),
+            directives=data.get("directives", {}),
+            tool_profile=data.get("tool_profile", "self"),
+            stages=data.get("stages", {}),
+        )
 
 
 # ---------------------------------------------------------------------------

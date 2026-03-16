@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
     from tract.storage.schema import (
         AnnotationRow,
+        BehavioralSpecRow,
         BlobRow,
         CommitRow,
         CompileEffectiveRow,
@@ -691,4 +692,41 @@ class PersistenceRepository(ABC):
 
         Returns entries ordered by created_at DESC, with optional filter by change_type.
         """
+        ...
+
+
+class BehavioralSpecRepository(ABC):
+    """Abstract interface for behavioral spec persistence.
+
+    Stores declarative specs for gates, maintainers, profiles, and templates
+    so they survive restarts.  Callables are NOT stored -- only configuration
+    metadata.
+    """
+
+    @abstractmethod
+    def save(self, spec: BehavioralSpecRow) -> BehavioralSpecRow:
+        """Save or update a behavioral spec. Returns the row.
+
+        Upserts by (tract_id, spec_type, spec_name).
+        """
+        ...
+
+    @abstractmethod
+    def get(self, tract_id: str, spec_type: str, spec_name: str) -> BehavioralSpecRow | None:
+        """Get a specific spec. Returns None if not found."""
+        ...
+
+    @abstractmethod
+    def list_specs(
+        self, tract_id: str, *, spec_type: str | None = None
+    ) -> list[BehavioralSpecRow]:
+        """List all specs for a tract, optionally filtered by type.
+
+        Returns rows ordered by spec_type then spec_name.
+        """
+        ...
+
+    @abstractmethod
+    def delete(self, tract_id: str, spec_type: str, spec_name: str) -> bool:
+        """Delete a spec. Returns True if deleted, False if not found."""
         ...

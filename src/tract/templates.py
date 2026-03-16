@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 __all__: list[str] = [
     "DirectiveTemplate",
@@ -37,6 +38,29 @@ class DirectiveTemplate:
         if missing:
             raise ValueError(f"Unresolved template parameters: {missing}")
         return content
+
+    def to_spec(self) -> dict[str, Any]:
+        """Serialize template to a dict for persistence.
+
+        Returns:
+            Dict with all template configuration.
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "content": self.content,
+            "parameters": dict(self.parameters),
+        }
+
+    @classmethod
+    def from_spec(cls, data: dict[str, Any]) -> DirectiveTemplate:
+        """Reconstruct a DirectiveTemplate from a persisted spec dict."""
+        return cls(
+            name=data["name"],
+            description=data.get("description", ""),
+            content=data["content"],
+            parameters=data.get("parameters", {}),
+        )
 
 
 # ---------------------------------------------------------------------------

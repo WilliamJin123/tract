@@ -367,7 +367,7 @@ class TestFullMigrationChain:
         """A brand-new database gets schema version 12."""
         engine = create_trace_engine(":memory:")
         init_db(engine)
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         engine.dispose()
 
     def test_v1_migrates_to_v12(self):
@@ -394,7 +394,7 @@ class TestFullMigrationChain:
 
         init_db(engine)
 
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         tables = _get_tables(engine)
         assert "commit_parents" in tables
         assert "spawn_pointers" in tables
@@ -420,7 +420,7 @@ class TestFullMigrationChain:
 
         init_db(engine)
 
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         # v7: retention_json on annotations
         assert "retention_json" in _get_columns(engine, "annotations")
         # v8: tool tables
@@ -455,7 +455,7 @@ class TestFullMigrationChain:
 
         init_db(engine)
 
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         assert "tags_json" in _get_columns(engine, "commits")
         assert "tag_annotations" in _get_tables(engine)
         assert "operation_configs" in _get_tables(engine)
@@ -474,7 +474,7 @@ class TestFullMigrationChain:
 
         init_db(engine)
 
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         assert "config_change_log" in _get_tables(engine)
         engine.dispose()
 
@@ -493,6 +493,7 @@ class TestSchemaEvolution:
         "compile_records", "compile_effectives", "spawn_pointers",
         "tool_definitions", "commit_tools", "tag_annotations",
         "tag_registry", "operation_configs", "config_change_log",
+        "behavioral_specs",
     }
 
     @pytest.fixture
@@ -583,7 +584,7 @@ class TestIdempotentMigration:
         engine = create_trace_engine(":memory:")
         init_db(engine)
         init_db(engine)
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         engine.dispose()
 
     def test_double_init_db_preserves_tables(self):
@@ -626,7 +627,7 @@ class TestIdempotentMigration:
         engine = _create_v5_engine_with_compression_data()
 
         init_db(engine)
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         tables_first = _get_tables(engine)
 
         # Old tables should be gone
@@ -634,7 +635,7 @@ class TestIdempotentMigration:
 
         # Second call should not raise
         init_db(engine)
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         tables_second = _get_tables(engine)
         assert tables_first == tables_second
 
@@ -660,7 +661,7 @@ class TestIdempotentMigration:
 
         # First migration adds the column (or sees it already exists)
         init_db(engine)
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
 
         # Reset to v6 and try again -- the column already exists
         with Session() as session:
@@ -673,7 +674,7 @@ class TestIdempotentMigration:
 
         # Should not raise "duplicate column" error
         init_db(engine)
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         assert "retention_json" in _get_columns(engine, "annotations")
         engine.dispose()
 
@@ -694,7 +695,7 @@ class TestEmptyDatabaseEdgeCases:
 
         init_db(engine)
 
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         tables = _get_tables(engine)
         assert "blobs" in tables
         assert "commits" in tables
@@ -758,7 +759,7 @@ class TestEmptyDatabaseEdgeCases:
 
         init_db(engine)
 
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         # Old tables should be dropped
         tables = _get_tables(engine)
         assert "compressions" not in tables
@@ -807,7 +808,7 @@ class TestEmptyDatabaseEdgeCases:
         # Should not crash despite missing compression_sources/compression_results
         init_db(engine)
 
-        assert _get_schema_version(engine) == "12"
+        assert _get_schema_version(engine) == "13"
         engine.dispose()
 
 

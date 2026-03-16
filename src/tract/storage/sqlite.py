@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from tract.storage.repositories import (
     AnnotationRepository,
+    BehavioralSpecRepository,
     BlobRepository,
     CommitParentRepository,
     CommitRepository,
@@ -29,6 +30,7 @@ from tract.storage.repositories import (
 )
 from tract.storage.schema import (
     AnnotationRow,
+    BehavioralSpecRow,
     BlobRow,
     CommitParentRow,
     CommitRow,
@@ -1242,3 +1244,57 @@ class SqlitePersistenceRepository(PersistenceRepository):
             stmt = stmt.where(ConfigChangeRow.change_type == change_type)
         stmt = stmt.order_by(ConfigChangeRow.created_at.desc()).limit(limit)
         return list(self._session.execute(stmt).scalars().all())
+
+
+class SqliteBehavioralSpecRepository(BehavioralSpecRepository):
+    """SQLite implementation of behavioral spec repository.
+
+    Provides CRUD for persisted behavioral object specifications
+    (gates, maintainers, profiles, templates).
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save(self, spec: BehavioralSpecRow) -> BehavioralSpecRow:
+        """Upsert by (tract_id, spec_type, spec_name)."""
+        existing = self.get(spec.tract_id, spec.spec_type, spec.spec_name)
+        if existing is not None:
+            existing.spec_json = spec.spec_json
+            existing.updated_at = spec.updated_at
+            self._session.flush()
+            return existing
+        self._session.add(spec)
+        self._session.flush()
+        return spec
+
+    def get(
+        self, tract_id: str, spec_type: str, spec_name: str
+    ) -> BehavioralSpecRow | None:
+        stmt = select(BehavioralSpecRow).where(
+            and_(
+                BehavioralSpecRow.tract_id == tract_id,
+                BehavioralSpecRow.spec_type == spec_type,
+                BehavioralSpecRow.spec_name == spec_name,
+            )
+        )
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def list_specs(
+        self, tract_id: str, *, spec_type: str | None = None
+    ) -> list[BehavioralSpecRow]:
+        stmt = select(BehavioralSpecRow).where(
+            BehavioralSpecRow.tract_id == tract_id
+        )
+        if spec_type is not None:
+            stmt = stmt.where(BehavioralSpecRow.spec_type == spec_type)
+        stmt = stmt.order_by(BehavioralSpecRow.spec_type, BehavioralSpecRow.spec_name)
+        return list(self._session.execute(stmt).scalars().all())
+
+    def delete(self, tract_id: str, spec_type: str, spec_name: str) -> bool:
+        row = self.get(tract_id, spec_type, spec_name)
+        if row is None:
+            return False
+        self._session.delete(row)
+        self._session.flush()
+        return True

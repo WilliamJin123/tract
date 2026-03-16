@@ -422,6 +422,38 @@ class ConfigChangeRow(Base):
     )
 
 
+class BehavioralSpecRow(Base):
+    """Persisted behavioral object specification.
+
+    Stores serialized specs for gates, maintainers, middleware handlers,
+    profiles, and templates so they survive restarts.  Callables (Python
+    functions) are NOT serialized -- only declarative configuration.
+    """
+
+    __tablename__ = "behavioral_specs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tract_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    spec_type: Mapped[str] = mapped_column(
+        String(30), nullable=False
+    )  # "gate", "maintainer", "middleware", "profile", "template"
+    spec_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    spec_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("ix_behavioral_specs_tract_type", "tract_id", "spec_type"),
+        Index(
+            "ix_behavioral_specs_tract_type_name",
+            "tract_id",
+            "spec_type",
+            "spec_name",
+            unique=True,
+        ),
+    )
+
+
 class TraceMetaRow(Base):
     """Key-value metadata for the Trace database itself (e.g., schema version)."""
 

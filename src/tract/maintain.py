@@ -195,6 +195,44 @@ class SemanticMaintainer:
         if not self.actions:
             raise ValueError("At least one action type must be specified.")
 
+    def to_spec(self) -> dict[str, Any]:
+        """Serialize maintainer configuration to a dict for persistence.
+
+        Callables (``condition``) are NOT serialized -- only a flag
+        indicating whether one was present.
+
+        Returns:
+            Dict with all declarative maintainer configuration.
+        """
+        return {
+            "name": self.name,
+            "instructions": self.instructions,
+            "actions": list(self.actions),
+            "model": self.model,
+            "has_condition": self.condition is not None,
+            "temperature": self.temperature,
+            "max_log_entries": self.max_log_entries,
+            "max_peeks": self.max_peeks,
+        }
+
+    @classmethod
+    def from_spec(cls, data: dict[str, Any]) -> SemanticMaintainer:
+        """Reconstruct a SemanticMaintainer from a persisted spec dict.
+
+        The ``condition`` callback is NOT restored (it is not serializable).
+        Callers must re-register it manually if needed.
+        """
+        return cls(
+            name=data["name"],
+            instructions=data["instructions"],
+            actions=data.get("actions", sorted(cls.VALID_ACTIONS)),
+            model=data.get("model"),
+            condition=None,  # not restorable
+            temperature=data.get("temperature", 0.1),
+            max_log_entries=data.get("max_log_entries", 30),
+            max_peeks=data.get("max_peeks", 0),
+        )
+
     # ------------------------------------------------------------------
     # __call__ -- middleware handler interface
     # ------------------------------------------------------------------
