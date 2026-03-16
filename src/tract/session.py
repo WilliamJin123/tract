@@ -124,23 +124,16 @@ class Session:
         db_path: str,
         *,
         autonomy: str = "collaborative",
-        adapter: object | None = None,
     ) -> None:
         self._engine = engine
         self._session_factory = session_factory
         self._spawn_repo = spawn_repo
         self._db_path = db_path
         self._autonomy = autonomy
-        self._adapter = adapter
         self._tracts: dict[str, Tract] = {}
         self._closed = False
         # Keep the session used by spawn_repo alive
         self._spawn_session = spawn_repo._session
-
-    @property
-    def adapter(self) -> object | None:
-        """The agent adapter set on this session, or ``None``."""
-        return self._adapter
 
     @classmethod
     def open(
@@ -148,7 +141,6 @@ class Session:
         path: str = ":memory:",
         *,
         autonomy: str = "collaborative",
-        adapter: object | None = None,
     ) -> Session:
         """Open (or create) a multi-agent session.
 
@@ -156,8 +148,6 @@ class Session:
             path: SQLite path. ``":memory:"`` for in-memory (default).
             autonomy: Default autonomy level for collapse operations.
                 "manual", "collaborative" (default), or "autonomous".
-            adapter: Optional :class:`~tract.adapters.AgentAdapter` to
-                propagate to all tracts created in this session.
 
         Returns:
             A ready-to-use Session instance.
@@ -181,7 +171,6 @@ class Session:
             spawn_repo=spawn_repo,
             db_path=path,
             autonomy=autonomy,
-            adapter=adapter,
         )
 
     # ------------------------------------------------------------------
@@ -278,10 +267,6 @@ class Session:
         )
         tract._spawn_repo = self._spawn_repo
         tract._session_owner = self
-
-        # Propagate adapter from session to tract
-        if self._adapter is not None:
-            tract.adapter = self._adapter
 
         self._tracts[tract_id] = tract
         return tract
@@ -781,53 +766,6 @@ class Session:
     # Subagent communication (A2A)
     # ------------------------------------------------------------------
 
-    def peek_child(
-        self, child_tract_id: str, *, limit: int = 20
-    ) -> list[CommitInfo]:
-        """Peek at a child tract's recent commit history.
-
-        Allows a parent to inspect what a child agent has been doing
-        without collapsing or merging.
-
-        Args:
-            child_tract_id: The child tract identifier.
-            limit: Maximum number of commits to return. Default 20.
-
-        Returns:
-            List of :class:`CommitInfo` in reverse chronological order
-            (newest first).
-
-        Raises:
-            SessionError: If child_tract_id is not found in the session.
-        """
-        child = self.get_tract(child_tract_id)
-        return child.log(limit=limit)
-
-    def peek_child_context(
-        self,
-        child_tract_id: str,
-        *,
-        strategy: str = "adaptive",
-    ) -> CompiledContext:
-        """Compile and return a child tract's full context.
-
-        Allows a parent to see the child's compiled context window
-        without collapsing.
-
-        Args:
-            child_tract_id: The child tract identifier.
-            strategy: Compilation strategy. ``"full"`` (default for compile),
-                ``"adaptive"`` (default here), or ``"messages"``.
-
-        Returns:
-            :class:`CompiledContext` for the child tract.
-
-        Raises:
-            SessionError: If child_tract_id is not found in the session.
-        """
-        child = self.get_tract(child_tract_id)
-        return child.compile(strategy=strategy)
-
     def send_message(
         self,
         from_tract_id: str,
@@ -872,40 +810,6 @@ class Session:
             tags=commit_tags,
         )
         return info.commit_hash
-
-    def get_messages(
-        self,
-        tract_id: str,
-        *,
-        from_tract_id: str | None = None,
-        limit: int = 50,
-    ) -> list[CommitInfo]:
-        """Get agent messages received by a tract.
-
-        Finds commits tagged with ``"agent_message"`` in the tract's
-        history. Optionally filters by the sending tract.
-
-        Args:
-            tract_id: The tract to search for messages.
-            from_tract_id: If set, only return messages from this sender.
-            limit: Maximum number of messages to return. Default 50.
-
-        Returns:
-            List of :class:`CommitInfo` for matching agent messages,
-            newest first.
-
-        Raises:
-            SessionError: If tract_id is not found in the session.
-        """
-        tract = self.get_tract(tract_id)
-        results = tract.find(tag="agent_message", limit=limit)
-        if from_tract_id is not None:
-            results = [
-                c for c in results
-                if c.metadata
-                and c.metadata.get("from_tract_id") == from_tract_id
-            ]
-        return results
 
     # ------------------------------------------------------------------
     # Cross-repo queries

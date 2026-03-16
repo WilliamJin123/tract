@@ -1,12 +1,10 @@
 """Tests for subagent communication and delegation protocols.
 
 Tests cover:
-- peek_child: parent peeking at child commit history
-- peek_child_context: parent viewing child's compiled context
-- send_message / get_messages: inter-agent messaging
+- send_message: inter-agent messaging
 - inherit_tools: tool delegation from parent to child on spawn
 - context_budget: limiting inherited tokens on spawn
-- Tract-level API integration (t.peek_child, t.send_to_child, t.get_agent_messages)
+- Tract-level API integration (t.send_to_child)
 """
 
 from __future__ import annotations
@@ -40,89 +38,12 @@ def _create_session_with_parent(tmp_path, *, n_commits=3):
 
 
 # ---------------------------------------------------------------------------
-# peek_child tests
-# ---------------------------------------------------------------------------
-
-
-class TestPeekChild:
-    """Tests for Session.peek_child()."""
-
-    def test_peek_child_returns_child_log(self, tmp_path):
-        """peek_child returns the child's commit log entries."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="research task")
-
-        # Add some commits to child
-        child.commit(DialogueContent(role="user", text="What is X?"))
-        child.commit(DialogueContent(role="assistant", text="X is Y."))
-
-        # Parent peeks at child
-        entries = session.peek_child(child.tract_id, limit=10)
-        assert len(entries) >= 2
-        # Newest first
-        texts = [e.content_hash for e in entries]
-        assert len(texts) > 0
-
-    def test_peek_child_respects_limit(self, tmp_path):
-        """peek_child limit parameter works correctly."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="task")
-
-        for i in range(5):
-            child.commit(DialogueContent(role="user", text=f"msg {i}"))
-
-        entries = session.peek_child(child.tract_id, limit=2)
-        assert len(entries) == 2
-
-    def test_peek_child_unknown_tract_raises(self, tmp_path):
-        """peek_child with unknown tract_id raises SessionError."""
-        session, parent = _create_session_with_parent(tmp_path)
-        with pytest.raises(SessionError):
-            session.peek_child("nonexistent-child-id")
-
-
-# ---------------------------------------------------------------------------
-# peek_child_context tests
-# ---------------------------------------------------------------------------
-
-
-class TestPeekChildContext:
-    """Tests for Session.peek_child_context()."""
-
-    def test_peek_child_context_returns_compiled(self, tmp_path):
-        """peek_child_context returns a CompiledContext."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="research")
-
-        child.commit(DialogueContent(role="user", text="Tell me about Z."))
-
-        ctx = session.peek_child_context(child.tract_id)
-        assert ctx.commit_count >= 1
-        assert ctx.token_count > 0
-        assert len(ctx.messages) >= 1
-
-    def test_peek_child_context_with_strategy(self, tmp_path):
-        """peek_child_context respects strategy parameter."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="analysis")
-
-        child.commit(DialogueContent(role="user", text="Analyze this."))
-        child.commit(DialogueContent(role="assistant", text="Here's the analysis."))
-
-        ctx_full = session.peek_child_context(child.tract_id, strategy="full")
-        ctx_adaptive = session.peek_child_context(child.tract_id, strategy="adaptive")
-        # Both should return valid contexts
-        assert ctx_full.commit_count >= 1
-        assert ctx_adaptive.commit_count >= 1
-
-
-# ---------------------------------------------------------------------------
-# send_message / get_messages tests
+# send_message tests
 # ---------------------------------------------------------------------------
 
 
 class TestSendMessage:
-    """Tests for Session.send_message() and Session.get_messages()."""
+    """Tests for Session.send_message()."""
 
     def test_send_message_creates_commit(self, tmp_path):
         """send_message creates a commit in the target tract."""
@@ -179,61 +100,6 @@ class TestSendMessage:
         assert "agent_message" in tags
         assert "urgent" in tags
         assert "priority" in tags
-
-    def test_get_messages_returns_agent_messages(self, tmp_path):
-        """get_messages returns only agent_message tagged commits."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="worker")
-
-        # Send two messages
-        session.send_message(parent.tract_id, child.tract_id, "Message 1")
-        session.send_message(parent.tract_id, child.tract_id, "Message 2")
-
-        # Also add a regular commit that is NOT a message
-        child.commit(DialogueContent(role="user", text="Regular commit"))
-
-        messages = session.get_messages(child.tract_id)
-        assert len(messages) == 2
-        for msg in messages:
-            assert msg.metadata is not None
-            assert msg.metadata["message_type"] == "agent_message"
-
-    def test_get_messages_filters_by_sender(self, tmp_path):
-        """get_messages filters by from_tract_id."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="worker")
-
-        # Create another tract and send messages from both
-        other = session.create_tract(display_name="other")
-        other.commit(InstructionContent(text="other setup"))
-
-        session.send_message(parent.tract_id, child.tract_id, "From parent")
-        session.send_message(other.tract_id, child.tract_id, "From other")
-
-        # Filter by parent
-        from_parent = session.get_messages(
-            child.tract_id, from_tract_id=parent.tract_id
-        )
-        assert len(from_parent) == 1
-        assert from_parent[0].metadata["from_tract_id"] == parent.tract_id
-
-        # Filter by other
-        from_other = session.get_messages(
-            child.tract_id, from_tract_id=other.tract_id
-        )
-        assert len(from_other) == 1
-        assert from_other[0].metadata["from_tract_id"] == other.tract_id
-
-    def test_get_messages_respects_limit(self, tmp_path):
-        """get_messages limit parameter works correctly."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="worker")
-
-        for i in range(5):
-            session.send_message(parent.tract_id, child.tract_id, f"msg {i}")
-
-        messages = session.get_messages(child.tract_id, limit=2)
-        assert len(messages) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -381,27 +247,7 @@ class TestContextBudget:
 
 
 class TestTractLevelAPI:
-    """Tests for Tract.peek_child(), send_to_child(), get_agent_messages()."""
-
-    def test_tract_peek_child(self, tmp_path):
-        """t.peek_child() delegates to session and returns log."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="peek test")
-
-        child.commit(DialogueContent(role="user", text="Hello from child"))
-
-        entries = parent.peek_child(child.tract_id, limit=5)
-        assert len(entries) >= 1
-
-    def test_tract_peek_child_no_session_raises(self, tmp_path):
-        """t.peek_child() without session raises SessionError."""
-        from tract import Tract
-
-        t = Tract.open()
-        t.commit(InstructionContent(text="standalone"))
-        with pytest.raises(SessionError):
-            t.peek_child("some-child-id")
-        t.close()
+    """Tests for Tract.send_to_child()."""
 
     def test_tract_send_to_child(self, tmp_path):
         """t.send_to_child() creates message in child tract."""
@@ -413,8 +259,8 @@ class TestTractLevelAPI:
         )
         assert commit_hash is not None
 
-        # Verify the message is in child
-        messages = session.get_messages(child.tract_id)
+        # Verify the message is in child via find()
+        messages = child.find(tag="agent_message")
         assert len(messages) == 1
         assert messages[0].metadata["from_tract_id"] == parent.tract_id
 
@@ -427,38 +273,3 @@ class TestTractLevelAPI:
         with pytest.raises(SessionError):
             t.send_to_child("some-child-id", "hello")
         t.close()
-
-    def test_tract_get_agent_messages(self, tmp_path):
-        """t.get_agent_messages() returns agent messages in this tract."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="msg test")
-
-        session.send_message(parent.tract_id, child.tract_id, "Task A")
-        session.send_message(parent.tract_id, child.tract_id, "Task B")
-
-        messages = child.get_agent_messages()
-        assert len(messages) == 2
-
-    def test_tract_get_agent_messages_filter_sender(self, tmp_path):
-        """t.get_agent_messages(from_tract_id=...) filters by sender."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="filter test")
-        other = session.create_tract(display_name="other")
-        other.commit(InstructionContent(text="other"))
-
-        session.send_message(parent.tract_id, child.tract_id, "From parent")
-        session.send_message(other.tract_id, child.tract_id, "From other")
-
-        from_parent = child.get_agent_messages(from_tract_id=parent.tract_id)
-        assert len(from_parent) == 1
-
-        from_other = child.get_agent_messages(from_tract_id=other.tract_id)
-        assert len(from_other) == 1
-
-    def test_tract_get_agent_messages_empty(self, tmp_path):
-        """t.get_agent_messages() returns empty list when no messages."""
-        session, parent = _create_session_with_parent(tmp_path)
-        child = session.spawn(parent, purpose="empty test")
-
-        messages = child.get_agent_messages()
-        assert messages == []
