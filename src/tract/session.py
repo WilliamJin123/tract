@@ -266,6 +266,7 @@ class Session:
             event_repo=event_repo,
         )
         tract._spawn_repo = self._spawn_repo
+        tract._session_owner = self
 
         self._tracts[tract_id] = tract
         return tract
@@ -369,6 +370,8 @@ class Session:
         exclude_tags: list[str] | None = None,
         include_types: list[str] | None = None,
         include_instructions: bool = True,
+        inherit_tools: bool = False,
+        context_budget: int | None = None,
         # Spawn-with-persona parameters
         profile: str | None = None,
         stage: str | None = None,
@@ -389,6 +392,12 @@ class Session:
             include_types: For selective mode: include these content types.
             include_instructions: For selective mode: always include instruction
                 and config commits even when filtered out. Default True.
+            inherit_tools: If True, copy parent's active tool definitions to
+                the child tract after creation. Default False.
+            context_budget: If set, limits the total tokens inherited by the
+                child. For head_snapshot this is wired to ``max_tokens``. For
+                selective mode, commits exceeding the budget are dropped
+                (oldest non-instruction first).
             profile: Optional workflow profile name to load (e.g. ``"coding"``,
                 ``"research"``).  Calls ``child.load_profile(profile)``.
             stage: Optional stage name to apply from the loaded profile.
@@ -425,8 +434,11 @@ class Session:
             exclude_tags=exclude_tags,
             include_types=include_types,
             include_instructions=include_instructions,
+            inherit_tools=inherit_tools,
+            context_budget=context_budget,
         )
         self._tracts[child.tract_id] = child
+        child._session_owner = self
         child._seed_base_tags()
 
         # Inherit prompt_dir from parent
@@ -749,6 +761,136 @@ class Session:
 
         child_tract_id = metadata["collapse_source_tract_id"]
         return self.get_tract(child_tract_id)
+
+    # ------------------------------------------------------------------
+    # Subagent communication (A2A)
+    # ------------------------------------------------------------------
+
+    def peek_child(
+        self, child_tract_id: str, *, limit: int = 20
+    ) -> list[CommitInfo]:
+        """Peek at a child tract's recent commit history.
+
+        Allows a parent to inspect what a child agent has been doing
+        without collapsing or merging.
+
+        Args:
+            child_tract_id: The child tract identifier.
+            limit: Maximum number of commits to return. Default 20.
+
+        Returns:
+            List of :class:`CommitInfo` in reverse chronological order
+            (newest first).
+
+        Raises:
+            SessionError: If child_tract_id is not found in the session.
+        """
+        child = self.get_tract(child_tract_id)
+        return child.log(limit=limit)
+
+    def peek_child_context(
+        self,
+        child_tract_id: str,
+        *,
+        strategy: str = "adaptive",
+    ) -> CompiledContext:
+        """Compile and return a child tract's full context.
+
+        Allows a parent to see the child's compiled context window
+        without collapsing.
+
+        Args:
+            child_tract_id: The child tract identifier.
+            strategy: Compilation strategy. ``"full"`` (default for compile),
+                ``"adaptive"`` (default here), or ``"messages"``.
+
+        Returns:
+            :class:`CompiledContext` for the child tract.
+
+        Raises:
+            SessionError: If child_tract_id is not found in the session.
+        """
+        child = self.get_tract(child_tract_id)
+        return child.compile(strategy=strategy)
+
+    def send_message(
+        self,
+        from_tract_id: str,
+        to_tract_id: str,
+        content: str,
+        *,
+        tags: list[str] | None = None,
+    ) -> str:
+        """Send a message from one tract to another.
+
+        Commits a :class:`DialogueContent` message in the target tract
+        with metadata indicating the sender and message type.
+
+        Args:
+            from_tract_id: The sending tract's identifier.
+            to_tract_id: The receiving tract's identifier.
+            content: Message text.
+            tags: Additional tags for the message commit.
+
+        Returns:
+            Commit hash of the message commit in the target tract.
+
+        Raises:
+            SessionError: If either tract is not found in the session.
+        """
+        from tract.models.content import DialogueContent
+
+        target = self.get_tract(to_tract_id)
+
+        # Build tag list
+        commit_tags = ["agent_message"]
+        if tags:
+            commit_tags.extend(tags)
+
+        info = target.commit(
+            DialogueContent(role="system", text=content),
+            message=f"agent_message from {from_tract_id}",
+            metadata={
+                "from_tract_id": from_tract_id,
+                "message_type": "agent_message",
+            },
+            tags=commit_tags,
+        )
+        return info.commit_hash
+
+    def get_messages(
+        self,
+        tract_id: str,
+        *,
+        from_tract_id: str | None = None,
+        limit: int = 50,
+    ) -> list[CommitInfo]:
+        """Get agent messages received by a tract.
+
+        Finds commits tagged with ``"agent_message"`` in the tract's
+        history. Optionally filters by the sending tract.
+
+        Args:
+            tract_id: The tract to search for messages.
+            from_tract_id: If set, only return messages from this sender.
+            limit: Maximum number of messages to return. Default 50.
+
+        Returns:
+            List of :class:`CommitInfo` for matching agent messages,
+            newest first.
+
+        Raises:
+            SessionError: If tract_id is not found in the session.
+        """
+        tract = self.get_tract(tract_id)
+        results = tract.find(tag="agent_message", limit=limit)
+        if from_tract_id is not None:
+            results = [
+                c for c in results
+                if c.metadata
+                and c.metadata.get("from_tract_id") == from_tract_id
+            ]
+        return results
 
     # ------------------------------------------------------------------
     # Cross-repo queries

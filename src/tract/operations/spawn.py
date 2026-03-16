@@ -47,6 +47,8 @@ def spawn_tract(
     exclude_tags: list[str] | None = None,
     include_types: list[str] | None = None,
     include_instructions: bool = True,
+    inherit_tools: bool = False,
+    context_budget: int | None = None,
 ) -> Tract:
     """Create a child tract linked to parent via spawn pointer.
 
@@ -70,6 +72,12 @@ def spawn_tract(
             ``content_type`` is in this list.
         include_instructions: For selective mode: always include instruction
             and config commits even when filtered out. Default True.
+        inherit_tools: If True, copy parent's active tool definitions to
+            the child tract after creation. Default False.
+        context_budget: If set, limits the total tokens inherited by the
+            child. For head_snapshot this is wired to ``max_tokens``. For
+            selective mode, commits exceeding the budget are dropped
+            (oldest non-instruction first).
 
     Returns:
         The new child Tract instance.
@@ -187,12 +195,18 @@ def spawn_tract(
         parent_repo=child_parent_repo,
     )
 
+    # Wire context_budget to max_tokens for head_snapshot
+    effective_max_tokens = max_tokens
+    if context_budget is not None and inheritance == "head_snapshot":
+        # context_budget overrides max_tokens if both are set
+        effective_max_tokens = context_budget
+
     # Apply inheritance using pre-captured parent state
     if inheritance == "head_snapshot":
         _head_snapshot(
             parent_compiled,
             child_commit_engine,
-            max_tokens=max_tokens,
+            max_tokens=effective_max_tokens,
             token_counter=child_token_counter,
         )
         child_session.commit()
@@ -218,6 +232,8 @@ def spawn_tract(
             commits_snapshot=parent_commits_snapshot,
             filter_func=filter_func,  # type: ignore[arg-type]  # Optional narrowed by caller
             include_instructions=include_instructions,
+            context_budget=context_budget,
+            token_counter=child_token_counter,
         )
         child_session.commit()
 
@@ -238,6 +254,12 @@ def spawn_tract(
         event_repo=child_event_repo,
     )
     child._spawn_repo = spawn_repo
+
+    # Inherit tools from parent if requested
+    if inherit_tools:
+        parent_tools = parent_tract.get_tools()
+        if parent_tools is not None:
+            child.set_tools(parent_tools)
 
     return child
 
@@ -393,6 +415,8 @@ def _selective_clone(
     commits_snapshot: list | None = None,
     filter_func: Callable,
     include_instructions: bool = True,
+    context_budget: int | None = None,
+    token_counter: TokenCounter | None = None,
 ) -> str | None:
     """Replay a filtered subset of parent commits into child tract.
 
@@ -404,6 +428,8 @@ def _selective_clone(
       ``include_instructions=True`` (default), even if the filter rejects them.
     - EDIT commits whose edit_target was filtered out are skipped (the target
       does not exist in the child, so the edit would be dangling).
+    - When ``context_budget`` is set and the total tokens of included commits
+      exceed the budget, oldest non-instruction commits are dropped first.
 
     Args:
         parent_tract: The parent Tract to selectively clone.
@@ -416,6 +442,9 @@ def _selective_clone(
         filter_func: Callable ``(commit_row) -> bool`` that returns True to include.
         include_instructions: If True, instruction and config commits bypass
             the filter and are always included.
+        context_budget: If set, limits total inherited tokens. Oldest
+            non-instruction commits are dropped first to fit.
+        token_counter: Token counter for budget enforcement.
 
     Returns:
         Child's HEAD hash after selective cloning, or None if nothing was included.
@@ -456,6 +485,32 @@ def _selective_clone(
             # Edit target was filtered out — skip this edit
             continue
         final_included.add(commit_row.commit_hash)
+
+    if not final_included:
+        return None
+
+    # Budget enforcement: if context_budget is set, drop oldest
+    # non-instruction commits until total tokens fit within budget.
+    if context_budget is not None:
+        # Compute total tokens for included commits
+        total_tokens = sum(
+            row.token_count
+            for row in all_commits
+            if row.commit_hash in final_included
+        )
+        if total_tokens > context_budget:
+            # Separate instruction/config commits from droppable ones
+            # Walk oldest-first so we drop oldest first
+            droppable = [
+                row for row in all_commits
+                if row.commit_hash in final_included
+                and row.content_type not in _always_include_types
+            ]
+            for row in droppable:
+                if total_tokens <= context_budget:
+                    break
+                final_included.discard(row.commit_hash)
+                total_tokens -= row.token_count
 
     if not final_included:
         return None
