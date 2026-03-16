@@ -32,7 +32,6 @@ Why this is SUPERIOR to naive "call LLM 3 times and concatenate":
 
 import io
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 # Windows console encoding fix
@@ -137,13 +136,10 @@ def _configure_child(child: "Tract", *, temperature: float = 0.5) -> None:
         default_model=MODEL_ID,
     )
     child.configure_llm(client)
-    child._owns_llm_client = True
-    child._default_config = LLMConfig(model=MODEL_ID, temperature=temperature)
-    child._auto_message_enabled = True
-    child._operation_configs = replace(
-        child._operation_configs,
-        message=LLMConfig(model=llm.small, temperature=0.0),
-    )
+    child._llm_state.owns_llm_client = True
+    child._llm_state.default_config = LLMConfig(model=MODEL_ID, temperature=temperature)
+    child._llm_state.auto_message_enabled = True
+    child.configure_operations(message=LLMConfig(model=llm.small, temperature=0.0))
 
 
 # =====================================================================
@@ -185,13 +181,10 @@ def main() -> None:
         default_model=MODEL_ID,
     )
     coordinator.configure_llm(coord_client)
-    coordinator._owns_llm_client = True
-    coordinator._default_config = LLMConfig(model=MODEL_ID, temperature=0.3)
-    coordinator._auto_message_enabled = True
-    coordinator._operation_configs = replace(
-        coordinator._operation_configs,
-        message=LLMConfig(model=llm.small, temperature=0.0),
-    )
+    coordinator._llm_state.owns_llm_client = True
+    coordinator._llm_state.default_config = LLMConfig(model=MODEL_ID, temperature=0.3)
+    coordinator._llm_state.auto_message_enabled = True
+    coordinator.configure_operations(message=LLMConfig(model=llm.small, temperature=0.0))
 
     # Seed the research question
     coordinator.system(

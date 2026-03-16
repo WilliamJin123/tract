@@ -519,19 +519,19 @@ class TestNewTools:
 
         # Set model first
         executor.execute("configure_model", {"model": "gpt-4o"})
-        assert tract._default_config.model == "gpt-4o"
+        assert tract.default_config.model == "gpt-4o"
 
         # Set temperature -- model should be preserved
         executor.execute("configure_model", {"temperature": 0.8})
-        assert tract._default_config.temperature == 0.8
-        assert tract._default_config.model == "gpt-4o", (
+        assert tract.default_config.temperature == 0.8
+        assert tract.default_config.model == "gpt-4o", (
             "model should survive a temperature-only configure_model call"
         )
 
         # Override model again -- temperature should be preserved
         executor.execute("configure_model", {"model": "gpt-3.5-turbo"})
-        assert tract._default_config.model == "gpt-3.5-turbo"
-        assert tract._default_config.temperature == 0.8, (
+        assert tract.default_config.model == "gpt-3.5-turbo"
+        assert tract.default_config.temperature == 0.8, (
             "temperature should survive a model-only configure_model call"
         )
 
@@ -540,12 +540,12 @@ class TestNewTools:
         executor = ToolExecutor(tract)
 
         executor.execute("configure_model", {"model": "gpt-4o", "operation": "chat"})
-        chat_cfg = tract._operation_configs.chat
+        chat_cfg = tract.operation_configs.chat
         assert chat_cfg.model == "gpt-4o"
 
         # Add temperature to chat -- model preserved
         executor.execute("configure_model", {"temperature": 0.5, "operation": "chat"})
-        chat_cfg = tract._operation_configs.chat
+        chat_cfg = tract.operation_configs.chat
         assert chat_cfg.temperature == 0.5
         assert chat_cfg.model == "gpt-4o"
 

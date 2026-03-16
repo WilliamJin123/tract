@@ -74,7 +74,6 @@ def main() -> None:
     )
 
     # Configure LLM
-    from dataclasses import replace
     from tract import OpenAIClient, LLMConfig
 
     parent_client = OpenAIClient(
@@ -83,15 +82,12 @@ def main() -> None:
         default_model=MODEL_ID,
     )
     parent_tract.configure_llm(parent_client)
-    parent_tract._owns_llm_client = True
-    parent_tract._default_config = LLMConfig(model=MODEL_ID)
+    parent_tract._llm_state.owns_llm_client = True
+    parent_tract._llm_state.default_config = LLMConfig(model=MODEL_ID)
 
     # Enable LLM-generated commit messages (using the small model)
-    parent_tract._auto_message_enabled = True
-    parent_tract._operation_configs = replace(
-        parent_tract._operation_configs,
-        message=LLMConfig(model=llm.small, temperature=0.0),
-    )
+    parent_tract._llm_state.auto_message_enabled = True
+    parent_tract.configure_operations(message=LLMConfig(model=llm.small, temperature=0.0))
 
     parent_tract.system(
         "You are a coordinator evaluating caching for microservices."
@@ -123,13 +119,10 @@ def main() -> None:
         default_model=MODEL_ID,
     )
     child.configure_llm(child_client)
-    child._owns_llm_client = True
-    child._default_config = LLMConfig(model=MODEL_ID)
-    child._auto_message_enabled = True
-    child._operation_configs = replace(
-        child._operation_configs,
-        message=LLMConfig(model=llm.small, temperature=0.0),
-    )
+    child._llm_state.owns_llm_client = True
+    child._llm_state.default_config = LLMConfig(model=MODEL_ID)
+    child._llm_state.auto_message_enabled = True
+    child.configure_operations(message=LLMConfig(model=llm.small, temperature=0.0))
 
     # Research task — more content than budget comfortably holds
     result = child.run(

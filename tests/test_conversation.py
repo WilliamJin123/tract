@@ -122,7 +122,7 @@ class TestOpenLLMConfig:
         )
         t = Tract.open(api_key="test-key")
         assert t.llm_client is not None
-        assert t._owns_llm_client is True
+        assert t._llm_state.owns_llm_client is True
         t.close()
 
     def test_open_with_api_key_and_model(self, monkeypatch):
@@ -134,8 +134,8 @@ class TestOpenLLMConfig:
 
         monkeypatch.setattr("tract.llm.client.OpenAIClient", mock_init)
         t = Tract.open(api_key="test-key", model="gpt-4o")
-        assert t._default_config is not None
-        assert t._default_config.model == "gpt-4o"
+        assert t._llm_state.default_config is not None
+        assert t._llm_state.default_config.model == "gpt-4o"
         assert captured.get("default_model") == "gpt-4o"
         t.close()
 
@@ -154,7 +154,7 @@ class TestOpenLLMConfig:
     def test_open_without_api_key_no_llm(self):
         t = Tract.open()
         assert t.llm_client is None
-        assert t._owns_llm_client is False
+        assert t._llm_state.owns_llm_client is False
         t.close()
 
     def test_open_default_model_is_gpt4o_mini(self, monkeypatch):
@@ -632,7 +632,7 @@ class TestCustomLLMClient:
 
         assert t.llm_client is not None
         assert t.llm_client is client
-        assert t._owns_llm_client is False  # caller owns lifecycle
+        assert t._llm_state.owns_llm_client is False  # caller owns lifecycle
         t.system("System")
         resp = t.chat("Hi")
         assert resp.text == "injected!"
@@ -656,8 +656,8 @@ class TestCustomLLMClient:
         resolver = CustomResolver()
         t.configure_llm(client, resolver=resolver)
 
-        assert t._default_resolver is resolver
-        assert t._llm_client is client
+        assert t._llm_state.default_resolver is resolver
+        assert t.llm_client is client
         t.close()
 
     def test_configure_llm_default_resolver_when_none(self):
@@ -668,7 +668,7 @@ class TestCustomLLMClient:
         client = MockLLMClient()
         t.configure_llm(client)
 
-        assert isinstance(t._default_resolver, OpenAIResolver)
+        assert isinstance(t._llm_state.default_resolver, OpenAIResolver)
         t.close()
 
     def test_llm_client_protocol_with_extract_methods(self):

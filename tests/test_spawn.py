@@ -217,8 +217,8 @@ class TestSpawn:
         )
 
         # Profile should be loaded — active_profile set
-        assert child._active_profile is not None
-        assert child._active_profile.name == "coding"
+        assert child.active_profile is not None
+        assert child.active_profile.name == "coding"
         # Profile directives should be committed
         compiled = child.compile()
         # At least the inherited snapshot + profile directives
@@ -334,8 +334,8 @@ class TestSpawn:
             configure={"domain": "machine-learning"},
         )
 
-        assert child._active_profile is not None
-        assert child._active_profile.name == "research"
+        assert child.active_profile is not None
+        assert child.active_profile.name == "research"
         # ingest stage sets temperature=0.3
         assert child.get_config("temperature") == 0.3
         # explicit configure applied last

@@ -288,10 +288,10 @@ class TestConfigIndexInvalidation:
         with Tract.open() as t:
             t.configure(model="gpt-3.5")
             _ = t.config_index  # Force build
-            assert not t._config_index.is_stale
+            assert not t._config_mgr._config_index.is_stale
             t.configure(model="gpt-4o")
             # After configure, index should be stale
-            assert t._config_index.is_stale
+            assert t._config_mgr._config_index.is_stale
 
     def test_stale_index_rebuilds_on_access(self):
         """Accessing config_index when stale triggers rebuild."""

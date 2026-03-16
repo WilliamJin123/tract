@@ -729,7 +729,7 @@ class TestAutoDetection:
             api_key="sk-test",
             provider="anthropic",
         )
-        assert isinstance(t._llm_client, AnthropicClient)
+        assert isinstance(t.llm_client, AnthropicClient)
         t.close()
 
     def test_open_with_claude_model(self):
@@ -740,7 +740,7 @@ class TestAutoDetection:
             api_key="sk-test",
             model="claude-sonnet-4-6",
         )
-        assert isinstance(t._llm_client, AnthropicClient)
+        assert isinstance(t.llm_client, AnthropicClient)
         t.close()
 
     def test_open_default_is_openai(self):
@@ -748,7 +748,7 @@ class TestAutoDetection:
         from tract.llm.client import OpenAIClient
 
         t = Tract.open(api_key="sk-test")
-        assert isinstance(t._llm_client, OpenAIClient)
+        assert isinstance(t.llm_client, OpenAIClient)
         t.close()
 
 

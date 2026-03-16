@@ -20,17 +20,24 @@ class TemplateManager:
         check_open: Callable | None = None,  # Callable (for consistency)
         directive_fn: Callable | None = None,  # Callable - Tract.directive
         configure_fn: Callable | None = None,  # Callable - ConfigManager.set (was configure)
+        template_registry: dict | None = None,  # shared with Tract
+        profile_registry: dict | None = None,  # shared with Tract
     ) -> None:
         self._check_open_fn = check_open or (lambda: None)
         self._directive_fn = directive_fn
         self._configure_fn = configure_fn
 
-        # Initialize template and profile registries from defaults
-        from tract.profiles import default_profile_registry
-        from tract.templates import default_template_registry
-
-        self._template_registry = default_template_registry()
-        self._profile_registry = default_profile_registry()
+        # Use shared registries from Tract, or create defaults
+        if template_registry is not None:
+            self._template_registry = template_registry
+        else:
+            from tract.templates import default_template_registry
+            self._template_registry = default_template_registry()
+        if profile_registry is not None:
+            self._profile_registry = profile_registry
+        else:
+            from tract.profiles import default_profile_registry
+            self._profile_registry = default_profile_registry()
         self._active_profile: WorkflowProfile | None = None
 
     # ------------------------------------------------------------------

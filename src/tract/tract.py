@@ -401,11 +401,7 @@ class Tract:
         # Config index (per-key resolution from DAG ancestry)
         self._config_index: ConfigIndex | None = None
 
-        # Middleware state
-        self._middleware: dict[str, list[tuple[str, Callable]]] = {}
-        self._in_middleware_events: set[str] = set()
-        self._gates: dict[str, str] = {}  # gate_name -> handler_id
-        self._maintainers: dict[str, str] = {}  # maintainer_name -> handler_id
+        # (Middleware state lives in _middleware_mgr after open())
 
         # Persistence state
         self._db_path: str = ":memory:"
@@ -413,8 +409,7 @@ class Tract:
         self._behavioral_spec_repo: SqliteBehavioralSpecRepository | None = None
         self._quarantined: list[str] = []
 
-        # Workflow profile state
-        self._active_profile: WorkflowProfile | None = None
+        # (Workflow profile state lives in _templates_mgr after open())
 
         # Per-instance template and profile registries (seeded from defaults)
         from tract.templates import default_template_registry
@@ -428,16 +423,14 @@ class Tract:
         # Prompt file directory (auto-discovered or explicit)
         self._prompt_dir: str | Path | None = None
 
-        # Routing table (lazy init via _ensure_routing_table)
-        self._routing_table: RoutingTable | None = None
+        # (Routing table lives in _routing_mgr after open())
 
         # Deferred managers (created in open() / from_components())
         self._llm_mgr: LLMManager | None = None  # type: ignore[assignment]
         self._compression_mgr: CompressionManager | None = None  # type: ignore[assignment]
         self._persistence_mgr: PersistenceManager | None = None  # type: ignore[assignment]
 
-        # Initialize sub-object managers
-        self._create_managers()
+        # Managers are created in open()/from_components() after all repos are set
 
     # ------------------------------------------------------------------
     # Sub-object manager creation
@@ -470,13 +463,13 @@ class Tract:
         # Leaf managers (no outgoing dependencies)
         self._tags_mgr = TagManager(
             tract_id=self._tract_id,
-            tag_annotation_repo=self._tag_annotation_repo,
-            tag_registry_repo=self._tag_registry_repo,
+            get_tag_annotation_repo=lambda: self._tag_annotation_repo,
+            get_tag_registry_repo=lambda: self._tag_registry_repo,
             commit_repo=self._commit_repo,
             blob_repo=self._blob_repo,
             annotation_repo=self._annotation_repo,
             parent_repo=self._parent_repo,
-            strict_tags=self._strict_tags,
+            get_strict_tags=lambda: self._strict_tags,
             check_open=self._check_open,
             commit_session=self._commit_session,
             get_ancestors=self._get_merge_aware_ancestors,
@@ -492,7 +485,7 @@ class Tract:
             cache=self._cache,
             check_open=self._check_open,
             commit_session=self._commit_session,
-            get_config_index=lambda: self._config_index,
+            get_config_index=lambda: getattr(self._config_mgr, '_config_index', None),
         )
 
         self._annotations_mgr = AnnotationManager(
@@ -575,13 +568,16 @@ class Tract:
             get_config_fn=lambda k, **kw: self.get_config(k, **kw),
             commit_fn=lambda *a, **kw: self.commit(*a, **kw),
             tag_annotation_repo=self._tag_annotation_repo,
+            tract_ref=self,
         )
 
-        # Template manager
+        # Template manager (shares Tract's registries)
         self._templates_mgr = TemplateManager(
             check_open=self._check_open,
             directive_fn=lambda *a, **kw: self.directive(*a, **kw),
             configure_fn=lambda **kw: self.configure(**kw),
+            template_registry=self._template_registry,
+            profile_registry=self._profile_registry,
         )
 
         # Spawn manager
@@ -623,19 +619,8 @@ class Tract:
         """Create managers that need fully-configured LLM state."""
         from tract.managers import LLMManager, CompressionManager, PersistenceManager
 
-        # Sync LLM state from Tract attributes (which may have been modified by open())
-        if hasattr(self, '_llm_state'):
-            self._llm_state.llm_client = self._llm_client
-            self._llm_state.default_config = self._default_config
-            self._llm_state.operation_configs = self._operation_configs
-            self._llm_state.operation_prompts = self._operation_prompts
-            self._llm_state.operation_clients = self._operation_clients
-            self._llm_state.retry_config = self._retry_config
-            self._llm_state.default_resolver = self._default_resolver
-            self._llm_state.commit_reasoning = self._commit_reasoning
-            self._llm_state.auto_message_enabled = self._auto_message_enabled
-            self._llm_state.tool_summarization_config = self._tool_summarization_config
-            self._llm_state.owns_llm_client = self._owns_llm_client
+        # LLM state is already on self._llm_state (created in _create_managers,
+        # updated by open() config setup).  No sync needed.
 
         self._llm_mgr = LLMManager(
             tract_id=self._tract_id,
@@ -1054,16 +1039,18 @@ class Tract:
         tract._tag_annotation_repo = tag_annotation_repo
         tract._tag_registry_repo = tag_registry_repo
 
-        # Seed base tags (idempotent)
-        tract._seed_base_tags()
-
         # Persistence repository + file-based state
         persistence_repo = SqlitePersistenceRepository(session)
         tract._persistence_repo = persistence_repo
         behavioral_spec_repo = SqliteBehavioralSpecRepository(session)
         tract._behavioral_spec_repo = behavioral_spec_repo
         tract._db_path = path
-        tract._load_persisted_state()
+
+        # Create managers now that all repos are set
+        tract._create_managers()
+
+        # Seed base tags (idempotent)
+        tract._seed_base_tags()
 
         # Validate: model= and default_config= are mutually exclusive
         if model is not None and default_config is not None:
@@ -1100,40 +1087,40 @@ class Tract:
                     default_model=model or "gpt-4o-mini",
                 )
             tract.configure_llm(client)
-            tract._owns_llm_client = True
+            tract._llm_state.owns_llm_client = True
             if model is not None:
-                tract._default_config = LLMConfig(model=model)
+                tract._llm_state.default_config = LLMConfig(model=model)
 
         # Configure externally-provided LLM client (caller owns lifecycle)
         elif llm_client is not None:
             tract.configure_llm(llm_client)
-            tract._owns_llm_client = False
+            tract._llm_state.owns_llm_client = False
 
         # Apply default_config if provided (without api_key)
-        if default_config is not None and tract._default_config is None:
-            tract._default_config = default_config
+        if default_config is not None and tract._llm_state.default_config is None:
+            tract._llm_state.default_config = default_config
 
         # Apply per-operation configs (new typed path)
         if operations is not None:
-            tract._operation_configs = operations
+            tract._llm_state.operation_configs = operations
         # Apply per-operation configs (legacy dict path)
         elif operation_configs is not None:
             tract.configure_operations(**operation_configs)
 
         # Reasoning commit config
-        tract._commit_reasoning = commit_reasoning
+        tract._llm_state.commit_reasoning = commit_reasoning
 
         # Auto-message config
         if auto_message is not False:
-            tract._auto_message_enabled = True
+            tract._llm_state.auto_message_enabled = True
             if isinstance(auto_message, str):
-                tract._operation_configs = replace(
-                    tract._operation_configs,
+                tract._llm_state.operation_configs = replace(
+                    tract._llm_state.operation_configs,
                     message=LLMConfig(model=auto_message, temperature=0.0),
                 )
             elif isinstance(auto_message, LLMConfig):
-                tract._operation_configs = replace(
-                    tract._operation_configs, message=auto_message,
+                tract._llm_state.operation_configs = replace(
+                    tract._llm_state.operation_configs, message=auto_message,
                 )
             # auto_message=True: no operation config needed, uses default
 
@@ -1148,7 +1135,7 @@ class Tract:
 
         # Retry config
         if retry is not None:
-            tract._retry_config = retry
+            tract._llm_state.retry_config = retry
 
         # Prompt directory: explicit > auto-discover .tract/prompts/
         if prompt_dir is not None:
@@ -1161,6 +1148,9 @@ class Tract:
 
         # Create deferred managers that need full LLM state
         tract._create_deferred_managers()
+
+        # Load persisted state (needs persistence_mgr from deferred managers)
+        tract._load_persisted_state()
 
         return tract
 
@@ -1223,9 +1213,11 @@ class Tract:
             compile_record_repo=compile_record_repo,
             tool_schema_repo=tool_schema_repo,
         )
+        # Create managers (repos are set from __init__ for from_components)
+        tract._create_managers()
         if llm_client is not None:
             tract.configure_llm(llm_client)
-            tract._owns_llm_client = False
+            tract._llm_state.owns_llm_client = False
         # Create deferred managers that need full LLM state
         tract._create_deferred_managers()
         return tract
@@ -1262,8 +1254,11 @@ class Tract:
     @property
     def config_index(self) -> ConfigIndex:
         """Get the current config index (built/cached from DAG ancestry)."""
+        mgr = getattr(self, '_config_mgr', None)
+        if mgr is not None:
+            return mgr.config_index
+        # Fallback for pre-open access
         from tract.operations.config_index import ConfigIndex as _ConfigIndex
-
         if self._config_index is None or self._config_index.is_stale:
             head = self.head
             if head is None:
@@ -1300,27 +1295,8 @@ class Tract:
     }
 
     def configure(self, **settings: Any) -> CommitInfo:
-        """Commit config to DAG. Well-known keys are type-checked.
-
-        Raises ValueError if a well-known key has the wrong type.
-        Unknown keys pass through without validation.
-        None values are valid (unset semantics).
-        """
-        self._check_open()
-        from tract.models.content import ConfigContent
-
-        for key, value in settings.items():
-            if value is not None and key in self._WELL_KNOWN_CONFIG_TYPES:
-                expected = self._WELL_KNOWN_CONFIG_TYPES[key]
-                if not isinstance(value, expected):
-                    raise ValueError(
-                        f"Config '{key}' expects {expected}, got {type(value).__name__}"
-                    )
-        content = ConfigContent(settings=settings)
-        info = self.commit(content, message=f"configure: {', '.join(settings)}")
-        if self._config_index is not None:
-            self._config_index.invalidate()
-        return info
+        """See :attr:`config` manager :meth:`set`."""
+        return self._config_mgr.set(**settings)
 
     def directive(
         self,
@@ -1362,172 +1338,60 @@ class Tract:
     def apply_template(
         self, name: str, *, directive_name: str | None = None, **params: object
     ) -> CommitInfo:
-        """Apply a directive template by name with parameters.
-
-        Uses the per-instance template registry (seeded from defaults).
-
-        Args:
-            name: Template name (built-in or custom registered on this instance)
-            directive_name: Override the directive name (defaults to template name)
-            **params: Template parameters to fill in placeholders
-
-        Returns:
-            CommitInfo for the directive commit
-        """
-        if name not in self._template_registry:
-            available = ", ".join(sorted(self._template_registry.keys()))
-            raise KeyError(f"Template '{name}' not found. Available: {available}")
-        template = self._template_registry[name]
-        content = template.render(**params)
-        return self.directive(directive_name or template.name, content)
+        """See :attr:`templates` manager :meth:`apply`."""
+        return self._templates_mgr.apply(name=name, directive_name=directive_name, **params)
 
     def list_templates(self) -> list:
         """List all available directive templates from this instance's registry."""
-        return list(self._template_registry.values())
+        return self._templates_mgr.list()
 
     def register_template(self, template: DirectiveTemplate) -> None:
-        """Register a custom directive template on this Tract instance.
-
-        Args:
-            template: A :class:`DirectiveTemplate` instance.
-        """
-        self._template_registry[template.name] = template
+        """See :attr:`templates` manager :meth:`register`."""
+        return self._templates_mgr.register(template=template)
 
     def get_template(self, name: str) -> DirectiveTemplate:
-        """Get a template by name from this instance's registry.
-
-        Raises:
-            KeyError: If the template name is not found.
-        """
-        if name not in self._template_registry:
-            available = ", ".join(sorted(self._template_registry.keys()))
-            raise KeyError(f"Template '{name}' not found. Available: {available}")
-        return self._template_registry[name]
+        """See :attr:`templates` manager :meth:`get`."""
+        return self._templates_mgr.get(name=name)
 
     # ------------------------------------------------------------------
     # Workflow profiles
     # ------------------------------------------------------------------
 
     def load_profile(self, name: str, *, apply_directives: bool = True) -> None:
-        """Load a workflow profile, applying its config and directives.
-
-        Uses the per-instance profile registry (seeded from defaults).
-
-        Args:
-            name: Profile name (``"coding"``, ``"research"``, ``"ecommerce"``,
-                or a custom-registered name).
-            apply_directives: Whether to apply the profile's directives
-                (default ``True``).
-
-        Raises:
-            KeyError: If the profile name is not found.
-        """
-        if name not in self._profile_registry:
-            available = ", ".join(sorted(self._profile_registry.keys()))
-            raise KeyError(f"Profile '{name}' not found. Available: {available}")
-        profile = self._profile_registry[name]
-
-        # Apply config
-        if profile.config:
-            self.configure(**profile.config)
-
-        # Apply directives
-        if apply_directives:
-            for dir_name, content in profile.directives.items():
-                self.directive(dir_name, content)
-
-        # Apply directive templates
-        if profile.directive_templates:
-            for tmpl_name, params in profile.directive_templates.items():
-                self.apply_template(tmpl_name, **params)
-
-        # Store profile reference for stage transitions
-        self._active_profile = profile
+        """See :attr:`templates` manager :meth:`load_profile`."""
+        return self._templates_mgr.load_profile(name=name, apply_directives=apply_directives)
 
     def apply_stage(self, stage_name: str) -> None:
-        """Apply stage-specific config from the active workflow profile.
-
-        Overrides configuration values for the given stage while keeping
-        non-overridden settings from the base profile config.
-
-        Args:
-            stage_name: Stage name (must exist in the profile's ``stages`` dict).
-
-        Raises:
-            ValueError: If no profile is loaded or the stage name is unknown.
-        """
-        if self._active_profile is None:
-            raise ValueError("No workflow profile loaded. Call load_profile() first.")
-        profile = self._active_profile
-        if stage_name not in profile.stages:
-            available = ", ".join(sorted(profile.stages.keys()))
-            raise ValueError(
-                f"Stage '{stage_name}' not in profile '{profile.name}'. "
-                f"Available: {available}"
-            )
-        stage_config = profile.stages[stage_name]
-        self.configure(**stage_config)
+        """See :attr:`templates` manager :meth:`apply_stage`."""
+        return self._templates_mgr.apply_stage(stage_name=stage_name)
 
     @property
     def active_profile(self) -> WorkflowProfile | None:
         """The currently loaded workflow profile, or None."""
-        return self._active_profile
+        return self._templates_mgr.active_profile
 
     def register_profile(self, profile: WorkflowProfile) -> None:
-        """Register a custom workflow profile on this Tract instance.
-
-        Args:
-            profile: A :class:`WorkflowProfile` instance.
-        """
-        self._profile_registry[profile.name] = profile
+        """See :attr:`templates` manager :meth:`register_profile`."""
+        return self._templates_mgr.register_profile(profile=profile)
 
     def get_profile(self, name: str) -> WorkflowProfile:
-        """Get a workflow profile by name from this instance's registry.
-
-        Raises:
-            KeyError: If the profile name is not found.
-        """
-        if name not in self._profile_registry:
-            available = ", ".join(sorted(self._profile_registry.keys()))
-            raise KeyError(f"Profile '{name}' not found. Available: {available}")
-        return self._profile_registry[name]
+        """See :attr:`templates` manager :meth:`get_profile`."""
+        return self._templates_mgr.get_profile(name=name)
 
     def list_profiles(self) -> list:
         """List all available workflow profiles from this instance's registry."""
-        return list(self._profile_registry.values())
+        return self._templates_mgr.list_profiles()
 
     def add_middleware(self, event: MiddlewareEvent, handler: Callable) -> str:
         """Register middleware. Returns handler ID for removal."""
-        from tract.middleware import VALID_EVENTS
-
-        if event not in VALID_EVENTS:
-            raise ValueError(
-                f"Unknown middleware event '{event}'. "
-                f"Valid events: {sorted(VALID_EVENTS)}"
-            )
-        handler_id = uuid.uuid4().hex[:12]
-        self._middleware.setdefault(event, []).append((handler_id, handler))
-        return handler_id
+        return self._middleware_mgr.add(event=event, handler=handler)
 
     # Backward-compatible alias
     use = add_middleware
 
     def remove_middleware(self, handler_id: str) -> None:
         """Remove a registered middleware handler."""
-        for event, handlers in self._middleware.items():
-            for i, (hid, _fn) in enumerate(handlers):
-                if hid == handler_id:
-                    handlers.pop(i)
-                    # Clean up _gates if this was a gate handler
-                    stale = [n for n, gid in self._gates.items() if gid == handler_id]
-                    for n in stale:
-                        del self._gates[n]
-                    # Clean up _maintainers if this was a maintainer handler
-                    stale_m = [n for n, mid in self._maintainers.items() if mid == handler_id]
-                    for n in stale_m:
-                        del self._maintainers[n]
-                    return
-        raise ValueError(f"Middleware handler '{handler_id}' not found")
+        return self._middleware_mgr.remove(handler_id=handler_id)
 
     def gate(
         self,
@@ -1540,93 +1404,16 @@ class Tract:
         temperature: float = 0.1,
         max_log_entries: int = 30,
     ) -> str:
-        """Register a semantic gate (LLM-powered quality check).
-
-        A semantic gate is a middleware handler that uses an LLM to evaluate
-        whether the current context meets a natural-language criterion.
-        If the criterion is not met, the gate blocks by raising BlockedError.
-
-        Args:
-            name: Unique name for this gate.
-            event: Middleware event to fire on (e.g., "pre_transition", "pre_commit").
-            check: Natural language description of the criterion to evaluate.
-            model: LLM model override. Uses tract's default if None.
-            condition: Optional deterministic pre-check. If provided and returns False,
-                the LLM call is skipped (gate passes automatically). Use this to
-                avoid unnecessary LLM calls.
-            temperature: LLM temperature (default 0.1 for deterministic judgment).
-            max_log_entries: Maximum commits to include in the manifest.
-
-        Returns:
-            Handler ID (can be used with remove_middleware() or remove_gate()).
-
-        Raises:
-            ValueError: If a gate with this name already exists, or event is invalid.
-
-        Example::
-
-            t.gate(
-                "research-quality",
-                event="pre_transition",
-                check="Does the research contain at least 3 distinct perspectives?",
-                model="gpt-4o-mini",
-                condition=lambda ctx: ctx.target == "synthesis",
-            )
-        """
-        if name in self._gates:
-            raise ValueError(f"Gate '{name}' already registered. Remove it first.")
-
-        # Gates block operations; post_* events fire after the operation is
-        # already complete, so blocking is misleading.  Use a regular middleware
-        # handler (or a maintainer) for post_* events instead.
-        if event.startswith("post_"):
-            raise ValueError(
-                f"Gates cannot be registered on post_* events (got '{event}'). "
-                f"Gates block operations via BlockedError, but post_* events fire "
-                f"after the operation is already complete. Use t.use() with a "
-                f"regular middleware handler for post_* auditing."
-            )
-
-        from tract.gate import SemanticGate
-
-        handler = SemanticGate(
-            name=name,
-            check=check,
-            model=model,
-            condition=condition,
-            temperature=temperature,
-            max_log_entries=max_log_entries,
-        )
-        handler_id = self.use(event, handler)
-        self._gates[name] = handler_id
-        # Auto-persist gate spec (includes the event in spec_data)
-        try:
-            spec_data = handler.to_spec()
-            spec_data["event"] = event
-            self.persist_behavioral_spec("gate", name, spec_data)
-        except Exception:
-            logger.debug("Failed to auto-persist gate spec '%s'", name, exc_info=True)
-        return handler_id
+        """See :attr:`middleware` manager :meth:`gate`."""
+        return self._middleware_mgr.gate(name=name, event=event, check=check, model=model, condition=condition, temperature=temperature, max_log_entries=max_log_entries)
 
     def remove_gate(self, name: str) -> None:
-        """Remove a named semantic gate.
-
-        Args:
-            name: The gate name passed to gate().
-
-        Raises:
-            ValueError: If no gate with this name exists.
-        """
-        handler_id = self._gates.pop(name, None)
-        if handler_id is None:
-            raise ValueError(f"Gate '{name}' not found")
-        self.remove_middleware(handler_id)
-        # Remove persisted spec
-        self.remove_behavioral_spec("gate", name)
+        """See :attr:`middleware` manager :meth:`remove_gate`."""
+        return self._middleware_mgr.remove_gate(name=name)
 
     def list_gates(self) -> list[str]:
         """Return names of all registered semantic gates."""
-        return list(self._gates.keys())
+        return self._middleware_mgr.list_gates()
 
     def maintain(
         self,
@@ -1641,99 +1428,16 @@ class Tract:
         max_log_entries: int = 30,
         max_peeks: int = 0,
     ) -> str:
-        """Register a semantic maintainer (LLM-powered context maintenance).
-
-        A semantic maintainer is a middleware handler that uses an LLM to decide
-        what maintenance actions to take on the context. Unlike gates (which block),
-        maintainers execute actions (annotate, compress, configure, etc.).
-
-        When ``max_peeks > 0``, the maintainer uses a two-pass flow:
-        first it asks the LLM which commits need full content inspection,
-        fetches those contents, then makes a second call for action decisions.
-
-        Args:
-            name: Unique name for this maintainer.
-            event: Middleware event to fire on (e.g., "post_commit", "post_transition").
-            instructions: Natural language description of what maintenance to perform.
-            actions: List of allowed action types. If None, all actions are allowed.
-                Valid types: "annotate", "compress", "configure", "directive",
-                "tag", "gc", "block".
-            model: LLM model override. Uses tract's default if None.
-            condition: Optional deterministic pre-check. If provided and returns False,
-                the LLM call is skipped (maintainer does nothing). Use this to
-                avoid unnecessary LLM calls.
-            temperature: LLM temperature (default 0.1 for deterministic judgment).
-            max_log_entries: Maximum commits to include in the manifest.
-            max_peeks: Maximum commits the LLM may inspect for full content.
-                0 (default) disables peeking — single LLM call only.
-
-        Returns:
-            Handler ID (can be used with remove_middleware() or remove_maintainer()).
-
-        Raises:
-            ValueError: If a maintainer with this name already exists, or event is invalid,
-                or action types are invalid.
-
-        Example::
-
-            t.maintain(
-                "context-cleanup",
-                event="post_commit",
-                instructions="Mark tool_io commits older than 10 entries as SKIP",
-                actions=["annotate"],
-                max_peeks=3,
-                condition=lambda ctx: ctx.tract.log(limit=1)[0].content_type == "tool_io",
-            )
-        """
-        if name in self._maintainers:
-            raise ValueError(f"Maintainer '{name}' already registered. Remove it first.")
-
-        from tract.maintain import SemanticMaintainer
-
-        # Default to all valid actions if none specified
-        if actions is None:
-            actions = sorted(SemanticMaintainer.VALID_ACTIONS)
-
-        handler = SemanticMaintainer(
-            name=name,
-            instructions=instructions,
-            actions=actions,
-            model=model,
-            condition=condition,
-            temperature=temperature,
-            max_log_entries=max_log_entries,
-            max_peeks=max_peeks,
-        )
-        handler_id = self.use(event, handler)
-        self._maintainers[name] = handler_id
-        # Auto-persist maintainer spec (includes the event in spec_data)
-        try:
-            spec_data = handler.to_spec()
-            spec_data["event"] = event
-            self.persist_behavioral_spec("maintainer", name, spec_data)
-        except Exception:
-            logger.debug("Failed to auto-persist maintainer spec '%s'", name, exc_info=True)
-        return handler_id
+        """See :attr:`middleware` manager :meth:`maintain`."""
+        return self._middleware_mgr.maintain(name=name, event=event, instructions=instructions, actions=actions, model=model, condition=condition, temperature=temperature, max_log_entries=max_log_entries, max_peeks=max_peeks)
 
     def remove_maintainer(self, name: str) -> None:
-        """Remove a named semantic maintainer.
-
-        Args:
-            name: The maintainer name passed to maintain().
-
-        Raises:
-            ValueError: If no maintainer with this name exists.
-        """
-        handler_id = self._maintainers.pop(name, None)
-        if handler_id is None:
-            raise ValueError(f"Maintainer '{name}' not found")
-        self.remove_middleware(handler_id)
-        # Remove persisted spec
-        self.remove_behavioral_spec("maintainer", name)
+        """See :attr:`middleware` manager :meth:`remove_maintainer`."""
+        return self._middleware_mgr.remove_maintainer(name=name)
 
     def list_maintainers(self) -> list[str]:
         """Return names of all registered semantic maintainers."""
-        return list(self._maintainers.keys())
+        return self._middleware_mgr.list_maintainers()
 
     # ------------------------------------------------------------------
     # Routing
@@ -1748,77 +1452,20 @@ class Tract:
         keywords: list[str] | None = None,
         pattern: str | None = None,
     ) -> None:
-        """Register a route in the default routing table.
-
-        Args:
-            name: Unique route identifier.
-            description: Human-readable description (used for fuzzy matching).
-            route_type: ``"branch"``, ``"stage"``, or ``"workflow"``.
-            keywords: Optional keywords that improve matching accuracy.
-            pattern: Optional regex pattern for exact matching.
-
-        Raises:
-            ValueError: If *name* is already registered or *route_type* is invalid.
-
-        Example::
-
-            t.add_route("research", "Deep research branch", "branch",
-                         keywords=["investigate", "research", "explore"])
-        """
-        self._check_open()
-        self._ensure_routing_table()
-        self._routing_table.add_route(  # type: ignore[union-attr]
-            name, description, route_type, keywords=keywords, pattern=pattern
-        )
+        """See :attr:`routing` manager :meth:`add`."""
+        return self._routing_mgr.add(name=name, description=description, route_type=route_type, keywords=keywords, pattern=pattern)
 
     def remove_route(self, name: str) -> None:
-        """Remove a route from the default routing table.
-
-        Args:
-            name: The route name to remove.
-
-        Raises:
-            ValueError: If no route with this name exists or no routing table.
-        """
-        self._check_open()
-        if self._routing_table is None:
-            raise ValueError(f"Route '{name}' not found.")
-        self._routing_table.remove_route(name)
+        """See :attr:`routing` manager :meth:`remove`."""
+        return self._routing_mgr.remove(name=name)
 
     def _route_fallback(self, query: str) -> RoutingResult:
         """Fuzzy-only routing when no SemanticRouter is provided."""
-        from tract.routing import Route, RoutingResult
-
-        self._ensure_routing_table()
-        matches = self._routing_table.match(query)  # type: ignore[union-attr]
-        if matches:
-            best = matches[0]
-        else:
-            best = Route(
-                target="",
-                route_type="branch",
-                confidence=0.0,
-                reasoning="No matching routes found.",
-            )
-        return RoutingResult(
-            route=best,
-            applied=False,
-            tokens_used=0,
-            method="fuzzy",
-        )
+        return self._routing_mgr._fallback(query=query)
 
     def _route_apply(self, result: RoutingResult, apply: bool) -> RoutingResult:
         """Optionally apply a routing result."""
-        if apply and result.route.target and result.route.confidence > 0:
-            from tract.routing import RoutingResult
-            applied = self._apply_route(result.route)
-            return RoutingResult(
-                route=result.route,
-                applied=applied,
-                tokens_used=result.tokens_used,
-                method=result.method,
-            )
-        return result
+        return self._routing_mgr._apply_result(result=result, apply=apply)
 
     def route(
         self,
@@ -1865,19 +1512,8 @@ class Tract:
         router: SemanticRouter | None = None,
         apply: bool = False,
     ) -> RoutingResult:
-        """Async version of :meth:`route`.
-
-        Uses ``aroute()`` on the SemanticRouter if provided.
-        """
-        self._check_open()
-        from tract.routing import SemanticRouter
-
-        if router is not None and isinstance(router, SemanticRouter):
-            result = await router.aroute(query, self)
-        else:
-            result = self._route_fallback(query)
-
-        return self._route_apply(result, apply)
+        """See :attr:`routing` manager :meth:`aroute`."""
+        return await self._routing_mgr.aroute(query=query, router=router, apply=apply)
 
     # ------------------------------------------------------------------
     # Context intelligence (cherry-pick & deduplication)
@@ -1890,33 +1526,8 @@ class Tract:
         limit: int = 10,
         **llm_kwargs: Any,
     ) -> CherryPickResult:
-        """Select the most relevant commits for a task/query using LLM judgment.
-
-        Builds a manifest of recent commits (with content previews) and asks
-        the LLM to select the most relevant ones for the given query.
-
-        Fail-open: on LLM error, returns all candidate commits (no filtering).
-
-        Args:
-            query: Natural-language task or query description.
-            limit: Maximum number of commits to select (default 10).
-            **llm_kwargs: Passed to the LLM client (``model``, ``temperature``,
-                ``max_tokens``).
-
-        Returns:
-            :class:`~tract.intelligence.CherryPickResult` with selected
-            commit hashes and reasoning.
-
-        Example::
-
-            result = t.cherry_pick("Implement the auth module", limit=5)
-            for h in result.selected_hashes:
-                print(t.get_content(h))
-        """
-        self._check_open()
-        from tract.intelligence import cherry_pick as _cherry_pick
-
-        return _cherry_pick(self, query, limit=limit, **llm_kwargs)
+        """See :attr:`intelligence` manager :meth:`cherry_pick`."""
+        return self._intelligence_mgr.cherry_pick(query=query, limit=limit, **llm_kwargs)
 
     async def acherry_pick(
         self,
@@ -1926,10 +1537,7 @@ class Tract:
         **llm_kwargs: Any,
     ) -> CherryPickResult:
         """Async version of :meth:`cherry_pick`."""
-        self._check_open()
-        from tract.intelligence import acherry_pick as _acherry_pick
-
-        return await _acherry_pick(self, query, limit=limit, **llm_kwargs)
+        return await self._intelligence_mgr.acherry_pick(query=query, limit=limit, **llm_kwargs)
 
     def deduplicate(
         self,
@@ -1938,36 +1546,8 @@ class Tract:
         auto_skip: bool = False,
         **llm_kwargs: Any,
     ) -> DedupResult:
-        """Detect and optionally handle duplicate/overlapping commits using LLM judgment.
-
-        Builds a manifest of recent commits with content previews and asks
-        the LLM to identify groups of duplicate or highly overlapping content.
-
-        If ``auto_skip=True``, annotates all but the newest commit in each
-        duplicate group as SKIP.
-
-        Fail-open: on LLM error, returns empty groups (no action taken).
-
-        Args:
-            threshold: Similarity threshold hint (0.0-1.0). Higher = stricter.
-            auto_skip: If True, automatically mark older duplicates as SKIP.
-            **llm_kwargs: Passed to the LLM client (``model``, ``temperature``,
-                ``max_tokens``).
-
-        Returns:
-            :class:`~tract.intelligence.DedupResult` with duplicate groups
-            and actions taken.
-
-        Example::
-
-            result = t.deduplicate(auto_skip=True)
-            print(f"Found {len(result.duplicate_groups)} duplicate groups")
-            print(f"Skipped {result.actions_taken} duplicate commits")
-        """
-        self._check_open()
-        from tract.intelligence import deduplicate as _deduplicate
-
-        return _deduplicate(self, threshold=threshold, auto_skip=auto_skip, **llm_kwargs)
+        """See :attr:`intelligence` manager :meth:`deduplicate`."""
+        return self._intelligence_mgr.deduplicate(threshold=threshold, auto_skip=auto_skip, **llm_kwargs)
 
     async def adeduplicate(
         self,
@@ -1977,159 +1557,47 @@ class Tract:
         **llm_kwargs: Any,
     ) -> DedupResult:
         """Async version of :meth:`deduplicate`."""
-        self._check_open()
-        from tract.intelligence import adeduplicate as _adeduplicate
-
-        return await _adeduplicate(self, threshold=threshold, auto_skip=auto_skip, **llm_kwargs)
+        return await self._intelligence_mgr.adeduplicate(threshold=threshold, auto_skip=auto_skip, **llm_kwargs)
 
     # ------------------------------------------------------------------
     # Autonomous operations
     # ------------------------------------------------------------------
 
     def auto_split(self, commit_hash: str, **llm_kwargs: Any) -> AutoSplitResult:
-        """Split a commit into smaller, logically coherent pieces using LLM judgment.
-
-        Gets the commit content, asks an LLM to split it, then creates new
-        APPEND commits for each piece and SKIPs the original.
-
-        Fail-open: on LLM error, returns original hash unchanged.
-
-        Args:
-            commit_hash: Hash of the commit to split.
-            **llm_kwargs: Forwarded to LLM (model, temperature, max_tokens).
-
-        Returns:
-            :class:`~tract.autonomous.AutoSplitResult`.
-        """
-        self._check_open()
-        from tract.autonomous import auto_split as _auto_split
-
-        return _auto_split(self, commit_hash, **llm_kwargs)
+        """See :attr:`intelligence` manager :meth:`auto_split`."""
+        return self._intelligence_mgr.auto_split(commit_hash=commit_hash, **llm_kwargs)
 
     async def aauto_split(self, commit_hash: str, **llm_kwargs: Any) -> AutoSplitResult:
         """Async version of :meth:`auto_split`."""
-        self._check_open()
-        from tract.autonomous import aauto_split as _aauto_split
-
-        return await _aauto_split(self, commit_hash, **llm_kwargs)
+        return await self._intelligence_mgr.aauto_split(commit_hash=commit_hash, **llm_kwargs)
 
     def auto_rebase(self, **llm_kwargs: Any) -> AutoRebaseResult:
-        """Decide whether to rebase the current branch using LLM judgment.
-
-        Builds a manifest of branch state and asks the LLM whether a rebase
-        would be beneficial. If yes, executes the rebase.
-
-        Fail-open: on error, returns rebased=False.
-
-        Args:
-            **llm_kwargs: Forwarded to LLM (model, temperature, max_tokens).
-
-        Returns:
-            :class:`~tract.autonomous.AutoRebaseResult`.
-        """
-        self._check_open()
-        from tract.autonomous import auto_rebase as _auto_rebase
-
-        return _auto_rebase(self, **llm_kwargs)
+        """See :attr:`intelligence` manager :meth:`auto_rebase`."""
+        return self._intelligence_mgr.auto_rebase(**llm_kwargs)
 
     async def aauto_rebase(self, **llm_kwargs: Any) -> AutoRebaseResult:
         """Async version of :meth:`auto_rebase`."""
-        self._check_open()
-        from tract.autonomous import aauto_rebase as _aauto_rebase
-
-        return await _aauto_rebase(self, **llm_kwargs)
+        return await self._intelligence_mgr.aauto_rebase(**llm_kwargs)
 
     def auto_branch(self, *, context: str = "", **llm_kwargs: Any) -> AutoBranchResult:
-        """Decide whether to create a new branch using LLM judgment.
-
-        Builds a manifest of current state and asks the LLM whether a new
-        branch should be created. If yes, creates and switches to it.
-
-        Fail-open: on error, returns branched=False.
-
-        Args:
-            context: Optional task/context description to inform the decision.
-            **llm_kwargs: Forwarded to LLM (model, temperature, max_tokens).
-
-        Returns:
-            :class:`~tract.autonomous.AutoBranchResult`.
-        """
-        self._check_open()
-        from tract.autonomous import auto_branch as _auto_branch
-
-        return _auto_branch(self, context=context, **llm_kwargs)
+        """See :attr:`intelligence` manager :meth:`auto_branch`."""
+        return self._intelligence_mgr.auto_branch(context=context, **llm_kwargs)
 
     async def aauto_branch(self, *, context: str = "", **llm_kwargs: Any) -> AutoBranchResult:
         """Async version of :meth:`auto_branch`."""
-        self._check_open()
-        from tract.autonomous import aauto_branch as _aauto_branch
-
-        return await _aauto_branch(self, context=context, **llm_kwargs)
+        return await self._intelligence_mgr.aauto_branch(context=context, **llm_kwargs)
 
     def _ensure_routing_table(self) -> None:
         """Lazily initialize the default routing table."""
-        if self._routing_table is None:
-            from tract.routing import RoutingTable
-            self._routing_table = RoutingTable()
+        return self._routing_mgr._ensure_table()
 
     def _apply_route(self, route: Route) -> bool:
-        """Apply a route (switch branch, apply stage, etc.).
-
-        Returns True if successfully applied, False otherwise.
-        """
-        from tract.routing import Route
-        if not isinstance(route, Route):
-            return False
-        try:
-            if route.route_type == "branch":
-                existing = {b.name for b in self.list_branches()}
-                if route.target in existing:
-                    self.checkout(route.target)
-                else:
-                    self.branch(route.target)
-                return True
-            elif route.route_type == "stage":
-                self.apply_stage(route.target)
-                return True
-            elif route.route_type == "workflow":
-                self.load_profile(route.target)
-                return True
-        except Exception:
-            logger.warning(
-                "Failed to apply route '%s' (%s): %s",
-                route.target,
-                route.route_type,
-                exc_info=True,
-            )
-        return False
+        """See :attr:`routing` manager :meth:`_apply`."""
+        return self._routing_mgr._apply(route=route)
 
     def _run_middleware(self, event: str, **kwargs: Any) -> None:
-        """Run middleware handlers for an event.
-
-        Raises BlockedError if a handler blocks (pre_* events only).
-        """
-        if event in self._in_middleware_events:
-            return  # recursion guard
-        handlers = self._middleware.get(event, [])
-        if not handlers:
-            return
-        self._in_middleware_events.add(event)
-        try:
-            from tract.middleware import MiddlewareContext
-
-            ctx = MiddlewareContext(
-                event=event,
-                commit=kwargs.get("commit"),
-                tract=self,
-                branch=self.current_branch or "",
-                head=self.head or "",
-                target=kwargs.get("target"),
-                pending=kwargs.get("pending"),
-            )
-            for _id, fn in list(handlers):
-                fn(ctx)
-        finally:
-            self._in_middleware_events.discard(event)
+        """See :attr:`middleware` manager :meth:`_run`."""
+        return self._middleware_mgr._run(event=event, **kwargs)
 
     def transition(
         self,
@@ -2185,166 +1653,46 @@ class Tract:
     # ------------------------------------------------------------------
 
     def parent(self) -> SpawnInfo | None:
-        """Get the spawn info for this tract's parent.
-
-        Returns:
-            SpawnInfo if this tract was spawned from a parent, None for
-            root tracts or tracts without a spawn_repo.
-        """
-        if self._spawn_repo is None:
-            return None
-        row = self._spawn_repo.get_by_child(self._tract_id)
-        if row is None:
-            return None
-        from tract.operations.spawn import _row_to_spawn_info
-        return _row_to_spawn_info(row)
+        """See :attr:`spawn` manager :meth:`parent`."""
+        return self._spawn_mgr.parent()
 
     def children(self) -> list[SpawnInfo]:
-        """Get spawn info for all child tracts spawned from this tract.
-
-        Returns:
-            List of SpawnInfo for each child, in chronological order.
-            Empty list if no children or no spawn_repo.
-        """
-        if self._spawn_repo is None:
-            return []
-        rows = self._spawn_repo.get_children(self._tract_id)
-        from tract.operations.spawn import _row_to_spawn_info
-        return [_row_to_spawn_info(row) for row in rows]
+        """See :attr:`spawn` manager :meth:`children`."""
+        return self._spawn_mgr.children()
 
     # ------------------------------------------------------------------
     # Subagent communication
     # ------------------------------------------------------------------
 
     def send_to_child(self, child_tract_id: str, content: str, **kwargs) -> str:
-        """Send a message to a child tract.
-
-        Delegates to :meth:`Session.send_message`.  Requires a Session context.
-
-        Args:
-            child_tract_id: The child tract identifier.
-            content: Message text to send.
-            **kwargs: Additional keyword arguments passed through to
-                :meth:`Session.send_message` (e.g. ``tags``).
-
-        Returns:
-            Commit hash of the message commit in the child tract.
-
-        Raises:
-            SessionError: If not called within a Session context.
-        """
-        self._check_open()
-        from tract.exceptions import SessionError
-
-        if self._session_owner is None:
-            raise SessionError(
-                "send_to_child() requires a Session context. "
-                "Use session.send_message(from_id, to_id, content) instead."
-            )
-
-        return self._session_owner.send_message(
-            self._tract_id, child_tract_id, content, **kwargs
-        )
+        """See :attr:`spawn` manager :meth:`send_to_child`."""
+        return self._spawn_mgr.send_to_child(child_tract_id=child_tract_id, content=content, **kwargs)
 
     # ------------------------------------------------------------------
     # Tool tracking
     # ------------------------------------------------------------------
 
     def set_tools(self, tools: list[dict] | None) -> None:
-        """Set active tool definitions for subsequent commits.
-
-        When set, every subsequent ``commit()`` (including ``system()``,
-        ``user()``, ``assistant()``, etc.) will automatically link these
-        tool definitions unless overridden by passing ``tools=`` to
-        ``commit()`` explicitly.
-
-        Pass ``None`` to clear.
-
-        Args:
-            tools: List of tool definition dicts, or None to clear.
-        """
-        self._active_tools = tools
+        """See :attr:`tools` manager :meth:`set`."""
+        return self._tools_mgr.set(tools=tools)
 
     def get_tools(self) -> list[dict] | None:
-        """Get the currently active tool definitions.
-
-        Returns:
-            The list set via ``set_tools()``, or None if not set.
-        """
-        return self._active_tools
+        """See :attr:`tools` manager :meth:`get`."""
+        return self._tools_mgr.get()
 
     def get_commit_tools(self, commit_hash: str) -> list[dict]:
-        """Get tool definitions linked to a specific commit.
-
-        Args:
-            commit_hash: The commit to query.
-
-        Returns:
-            List of tool definition dicts in position order, or empty
-            list if no tools are linked or repo is not available.
-        """
-        if self._tool_schema_repo is None:
-            return []
-        rows = self._tool_schema_repo.get_for_commit(commit_hash)
-        return [row.schema_json for row in rows]
+        """See :attr:`tools` manager :meth:`get_for_commit`."""
+        return self._tools_mgr.get_for_commit(commit_hash=commit_hash)
 
     def _store_and_link_tools(
         self, commit_hash: str, tools: list[dict]
     ) -> None:
-        """Store tool schemas (content-addressed) and link to a commit.
-
-        Args:
-            commit_hash: The commit to link tools to.
-            tools: List of tool definition dicts.
-        """
-        from tract.models.tools import hash_tool_schema
-
-        now = datetime.now(timezone.utc)
-        for position, tool in enumerate(tools):
-            content_hash = hash_tool_schema(tool)
-            name = ""
-            # Extract name from common tool definition formats
-            if isinstance(tool, dict):
-                # OpenAI format: {"type": "function", "function": {"name": ...}}
-                func = tool.get("function", {})
-                if isinstance(func, dict):
-                    name = func.get("name", "")
-                # Anthropic format: {"name": ..., "input_schema": ...}
-                if not name:
-                    name = tool.get("name", "")
-            self._tool_schema_repo.store(content_hash, name, tool, now)
-            self._tool_schema_repo.link_to_commit(commit_hash, content_hash, position)
+        """See :attr:`tools` manager :meth:`_store_and_link`."""
+        return self._tools_mgr._store_and_link(commit_hash=commit_hash, tools=tools)
 
     def _gather_tools_for_compile(self) -> list[dict]:
-        """Gather tools from the last commit that has tools linked.
-
-        Walks the commit chain from HEAD backwards to find the most recent
-        commit with tool definitions, and returns those tools.
-
-        Returns:
-            List of tool definition dicts, or empty list if none found.
-        """
-        if self._tool_schema_repo is None:
-            return []
-
-        current_head = self.head
-        if current_head is None:
-            return []
-
-        # Walk ancestor chain and batch-fetch tool links
-        ancestors = self._commit_repo.get_ancestors(current_head)
-        all_hashes = [r.commit_hash for r in ancestors]
-        tool_map = self._tool_schema_repo.batch_get_commit_tool_hashes(all_hashes)
-
-        # Find the most recent commit with tools
-        for commit_row in ancestors:
-            if commit_row.commit_hash in tool_map:
-                rows = self._tool_schema_repo.get_for_commit(
-                    commit_row.commit_hash
-                )
-                return [row.schema_json for row in rows]
-
-        return []
+        """See :attr:`tools` manager :meth:`_gather_for_compile`."""
+        return self._tools_mgr._gather_for_compile()
 
     def _inject_tools(self, result: CompiledContext) -> CompiledContext:
         """Inject tool definitions into a compiled context.
@@ -2484,7 +1832,7 @@ class Tract:
         )
 
         # Link tool schemas to this commit
-        effective_tools = tools if tools is not None else self._active_tools
+        effective_tools = tools if tools is not None else self.get_tools()
         if effective_tools is not None and self._tool_schema_repo is not None:
             self._store_and_link_tools(info.commit_hash, effective_tools)
 
@@ -2772,59 +2120,8 @@ class Tract:
         text: str,
         role: str,
     ) -> CommitInfo | None:
-        """LLM-improve text and apply as EDIT commit.
-
-        Args:
-            original_info: The :class:`CommitInfo` of the original commit.
-            text: The original text content.
-            role: The message role (``"system"``, ``"user"``, ``"assistant"``).
-
-        Returns:
-            :class:`CommitInfo` for the EDIT commit, or ``None`` if
-            improvement was skipped (LLM failure, empty result, or
-            identical text).
-        """
-        from tract.prompts.improve import IMPROVE_CONTENT_SYSTEM, build_improve_prompt
-
-        try:
-            client = self._resolve_llm_client("improve")
-            llm_kwargs = (
-                self._resolve_llm_config("improve")
-                if self._has_llm_client("improve")
-                else {}
-            )
-            messages = [
-                {"role": "system", "content": IMPROVE_CONTENT_SYSTEM},
-                {"role": "user", "content": build_improve_prompt(text, context=role)},
-            ]
-            response = client.chat(messages, **llm_kwargs)
-            improved_text = self._extract_content(response, client=client).strip()
-            if not improved_text or improved_text == text:
-                return None  # No improvement or same text
-        except Exception:
-            import warnings
-
-            warnings.warn(
-                f"LLM improvement failed for {role} message; keeping original.",
-                stacklevel=3,
-            )
-            return None
-
-        # Apply as EDIT
-        from tract.models.content import DialogueContent, InstructionContent
-
-        if role == "system":
-            content = InstructionContent(text=improved_text)
-        else:
-            content = DialogueContent(role=role, text=improved_text)
-
-        edit_info = self.commit(
-            content,
-            operation=CommitOperation.EDIT,
-            edit_target=original_info.commit_hash,
-            message=f"improve: {role} message",
-        )
-        return edit_info
+        """See :attr:`llm` manager :meth:`_improve_commit`."""
+        return self._llm_mgr._improve_commit(original_info=original_info, text=text, role=role)
 
     def reasoning(
         self,
@@ -2920,51 +2217,8 @@ class Tract:
         include_context: bool = False,
         system_prompt: str | None = None,
     ) -> None:
-        """Configure automatic tool result summarization.
-
-        Stores config for later use by tool result processing.
-
-        Args:
-            instructions: Per-tool summarization instructions. Keys are
-                tool names, values are instruction strings passed to the
-                summarization LLM. For example::
-
-                    {"grep": "summarize to matching filenames only",
-                     "bash": "preserve exit code and last 10 lines"}
-
-            auto_threshold: Token count threshold. Tool results exceeding
-                this count are automatically summarized (using per-tool
-                instructions if available, or ``default_instructions``).
-                Results under the threshold pass through unchanged.
-            default_instructions: Fallback instructions for tools not
-                listed in ``instructions`` but over the threshold.
-            include_context: If True, compile the current conversation
-                context and pass it to the summarization LLM so it can
-                filter tool results based on conversational relevance.
-            system_prompt: Override the default system prompt for
-                summarization. When ``include_context=True`` and no
-                explicit system_prompt is given,
-                ``TOOL_CONTEXT_SUMMARIZE_SYSTEM`` is used.
-
-        Example::
-
-            t.configure_tool_summarization(
-                instructions={
-                    "grep": "summarize to filenames and line numbers",
-                    "read_file": "keep first 20 lines, summarize rest",
-                },
-                auto_threshold=500,
-            )
-        """
-        from tract.models.config import ToolSummarizationConfig
-
-        self._tool_summarization_config = ToolSummarizationConfig(
-            instructions=instructions or {},
-            auto_threshold=auto_threshold,
-            default_instructions=default_instructions,
-            include_context=include_context,
-            system_prompt=system_prompt,
-        )
+        """See :attr:`config` manager :meth:`configure_tool_summarization`."""
+        return self._config_mgr.configure_tool_summarization(instructions=instructions, auto_threshold=auto_threshold, default_instructions=default_instructions, include_context=include_context, system_prompt=system_prompt)
 
     # ------------------------------------------------------------------
     # Tool query API
@@ -2976,198 +2230,31 @@ class Tract:
         after: str | None = None,
         limit: int = 500,
     ) -> list[CommitInfo]:
-        """Find tool result commits on the current branch.
-
-        Walks the commit history and returns commits where
-        ``metadata["tool_call_id"]`` exists (indicating a tool result).
-
-        Args:
-            name: If set, only return results where ``metadata["name"]``
-                matches this value.
-            after: If set, only return results that come after this commit
-                hash in history (exclusive). "After" means more recent.
-            limit: Maximum number of commits to scan. Default 500.
-
-        Returns:
-            List of :class:`CommitInfo` for matching tool result commits,
-            in chronological order (oldest first).
-        """
-        entries = self.log(limit=limit)
-        entries.reverse()  # oldest-first
-
-        results = []
-        after_found = after is None  # if no after filter, include all
-
-        for ci in entries:
-            if not after_found:
-                if ci.commit_hash == after:
-                    after_found = True
-                continue
-
-            meta = ci.metadata or {}
-            if "tool_call_id" not in meta:
-                continue
-            if name is not None and meta.get("name") != name:
-                continue
-            results.append(ci)
-
-        return results
+        """See :attr:`tools` manager :meth:`find_results`."""
+        return self._tools_mgr.find_results(name=name, after=after, limit=limit)
 
     def find_tool_calls(
         self,
         name: str | None = None,
         limit: int = 500,
     ) -> list[CommitInfo]:
-        """Find assistant commits that requested tool calls.
-
-        Walks the commit history and returns commits where
-        ``metadata["tool_calls"]`` exists (indicating the assistant
-        requested one or more tool calls).
-
-        Args:
-            name: If set, only return commits where at least one tool
-                call in ``metadata["tool_calls"]`` has a matching name.
-            limit: Maximum number of commits to scan. Default 500.
-
-        Returns:
-            List of :class:`CommitInfo` for matching assistant commits,
-            in chronological order (oldest first).
-        """
-        entries = self.log(limit=limit)
-        entries.reverse()  # oldest-first
-
-        results = []
-        for ci in entries:
-            meta = ci.metadata or {}
-            tool_calls = meta.get("tool_calls")
-            if not tool_calls:
-                continue
-            if name is not None:
-                # Direct dict access avoids ToolCall.from_dict overhead
-                if not any(tc.get("name") == name for tc in tool_calls):
-                    continue
-            results.append(ci)
-
-        return results
+        """See :attr:`tools` manager :meth:`find_calls`."""
+        return self._tools_mgr.find_calls(name=name, limit=limit)
 
     def find_tool_turns(
         self,
         name: str | None = None,
         limit: int = 500,
     ) -> list["ToolTurn"]:
-        """Find paired tool-call + tool-result commit groups.
-
-        Walks the branch, matches tool results to their originating
-        assistant tool-call message by ``tool_call_id``. Returns
-        :class:`ToolTurn` instances with the call and its result(s)
-        grouped together.
-
-        Args:
-            name: If set, only return turns where at least one tool
-                in the turn matches this name.
-            limit: Maximum number of commits to scan. Default 500.
-
-        Returns:
-            List of :class:`ToolTurn` in chronological order.
-        """
-
-        from tract.protocols import ToolTurn
-
-        entries = self.log(limit=limit)
-        entries.reverse()  # oldest-first
-
-        # Build index: tool_call_id -> list of result CommitInfos
-        result_index: dict[str, list[CommitInfo]] = {}
-        for ci in entries:
-            meta = ci.metadata or {}
-            tcid = meta.get("tool_call_id")
-            if tcid:
-                result_index.setdefault(tcid, []).append(ci)
-
-        # Walk tool-call commits and pair with their results
-        turns = []
-        for ci in entries:
-            meta = ci.metadata or {}
-            tool_calls_data = meta.get("tool_calls")
-            if not tool_calls_data:
-                continue
-
-            # Direct dict access avoids ToolCall.from_dict overhead per item
-            all_results = []
-            turn_names = []
-            for tc_raw in tool_calls_data:
-                turn_names.append(tc_raw["name"])
-                all_results.extend(result_index.get(tc_raw.get("id", ""), []))
-
-            if name is not None and name not in turn_names:
-                continue
-
-            turns.append(ToolTurn(
-                call=ci,
-                results=all_results,
-                tool_names=turn_names,
-            ))
-
-        return turns
+        """See :attr:`tools` manager :meth:`find_turns`."""
+        return self._tools_mgr.find_turns(name=name, limit=limit)
 
     def drop_failed_tool_turns(
         self,
         name: str | None = None,
     ) -> "ToolDropResult":
-        """Drop tool turns that contain error results from the compiled context.
-
-        Walks :meth:`find_tool_turns` and checks each result's metadata for
-        ``is_error: True``.  If *any* result in a turn is an error, the
-        entire turn (call commit + all result commits) is annotated with
-        :attr:`Priority.SKIP` so it no longer appears in :meth:`compile`.
-
-        Args:
-            name: If set, only consider turns matching this tool name.
-
-        Returns:
-            :class:`ToolDropResult` with stats on what was dropped.
-        """
-        from tract.models.compression import ToolDropResult
-
-        turns = self.find_tool_turns(name=name)
-
-        turns_dropped = 0
-        commits_skipped = 0
-        tokens_freed = 0
-        dropped_names: set[str] = set()
-
-        for turn in turns:
-            # Check if any result in this turn has is_error
-            has_error = False
-            for r in turn.results:
-                meta = r.metadata or {}
-                if meta.get("is_error", False):
-                    has_error = True
-                    break
-
-            if not has_error:
-                continue
-
-            turns_dropped += 1
-            dropped_names.update(turn.tool_names)
-
-            # Skip the call commit
-            self.annotate(turn.call.commit_hash, Priority.SKIP)
-            commits_skipped += 1
-            tokens_freed += turn.call.token_count
-
-            # Skip all result commits
-            for r in turn.results:
-                self.annotate(r.commit_hash, Priority.SKIP)
-                commits_skipped += 1
-                tokens_freed += r.token_count
-
-        return ToolDropResult(
-            turns_dropped=turns_dropped,
-            commits_skipped=commits_skipped,
-            tokens_freed=tokens_freed,
-            tool_names=tuple(sorted(dropped_names)),
-        )
+        """See :attr:`tools` manager :meth:`drop_failed_turns`."""
+        return self._tools_mgr.drop_failed_turns(name=name)
 
     # ------------------------------------------------------------------
     # Conversation layer (chat/generate)
@@ -3184,171 +2271,24 @@ class Tract:
         include_sources: bool = False,
         **kwargs: Any,
     ) -> dict:
-        """Resolve effective LLM config: sugar > llm_config > operation > tract default.
-
-        Four-level resolution chain for each field:
-        1. Sugar params (model=, temperature=, max_tokens=) -- highest priority
-        2. llm_config fields (if provided and field is not None)
-        3. Operation-level config (from configure_operations)
-        4. Tract-level default config (_default_config)
-
-        Returns a dict of kwargs to pass to llm_client.chat(). Only includes
-        keys that have a non-None value at some level in the chain.
-
-        Args:
-            operation: Operation name ("chat", "merge", "compress").
-            model: Call-level model override (sugar).
-            temperature: Call-level temperature override (sugar).
-            max_tokens: Call-level max_tokens override (sugar).
-            llm_config: Full LLMConfig override for this call.
-            **kwargs: Additional call-level kwargs (highest priority).
-        """
-        op_config = getattr(self._operation_configs, operation, None)
-        default = self._default_config
-
-        # Sugar params dict (only the 3 convenience overrides)
-        sugar: dict = {}
-        if model is not None:
-            sugar["model"] = model
-        if temperature is not None:
-            sugar["temperature"] = temperature
-        if max_tokens is not None:
-            sugar["max_tokens"] = max_tokens
-
-        resolved: dict = {}
-
-        # Resolve each typed field through 4-level chain
-        _TYPED_FIELDS = (
-            "model", "temperature", "max_tokens", "top_p",
-            "frequency_penalty", "presence_penalty", "top_k",
-            "seed", "stop_sequences",
-        )
-        sources: dict = {}
-
-        for field_name in _TYPED_FIELDS:
-            # Level 1: Sugar param
-            val = sugar.get(field_name)
-            if val is not None:
-                resolved[field_name] = val
-                if include_sources:
-                    sources[field_name] = "sugar"
-                continue
-            # Level 2: llm_config
-            if llm_config is not None:
-                val = getattr(llm_config, field_name, None)
-                if val is not None:
-                    resolved[field_name] = val
-                    if include_sources:
-                        sources[field_name] = "llm_config"
-                    continue
-            # Level 3: Operation config
-            if op_config is not None:
-                val = getattr(op_config, field_name, None)
-                if val is not None:
-                    resolved[field_name] = val
-                    if include_sources:
-                        sources[field_name] = f"operation:{operation}"
-                    continue
-            # Level 4: Tract default
-            if default is not None:
-                val = getattr(default, field_name, None)
-                if val is not None:
-                    resolved[field_name] = val
-                    if include_sources:
-                        sources[field_name] = "tract_default"
-
-        # Translate canonical names to OpenAI-compatible API names
-        if "stop_sequences" in resolved:
-            val = resolved.pop("stop_sequences")
-            resolved["stop"] = list(val) if isinstance(val, tuple) else val
-
-        # Merge extra kwargs: tract default < operation < llm_config < call kwargs
-        # (each level's extra overrides the previous)
-        if default is not None and default.extra:
-            resolved.update(dict(default.extra))
-        if op_config is not None and op_config.extra:
-            resolved.update(dict(op_config.extra))
-        if llm_config is not None and llm_config.extra:
-            resolved.update(dict(llm_config.extra))
-        resolved.update(kwargs)
-
-        if include_sources:
-            resolved["_resolution_sources"] = sources
-
-        return resolved
+        """See :attr:`config` manager :meth:`_resolve_llm_config`."""
+        return self._config_mgr._resolve_llm_config(operation=operation, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, include_sources=include_sources, **kwargs)
 
     def _build_generation_config(self, response: dict, *, resolved: dict) -> dict:
-        """Build generation_config from the full resolved LLM kwargs.
-
-        Captures ALL fields that were sent to the LLM (model, temperature,
-        top_p, seed, etc.) so they can be queried via query_by_config().
-
-        The response's model field is authoritative (actual model used may
-        differ from requested model due to aliases/routing).
-
-        Args:
-            response: Raw LLM response dict.
-            resolved: The full resolved kwargs dict from _resolve_llm_config().
-        """
-        config = dict(resolved)
-        # Response model is authoritative
-        if "model" in response:
-            config["model"] = response["model"]
-        return config
+        """See :attr:`llm` manager :meth:`_build_generation_config`."""
+        return self._llm_mgr._build_generation_config(response=response, resolved=resolved)
 
     def _extract_content(self, response: dict, *, client: LLMClient | None = None) -> str:
-        """Extract content from LLM response, dispatching to the client's method.
-
-        Falls back to OpenAI-format extraction for duck-typed clients that
-        don't implement ``extract_content()``.
-
-        Args:
-            response: Raw LLM response dict.
-            client: The LLM client that produced the response.  If None,
-                falls back to the tract-level default.
-        """
-        c = client if client is not None else self._llm_client
-        if c is not None and hasattr(c, "extract_content"):
-            return c.extract_content(response)
-        # Default: OpenAI format
-        try:
-            return response["choices"][0]["message"]["content"] or ""
-        except (KeyError, IndexError, TypeError) as exc:
-            from tract.llm.errors import LLMResponseError
-
-            raise LLMResponseError(
-                f"Cannot extract content from response: {exc}. "
-                f"Implement extract_content() on your client for custom formats."
-            ) from exc
+        """See :attr:`llm` manager :meth:`_extract_content`."""
+        return self._llm_mgr._extract_content(response=response, client=client)
 
     def _extract_usage(self, response: dict, *, client: LLMClient | None = None) -> dict | None:
-        """Extract usage from LLM response, dispatching to the client's method.
-
-        Falls back to OpenAI-format extraction for duck-typed clients that
-        don't implement ``extract_usage()``.
-
-        Args:
-            response: Raw LLM response dict.
-            client: The LLM client that produced the response.  If None,
-                falls back to the tract-level default.
-        """
-        c = client if client is not None else self._llm_client
-        if c is not None and hasattr(c, "extract_usage"):
-            return c.extract_usage(response)
-        # Default: OpenAI format
-        return response.get("usage")
+        """See :attr:`llm` manager :meth:`_extract_usage`."""
+        return self._llm_mgr._extract_usage(response=response, client=client)
 
     def _generate_pre(self) -> None:
         """Shared guards for generate/agenerate."""
-        self._check_open()
-        if not self._has_llm_client("chat"):
-            from tract.llm.errors import LLMConfigError
-            raise LLMConfigError(
-                "No LLM client configured. Pass api_key= or llm_client= "
-                "to Tract.open(), or call configure_llm(client)."
-            )
-        if self._in_batch:
-            raise TraceError("chat()/generate() cannot be used inside batch()")
+        return self._llm_mgr._generate_pre()
 
     def _generate_validate_loop(
         self,
@@ -3360,47 +2300,8 @@ class Tract:
         max_retries: int,
         retry_prompt: str | None,
     ) -> tuple[ChatResponse | None, str | None]:
-        """Process one validation attempt. Returns (final_response, diagnosis).
-
-        If final_response is not None, the loop should return it.
-        If None, diagnosis is returned for steering.
-        """
-        import dataclasses as _dc
-
-        ok, diagnosis = validator(response.text)
-        if ok:
-            if hide_retries and intermediate_hashes:
-                for h in intermediate_hashes:
-                    self.annotate(h, Priority.SKIP,
-                                  reason="retry: hidden intermediate")
-
-            if attempt > 0 and response.commit_info:
-                retry_meta = {"retry_attempts": attempt}
-                existing = response.commit_info.metadata or {}
-                merged = {**existing, **retry_meta}
-                self._commit_repo.update_metadata(
-                    response.commit_info.commit_hash, merged
-                )
-                self._commit_session()
-                updated_info = response.commit_info.model_copy(
-                    update={"metadata": merged}
-                )
-                response = _dc.replace(response, commit_info=updated_info)
-
-            return response, None
-
-        failed_hash = self.head
-        if failed_hash:
-            intermediate_hashes.append(failed_hash)
-
-        if attempt < max_retries:
-            steering = retry_prompt or "Your previous response did not pass validation. Please try again."
-            if diagnosis:
-                steering = f"{steering}\n\nDiagnosis: {diagnosis}"
-            steering_info = self.user(steering)
-            intermediate_hashes.append(steering_info.commit_hash)
-
-        return None, diagnosis
+        """See :attr:`llm` manager :meth:`_generate_validate_loop`."""
+        return self._llm_mgr._generate_validate_loop(response=response, validator=validator, attempt=attempt, intermediate_hashes=intermediate_hashes, hide_retries=hide_retries, max_retries=max_retries, retry_prompt=retry_prompt)
 
     def generate(
         self,
@@ -3419,87 +2320,8 @@ class Tract:
         retry: RetryConfig | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        """Compile context, call LLM, commit assistant response, record usage.
-
-        Assumes the conversation context (system prompt, user messages) has
-        already been committed. Use :meth:`chat` for the all-in-one path.
-
-        When ``validator`` is provided, failed attempts are committed and
-        SKIP-annotated (if ``hide_retries=True``), so they exist in the
-        chain for audit/debugging but don't pollute the compiled context.
-        Retry metadata (attempt count) is automatically attached to the
-        final commit.
-
-        Args:
-            model: Model override for this call.
-            temperature: Temperature override.
-            max_tokens: Max tokens override.
-            llm_config: Full LLMConfig override for this call.
-            message: Optional commit message for the assistant commit.
-            metadata: Optional metadata for the assistant commit.
-            reasoning: If True (default), auto-commit reasoning traces
-                extracted from the LLM response. Set to False to skip
-                reasoning commits for this call. Global opt-out via
-                ``commit_reasoning=False`` on ``Tract.open()``.
-            validator: Optional callable that validates the response text.
-                Takes the response text, returns (ok, diagnosis). When
-                provided, retries with steering on validation failure.
-            max_retries: Maximum retry attempts when validator is set (default 3).
-            hide_retries: If True (default), SKIP-annotate failed attempts
-                and steering messages so they don't appear in compiled
-                context. If False, all retry artifacts remain visible.
-            retry_prompt: Custom steering prompt template. The diagnosis string
-                is appended to this. Defaults to a standard steering message.
-            retry: Per-call :class:`RetryConfig` override.  When provided,
-                the raw LLM call is retried with exponential backoff on
-                transient errors.  Overrides the tract-level retry config.
-            **kwargs: Extra provider-specific parameters passed through to the
-                LLM client (e.g. ``reasoning_effort="high"``).  Highest
-                priority in the config resolution chain.
-
-        Returns:
-            :class:`ChatResponse` with text, usage, commit_info, generation_config.
-
-        Raises:
-            LLMConfigError: If no LLM client is configured.
-            TraceError: If called inside batch().
-            RetryExhaustedError: If all retry attempts fail validation.
-        """
-        self._generate_pre()
-
-        if validator is None:
-            return self._generate_once(
-                model=model, temperature=temperature,
-                max_tokens=max_tokens, llm_config=llm_config,
-                message=message, metadata=metadata,
-                reasoning=reasoning, retry=retry, **kwargs,
-            )
-
-        intermediate_hashes: list[str] = []
-        last_diagnosis: str | None = None
-
-        for attempt in range(max_retries + 1):
-            response = self._generate_once(
-                model=model, temperature=temperature,
-                max_tokens=max_tokens, llm_config=llm_config,
-                message=message, metadata=metadata,
-                reasoning=reasoning, retry=retry, **kwargs,
-            )
-
-            final, diagnosis = self._generate_validate_loop(
-                response, validator, attempt, intermediate_hashes,
-                hide_retries, max_retries, retry_prompt,
-            )
-            if final is not None:
-                return final
-            last_diagnosis = diagnosis
-
-        from tract.exceptions import RetryExhaustedError
-        raise RetryExhaustedError(
-            attempts=max_retries + 1,
-            last_diagnosis=last_diagnosis or "validation failed",
-            last_result=response.text,
-        )
+        """See :attr:`llm` manager :meth:`generate`."""
+        return self._llm_mgr.generate(model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, message=message, metadata=metadata, reasoning=reasoning, validator=validator, max_retries=max_retries, hide_retries=hide_retries, retry_prompt=retry_prompt, retry=retry, **kwargs)
 
     def _generate_once_pre(
         self,
@@ -3510,36 +2332,8 @@ class Tract:
         llm_config: LLMConfig | None = None,
         **kwargs: Any,
     ) -> tuple[Any, list[dict], dict]:
-        """Pre-LLM logic for _generate_once: compile, resolve, middleware.
-
-        Returns (chat_client, messages, llm_kwargs).
-        """
-        compiled = self.compile()
-        messages = compiled.to_dicts()
-
-        if self._compile_record_repo is not None:
-            self._save_compile_record(
-                self.head or "",
-                compiled.token_count,
-                compiled.commit_count,
-                compiled.token_source,
-                compiled.commit_hashes,
-            )
-
-        chat_client = self._resolve_llm_client("chat")
-        llm_kwargs = self._resolve_llm_config(
-            "chat", model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config, **kwargs,
-        )
-        if compiled.tools:
-            llm_kwargs["tools"] = compiled.tools
-
-        self._run_middleware(
-            "pre_generate",
-            pending={"messages": messages, "config": llm_kwargs},
-        )
-
-        return chat_client, messages, llm_kwargs
+        """See :attr:`llm` manager :meth:`_generate_once_pre`."""
+        return self._llm_mgr._generate_once_pre(model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, **kwargs)
 
     def _generate_once_post(
         self,
@@ -3552,73 +2346,7 @@ class Tract:
         reasoning: bool = True,
     ) -> ChatResponse:
         """Post-LLM logic for _generate_once: extract, commit, usage."""
-        from tract.protocols import ChatResponse, ToolCall as _ToolCall
-
-        text = self._extract_content(response, client=chat_client)
-        usage_dict = self._extract_usage(response, client=chat_client)
-
-        self._run_middleware(
-            "post_generate",
-            pending={
-                "response": text or "",
-                "tokens_used": (
-                    usage_dict.get("total_tokens", 0) if usage_dict else 0
-                ),
-            },
-        )
-
-        reasoning_text: str | None = None
-        reasoning_format: str = "parsed"
-        if hasattr(chat_client, "extract_reasoning"):
-            reasoning_result = chat_client.extract_reasoning(response)
-            if reasoning_result is not None:
-                reasoning_text, reasoning_format = reasoning_result
-                if reasoning_format == "think_tags":
-                    import re as _re
-                    text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL).strip()
-
-        raw_tool_calls = None
-        try:
-            raw_tool_calls = response["choices"][0]["message"].get("tool_calls")
-        except (KeyError, IndexError, TypeError):
-            pass
-        tool_calls = (
-            [_ToolCall.from_openai(tc) for tc in raw_tool_calls]
-            if raw_tool_calls
-            else None
-        )
-
-        gen_config = self._build_generation_config(response, resolved=llm_kwargs)
-
-        reasoning_commit_info: CommitInfo | None = None
-        if reasoning_text and self._commit_reasoning and reasoning:
-            reasoning_commit_info = self.reasoning(
-                reasoning_text,
-                format=reasoning_format,
-            )
-
-        commit_meta = metadata
-        if tool_calls:
-            commit_meta = {**(metadata or {}), "tool_calls": [tc.to_dict() for tc in tool_calls]}
-        commit_info = self.assistant(
-            text, message=message, metadata=commit_meta, generation_config=gen_config
-        )
-
-        usage = None
-        if usage_dict:
-            usage = self._normalize_usage_dict(usage_dict)
-            self.record_usage(usage)
-
-        return ChatResponse(
-            text=text,
-            usage=usage,
-            commit_info=commit_info,
-            generation_config=LLMConfig.from_dict(gen_config) or LLMConfig(),
-            reasoning=reasoning_text,
-            reasoning_commit=reasoning_commit_info,
-            tool_calls=tool_calls,
-            raw_response=response,
-        )
+        return self._llm_mgr._generate_once_post(response=response, chat_client=chat_client, llm_kwargs=llm_kwargs, message=message, metadata=metadata, reasoning=reasoning)
 
     def _generate_once(
         self,
@@ -3634,20 +2362,7 @@ class Tract:
         **kwargs: Any,
     ) -> ChatResponse:
         """Single generate attempt (no retry). Internal helper."""
-        chat_client, messages, llm_kwargs = self._generate_once_pre(
-            model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config, **kwargs,
-        )
-
-        effective_retry = retry or self._retry_config
-        response = _retry_with_backoff(
-            chat_client.chat, effective_retry, messages, **llm_kwargs,
-        )
-
-        return self._generate_once_post(
-            response, chat_client, llm_kwargs,
-            message=message, metadata=metadata, reasoning=reasoning,
-        )
+        return self._llm_mgr._generate_once(model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, message=message, metadata=metadata, reasoning=reasoning, retry=retry, **kwargs)
 
     def chat(
         self,
@@ -3668,71 +2383,12 @@ class Tract:
         retry: RetryConfig | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        """Send a user message and get an LLM response in one call.
+        """See :attr:`llm` manager :meth:`chat`."""
+        return self._llm_mgr.chat(text=text, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, message=message, name=name, metadata=metadata, reasoning=reasoning, validator=validator, max_retries=max_retries, hide_retries=hide_retries, retry_prompt=retry_prompt, retry=retry, **kwargs)
 
-        Commits the user message, compiles context, calls the LLM,
-        commits the assistant response, and records usage. Equivalent to::
-
-            t.user(text, message=message, name=name, metadata=metadata)
-            response = t.generate(model=model, temperature=temperature, ...)
-
-        When ``validator`` is provided, retries with steering on failure.
-        See :meth:`generate` for details on retry behavior.
-
-        Args:
-            text: The user message text.
-            model: Model override for this call.
-            temperature: Temperature override.
-            max_tokens: Max tokens override.
-            llm_config: Full LLMConfig override for this call.
-            message: Optional commit message for the user commit.
-            name: Optional speaker name for the user commit.
-            metadata: Optional metadata for the user commit.
-            reasoning: If True (default), auto-commit reasoning traces
-                extracted from the LLM response. Set to False to skip
-                reasoning commits for this call.
-            validator: Optional callable that validates the response text.
-                Takes the response text, returns (ok, diagnosis). When
-                provided, retries with steering on validation failure.
-            max_retries: Maximum retry attempts when validator is set (default 3).
-            hide_retries: If True (default), SKIP-annotate failed attempts
-                and steering messages so they don't appear in compiled context.
-            retry_prompt: Custom steering prompt template. The diagnosis string
-                is appended to this. Defaults to a standard steering message.
-            **kwargs: Extra provider-specific parameters passed through to the
-                LLM client (e.g. ``reasoning_effort="high"``).  Highest
-                priority in the config resolution chain.
-
-        Returns:
-            :class:`ChatResponse` with text, usage, commit_info, generation_config.
-
-        Raises:
-            LLMConfigError: If no LLM client is configured.
-            DetachedHeadError: If HEAD is detached.
-            TraceError: If called inside batch().
-            RetryExhaustedError: If all retry attempts fail validation.
-        """
-        # Commit user message
-        self.user(text, message=message, name=name, metadata=metadata)
-        # Delegate to generate
-        import dataclasses as _dc
-        response = self.generate(
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            llm_config=llm_config,
-            reasoning=reasoning,
-            validator=validator,
-            max_retries=max_retries,
-            hide_retries=hide_retries,
-            retry_prompt=retry_prompt,
-            retry=retry,
-            **kwargs,
-        )
-        return _dc.replace(response, prompt=text)
-
-    _TOOLS_SENTINEL = object()
-    _PROFILE_SENTINEL = object()
+    # Shared sentinels — must be the same objects as in managers for identity checks
+    from tract.managers.state import TOOLS_SENTINEL as _TOOLS_SENTINEL
+    from tract.managers.state import PROFILE_SENTINEL as _PROFILE_SENTINEL
 
     def run(
         self,
@@ -3754,98 +2410,8 @@ class Tract:
         tool_validator: Callable | None = None,
         auto_compress_threshold: float | None = None,
     ) -> LoopResult:  # noqa: F821
-        """Run the default agent loop on this tract.
-
-        Convenience wrapper around :func:`tract.loop.run_loop`.
-
-        Args:
-            task: Task description (committed as user message).
-            max_steps: Maximum loop iterations.
-            max_tokens: Maximum tokens per LLM response.  Passed to
-                ``client.chat(max_tokens=...)``.  None means no limit
-                (provider default).
-            system_prompt: System prompt prepended to context.
-            tools: Tool definitions (OpenAI format). Pass an explicit empty
-                list ``[]`` to send no tools. When omitted, tools are built
-                from ``profile`` / ``tool_names``.
-            profile: Tool profile name (``"compact"``, ``"self"``,
-                ``"supervisor"``, ``"full"``) or a :class:`ToolProfile`
-                instance. Only used when ``tools`` is not provided.
-                Falls back to ``tool_profile`` from :meth:`open`, then
-                ``"compact"``.
-            tool_names: Subset of tool names to include. Only used when
-                ``tools`` is not provided. Filters the profile's tools to
-                just the named ones.
-            tool_handlers: Mapping of custom tool names to callables.
-                When the LLM calls a tool in this dict, the function is
-                called with the tool arguments as keyword args. Tools not
-                in this dict are dispatched to tract's built-in executor.
-            llm_client: LLM client override.
-            on_step: Step callback ``(step_num, response) -> None``.
-            on_token: Streaming callback ``(text_chunk) -> None``.  When
-                provided and the LLM client supports streaming, each text
-                delta is passed to this callback as it arrives.
-            on_tool_result: Tool result callback ``(tool_name, output, status) -> None``.
-                Called after each tool execution with the tool name, output text,
-                and ``"success"`` or ``"error"`` status.
-            stream: Enable streaming even without on_token callback.
-            step_budget: Maximum total tokens across all loop steps.
-                When exceeded, the loop stops gracefully with
-                ``result.budget_exhausted == True``.
-            tool_validator: Callable ``(tool_name, args_dict) -> (ok, error_msg)``
-                that validates tool arguments before execution. Invalid
-                calls are committed as errors without executing the tool.
-            auto_compress_threshold: Float 0.0-1.0. When compiled context
-                exceeds this fraction of ``max_tokens``, the loop
-                auto-compresses before the next LLM call.
-
-        Returns:
-            LoopResult with status, reason, steps, and tool_calls.
-        """
-        from tract.loop import LoopConfig, run_loop
-
-        # Resolve tools
-        if tools is self._TOOLS_SENTINEL:
-            effective_profile = (
-                self._tool_profile or "compact"
-            ) if profile is self._PROFILE_SENTINEL else profile
-            resolved_tools = self.as_tools(
-                profile=effective_profile,
-                tool_names=tool_names,
-                format="openai",
-            )
-        else:
-            resolved_tools = tools  # type: ignore[assignment]  # user-supplied tools passthrough
-
-        # Merge custom tool handlers from @t.tool into tool_handlers
-        if self._custom_tools:
-            merged_handlers = {
-                name: td.handler for name, td in self._custom_tools.items()
-            }
-            if tool_handlers:
-                merged_handlers.update(tool_handlers)  # explicit overrides win
-            tool_handlers = merged_handlers
-
-        config = LoopConfig(
-            max_steps=max_steps,
-            system_prompt=system_prompt,
-            stream=stream,
-            max_tokens=max_tokens,
-            step_budget=step_budget,
-            tool_validator=tool_validator,
-            auto_compress_threshold=auto_compress_threshold,
-        )
-        return run_loop(
-            self,
-            task=task,
-            config=config,
-            llm_client=llm_client,
-            tools=resolved_tools,
-            tool_handlers=tool_handlers,
-            on_step=on_step,
-            on_token=on_token,
-            on_tool_result=on_tool_result,
-        )
+        """See :attr:`llm` manager :meth:`run`."""
+        return self._llm_mgr.run(task=task, max_steps=max_steps, max_tokens=max_tokens, system_prompt=system_prompt, tools=tools, profile=profile, tool_names=tool_names, tool_handlers=tool_handlers, llm_client=llm_client, on_step=on_step, on_token=on_token, on_tool_result=on_tool_result, stream=stream, step_budget=step_budget, tool_validator=tool_validator, auto_compress_threshold=auto_compress_threshold)
 
     def _revise_post(
         self,
@@ -3855,43 +2421,7 @@ class Tract:
         message: str | None,
     ) -> ChatResponse:
         """Shared post-chat logic for revise/arevise: resolve, edit, skip."""
-        import dataclasses as _dc
-
-        resolved = self.resolve_commit(commit_hash)
-        target_row = self._commit_repo.get(resolved)
-        if target_row is None:
-            from tract.exceptions import EditTargetError
-            raise EditTargetError(f"EDIT target commit not found: {resolved}")
-
-        ct = target_row.content_type
-        if ct == "instruction":
-            role = "system"
-        elif ct == "dialogue":
-            blob = self._blob_repo.get(target_row.content_hash)
-            data = json.loads(blob.payload_json) if blob else {}
-            role = data.get("role", "assistant")
-        else:
-            role = "assistant"
-
-        shorthand = {"system": self.system, "user": self.user, "assistant": self.assistant}
-        edit_fn = shorthand.get(role, self.assistant)
-        edit_info = edit_fn(
-            response.text,
-            edit=resolved,
-            message=message or f"revise: {prompt[:60]}",
-        )
-
-        if response.commit_info.parent_hash is not None:
-            self.annotate(response.commit_info.parent_hash, Priority.SKIP)
-        self.annotate(response.commit_info.commit_hash, Priority.SKIP)
-        if response.reasoning_commit is not None:
-            self.annotate(response.reasoning_commit.commit_hash, Priority.SKIP)
-
-        return _dc.replace(
-            response,
-            commit_info=edit_info,
-            prompt=prompt,
-        )
+        return self._llm_mgr._revise_post(response=response, commit_hash=commit_hash, prompt=prompt, message=message)
 
     def revise(
         self,
@@ -3906,45 +2436,8 @@ class Tract:
         reasoning: bool = True,
         **kwargs: Any,
     ) -> ChatResponse:
-        """Ask the LLM to revise a previous commit and apply as an EDIT.
-
-        Convenience wrapper that combines chat + edit + skip into one call.
-        Internally: sends ``prompt`` via :meth:`chat` to get the LLM's
-        revised text, creates an EDIT commit targeting ``commit_hash``
-        with that text, and SKIPs the intermediate user/assistant commits
-        so they don't appear in compiled context.
-
-        Args:
-            commit_hash: Hash (or prefix) of the commit to revise.  Must
-                be an APPEND commit (system, user, or assistant).
-            prompt: Instruction telling the LLM how to revise the content.
-            model: Model override for this call.
-            temperature: Temperature override.
-            max_tokens: Max tokens override.
-            llm_config: Full LLMConfig override for this call.
-            message: Optional commit message for the EDIT commit.
-            reasoning: If True (default), auto-commit reasoning traces.
-            **kwargs: Extra provider-specific parameters.
-
-        Returns:
-            :class:`ChatResponse` whose ``commit_info`` is the EDIT commit
-            and whose ``text`` is the revised content.
-
-        Raises:
-            LLMConfigError: If no LLM client is configured.
-            EditTargetError: If ``commit_hash`` cannot be found or is
-                itself an EDIT commit.
-        """
-        response = self.chat(
-            prompt,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            llm_config=llm_config,
-            reasoning=reasoning,
-            **kwargs,
-        )
-        return self._revise_post(response, commit_hash, prompt, message)
+        """See :attr:`llm` manager :meth:`revise`."""
+        return self._llm_mgr.revise(commit_hash=commit_hash, prompt=prompt, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, message=message, reasoning=reasoning, **kwargs)
 
     # ------------------------------------------------------------------
     # Async LLM methods
@@ -3964,24 +2457,7 @@ class Tract:
         **kwargs: Any,
     ) -> ChatResponse:
         """Async version of :meth:`_generate_once`."""
-        from tract.llm.protocols import acall_llm
-
-        chat_client, messages, llm_kwargs = self._generate_once_pre(
-            model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config, **kwargs,
-        )
-
-        effective_retry = retry or self._retry_config
-
-        async def _do_llm_call() -> Any:
-            return await acall_llm(chat_client, messages, **llm_kwargs)
-
-        response = await _aretry_with_backoff(_do_llm_call, effective_retry)
-
-        return self._generate_once_post(
-            response, chat_client, llm_kwargs,
-            message=message, metadata=metadata, reasoning=reasoning,
-        )
+        return await self._llm_mgr._agenerate_once(model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, message=message, metadata=metadata, reasoning=reasoning, retry=retry, **kwargs)
 
     async def agenerate(
         self,
@@ -4000,45 +2476,8 @@ class Tract:
         retry: RetryConfig | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        """Async version of :meth:`generate`.
-
-        Compile context, call LLM asynchronously, commit assistant response.
-        """
-        self._generate_pre()
-
-        if validator is None:
-            return await self._agenerate_once(
-                model=model, temperature=temperature,
-                max_tokens=max_tokens, llm_config=llm_config,
-                message=message, metadata=metadata,
-                reasoning=reasoning, retry=retry, **kwargs,
-            )
-
-        intermediate_hashes: list[str] = []
-        last_diagnosis: str | None = None
-
-        for attempt in range(max_retries + 1):
-            response = await self._agenerate_once(
-                model=model, temperature=temperature,
-                max_tokens=max_tokens, llm_config=llm_config,
-                message=message, metadata=metadata,
-                reasoning=reasoning, retry=retry, **kwargs,
-            )
-
-            final, diagnosis = self._generate_validate_loop(
-                response, validator, attempt, intermediate_hashes,
-                hide_retries, max_retries, retry_prompt,
-            )
-            if final is not None:
-                return final
-            last_diagnosis = diagnosis
-
-        from tract.exceptions import RetryExhaustedError
-        raise RetryExhaustedError(
-            attempts=max_retries + 1,
-            last_diagnosis=last_diagnosis or "validation failed",
-            last_result=response.text,
-        )
+        """See :attr:`llm` manager :meth:`agenerate`."""
+        return await self._llm_mgr.agenerate(model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, message=message, metadata=metadata, reasoning=reasoning, validator=validator, max_retries=max_retries, hide_retries=hide_retries, retry_prompt=retry_prompt, retry=retry, **kwargs)
 
     async def achat(
         self,
@@ -4059,27 +2498,8 @@ class Tract:
         retry: RetryConfig | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        """Async version of :meth:`chat`.
-
-        Commits the user message (sync), then awaits the LLM response.
-        """
-        import dataclasses as _dc
-
-        self.user(text, message=message, name=name, metadata=metadata)
-        response = await self.agenerate(
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            llm_config=llm_config,
-            reasoning=reasoning,
-            validator=validator,
-            max_retries=max_retries,
-            hide_retries=hide_retries,
-            retry_prompt=retry_prompt,
-            retry=retry,
-            **kwargs,
-        )
-        return _dc.replace(response, prompt=text)
+        """See :attr:`llm` manager :meth:`achat`."""
+        return await self._llm_mgr.achat(text=text, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, message=message, name=name, metadata=metadata, reasoning=reasoning, validator=validator, max_retries=max_retries, hide_retries=hide_retries, retry_prompt=retry_prompt, retry=retry, **kwargs)
 
     async def arun(
         self,
@@ -4101,55 +2521,8 @@ class Tract:
         tool_validator: Callable | None = None,
         auto_compress_threshold: float | None = None,
     ) -> LoopResult:
-        """Async version of :meth:`run`.
-
-        Runs the agent loop with async LLM calls and non-blocking tool execution.
-        See :meth:`run` for full parameter documentation.
-        """
-        from tract.loop import LoopConfig, arun_loop
-
-        # Resolve tools (same logic as sync run)
-        if tools is self._TOOLS_SENTINEL:
-            effective_profile = (
-                self._tool_profile or "compact"
-            ) if profile is self._PROFILE_SENTINEL else profile
-            resolved_tools = self.as_tools(
-                profile=effective_profile,
-                tool_names=tool_names,
-                format="openai",
-            )
-        else:
-            resolved_tools = tools  # type: ignore[assignment]
-
-        # Merge custom tool handlers from @t.tool into tool_handlers
-        if self._custom_tools:
-            merged_handlers = {
-                name: td.handler for name, td in self._custom_tools.items()
-            }
-            if tool_handlers:
-                merged_handlers.update(tool_handlers)
-            tool_handlers = merged_handlers
-
-        config = LoopConfig(
-            max_steps=max_steps,
-            system_prompt=system_prompt,
-            stream=stream,
-            max_tokens=max_tokens,
-            step_budget=step_budget,
-            tool_validator=tool_validator,
-            auto_compress_threshold=auto_compress_threshold,
-        )
-        return await arun_loop(
-            self,
-            task=task,
-            config=config,
-            llm_client=llm_client,
-            tools=resolved_tools,
-            tool_handlers=tool_handlers,
-            on_step=on_step,
-            on_token=on_token,
-            on_tool_result=on_tool_result,
-        )
+        """See :attr:`llm` manager :meth:`arun`."""
+        return await self._llm_mgr.arun(task=task, max_steps=max_steps, max_tokens=max_tokens, system_prompt=system_prompt, tools=tools, profile=profile, tool_names=tool_names, tool_handlers=tool_handlers, llm_client=llm_client, on_step=on_step, on_token=on_token, on_tool_result=on_tool_result, stream=stream, step_budget=step_budget, tool_validator=tool_validator, auto_compress_threshold=auto_compress_threshold)
 
     async def arevise(
         self,
@@ -4165,16 +2538,7 @@ class Tract:
         **kwargs: Any,
     ) -> ChatResponse:
         """Async version of :meth:`revise`."""
-        response = await self.achat(
-            prompt,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            llm_config=llm_config,
-            reasoning=reasoning,
-            **kwargs,
-        )
-        return self._revise_post(response, commit_hash, prompt, message)
+        return await self._llm_mgr.arevise(commit_hash=commit_hash, prompt=prompt, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, message=message, reasoning=reasoning, **kwargs)
 
     async def acompress(
         self,
@@ -4196,80 +2560,8 @@ class Tract:
         strategy: str = "default",
         window_size: int = 5,
     ) -> CompressResult:
-        """Async version of :meth:`compress`.
-
-        The LLM summarization is awaited; commit finalization is sync.
-        """
-        from tract.operations.compression import (
-            _classify_by_priority,
-            _commit_compression,
-            _partition_around_pinned,
-            _reconstruct_content,
-            acompress_range,
-            sliding_window_compress,
-        )
-
-        llm_client, llm_kwargs, effective_system_prompt = self._compress_pre(
-            model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config,
-            content=content, system_prompt=system_prompt,
-        )
-
-        # --- Sliding window strategy (delegates to sync helper) ---
-        if strategy == "sliding_window":
-            import asyncio
-            return await asyncio.to_thread(
-                self._compress_sliding_window,
-                window_size=window_size,
-                target_tokens=target_tokens,
-                preserve=preserve,
-                content=content,
-                instructions=instructions,
-                system_prompt=effective_system_prompt,
-                llm_client=llm_client,
-                llm_kwargs=llm_kwargs,
-                two_stage=two_stage,
-                sliding_window_compress_fn=sliding_window_compress,
-                _classify_by_priority_fn=_classify_by_priority,
-                _commit_compression_fn=_commit_compression,
-                _partition_around_pinned_fn=_partition_around_pinned,
-                _reconstruct_content_fn=_reconstruct_content,
-            )
-
-        # Async LLM summarization
-        range_result = await acompress_range(
-            tract_id=self._tract_id,
-            commit_repo=self._commit_repo,
-            blob_repo=self._blob_repo,
-            annotation_repo=self._annotation_repo,
-            ref_repo=self._ref_repo,
-            commit_engine=self._commit_engine,
-            token_counter=self._token_counter,
-            event_repo=self._event_repo,
-            parent_repo=self._parent_repo,
-            commits=commits,
-            from_commit=from_commit,
-            to_commit=to_commit,
-            target_tokens=target_tokens,
-            preserve=preserve,
-            llm_client=llm_client,
-            llm_kwargs=llm_kwargs,
-            generation_config=llm_kwargs if llm_kwargs else None,
-            content=content,
-            instructions=instructions,
-            system_prompt=effective_system_prompt,
-            type_registry=self._custom_type_registry,
-            two_stage=two_stage or False,
-        )
-
-        return self._compress_finalize(
-            range_result,
-            commits=commits, from_commit=from_commit, to_commit=to_commit,
-            target_tokens=target_tokens, preserve=preserve,
-            instructions=instructions,
-            effective_system_prompt=effective_system_prompt,
-            llm_kwargs=llm_kwargs,
-        )
+        """See :attr:`compression` manager :meth:`acompress`."""
+        return await self._compression_mgr.acompress(commits=commits, from_commit=from_commit, to_commit=to_commit, target_tokens=target_tokens, preserve=preserve, content=content, instructions=instructions, system_prompt=system_prompt, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, two_stage=two_stage, triggered_by=triggered_by, strategy=strategy, window_size=window_size)
 
     async def acompress_tool_calls(
         self,
@@ -4287,63 +2579,23 @@ class Tract:
         triggered_by: str | None = None,
     ) -> ToolCompactResult:
         """Async version of :meth:`compress_tool_calls`."""
-        from tract.llm.protocols import acall_llm
-
-        llm, messages, llm_kwargs, results_to_compact, turns = self._compress_tool_calls_pre(
-            commits, name=name, target_tokens=target_tokens,
-            instructions=instructions, system_prompt=system_prompt,
-            include_context=include_context, model=model,
-            temperature=temperature, max_tokens=max_tokens, llm_config=llm_config,
-        )
-
-        response = await acall_llm(llm, messages, **llm_kwargs)
-
-        return self._compress_tool_calls_post(
-            response, llm, results_to_compact, turns,
-            model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config,
-        )
+        return await self._compression_mgr.acompress_tool_calls(commits=commits, name=name, target_tokens=target_tokens, instructions=instructions, system_prompt=system_prompt, include_context=include_context, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, triggered_by=triggered_by)
 
     # ------------------------------------------------------------------
     # Compile record accessors
     # ------------------------------------------------------------------
 
     def compile_records(self, limit: int = 100) -> list:
-        """Get compile records for this tract, newest first.
-
-        Returns list of CompileRecordRow objects, or empty list if
-        compile record repository is not available.
-        """
-        if self._compile_record_repo is None:
-            return []
-        records = self._compile_record_repo.get_all(self._tract_id)
-        return list(reversed(records))[:limit]  # newest first
+        """See :attr:`persistence` manager :meth:`compile_records`."""
+        return self._persistence_mgr.compile_records(limit=limit)
 
     def compile_record_commits(self, record_id: str) -> list[str]:
-        """Get the ordered commit hashes for a compile record.
-
-        Returns list of commit hashes in compilation order, or empty list
-        if record not found or compile record repository not available.
-        """
-        if self._compile_record_repo is None:
-            return []
-        effectives = self._compile_record_repo.get_effectives(record_id)
-        return [e.commit_hash for e in effectives]
+        """See :attr:`persistence` manager :meth:`compile_record_commits`."""
+        return self._persistence_mgr.compile_record_commits(record_id=record_id)
 
     def token_checkpoints(self, limit: int = 100) -> list:
-        """API-calibrated token checkpoints, newest first.
-
-        Returns compile records where ``token_source`` starts with ``"api:"``,
-        i.e. records created by :meth:`record_usage`. Use ``limit=0`` to
-        return all matching records.
-        """
-        if self._compile_record_repo is None:
-            return []
-        all_records = list(reversed(self._compile_record_repo.get_all(self._tract_id)))
-        api_records = [r for r in all_records if r.token_source.startswith("api:")]
-        if limit == 0:
-            return api_records
-        return api_records[:limit]
+        """See :attr:`persistence` manager :meth:`token_checkpoints`."""
+        return self._persistence_mgr.token_checkpoints(limit=limit)
 
     @overload
     def compile(
@@ -4595,99 +2847,20 @@ class Tract:
         )
 
     def get_commit(self, commit_hash: str) -> CommitInfo | None:
-        """Fetch a commit by its hash.
-
-        Returns:
-            :class:`CommitInfo` if found, *None* otherwise.
-        """
-        return self._commit_engine.get_commit(commit_hash)
+        """See :attr:`search` manager :meth:`get_commit`."""
+        return self._search_mgr.get_commit(commit_hash=commit_hash)
 
     def get_content(self, commit_or_hash: CommitInfo | str) -> str | dict | None:
-        """Load the content for a commit.
-
-        For simple content types (dialogue, instruction, etc.), returns the
-        text string.  For structured content types that carry additional
-        metadata (reasoning, freeform), returns the full parsed dict so
-        callers can inspect fields like ``format``.
-
-        Args:
-            commit_or_hash: A :class:`CommitInfo` or a commit hash string.
-
-        Returns:
-            The content text (str), full content dict, or *None* if the
-            commit or blob is not found.
-        """
-        if isinstance(commit_or_hash, str):
-            row = self._commit_repo.get(commit_or_hash)
-            if row is None:
-                return None
-            content_hash = row.content_hash
-        else:
-            content_hash = commit_or_hash.content_hash
-
-        blob = self._blob_repo.get(content_hash)
-        if blob is None:
-            return None
-
-        try:
-            data = json.loads(blob.payload_json)
-        except (json.JSONDecodeError, TypeError):
-            return blob.payload_json
-
-        # Structured content types: return the full dict so callers
-        # can access all fields (e.g. format, payload, etc.)
-        _STRUCTURED_TYPES = {"reasoning", "freeform"}
-        if isinstance(data, dict) and data.get("content_type") in _STRUCTURED_TYPES:
-            return data
-
-        # Extract text from known content shapes
-        for key in ("text", "content"):
-            if key in data:
-                return data[key]
-        if "payload" in data:
-            val = data["payload"]
-            return json.dumps(val) if isinstance(val, dict) else str(val)
-        return blob.payload_json
+        """See :attr:`search` manager :meth:`get_content`."""
+        return self._search_mgr.get_content(commit_or_hash=commit_or_hash)
 
     def get_metadata(self, commit_or_hash: CommitInfo | str) -> dict | None:
-        """Load the metadata dict for a commit.
-
-        Args:
-            commit_or_hash: A :class:`CommitInfo` or a commit hash string.
-
-        Returns:
-            The metadata dict, or *None* if the commit is not found or
-            has no metadata.
-        """
-        if isinstance(commit_or_hash, str):
-            row = self._commit_repo.get(commit_or_hash)
-            if row is None:
-                return None
-            return row.metadata_json
-        return commit_or_hash.metadata
+        """See :attr:`search` manager :meth:`get_metadata`."""
+        return self._search_mgr.get_metadata(commit_or_hash=commit_or_hash)
 
     def show(self, commit_or_hash: CommitInfo | str) -> None:
-        """Pretty-print a commit with its full content.
-
-        Like ``git show`` — displays commit metadata and the complete
-        content text.  For metadata-only output, use
-        ``info.pprint()`` instead.
-
-        Args:
-            commit_or_hash: A :class:`CommitInfo` or a commit hash string.
-        """
-        self._check_open()
-        from tract.formatting import pprint_commit_info
-
-        if isinstance(commit_or_hash, str):
-            info = self.get_commit(commit_or_hash)
-            if info is None:
-                raise ValueError(f"Commit not found: {commit_or_hash}")
-        else:
-            info = commit_or_hash
-
-        content = self.get_content(info)
-        pprint_commit_info(info, content=content)
+        """See :attr:`search` manager :meth:`show`."""
+        return self._search_mgr.show(commit_or_hash=commit_or_hash)
 
     def annotate(
         self,
@@ -4699,237 +2872,40 @@ class Tract:
         retain_match: list[str] | None = None,
         retain_match_mode: str = "substring",
     ) -> PriorityAnnotation:
-        """Create a priority annotation on a commit.
-
-        Args:
-            target_hash: Hash of the commit to annotate.
-            priority: Priority level (``SKIP``, ``NORMAL``, ``IMPORTANT``, ``PINNED``).
-            reason: Optional reason for the annotation.
-            retain: Fuzzy retention instructions (NL guidance for the LLM
-                summarizer). Only meaningful for ``IMPORTANT`` priority.
-            retain_match: Deterministic retention patterns -- substrings or
-                regexes that MUST appear in compression summaries.
-            retain_match_mode: How ``retain_match`` patterns are checked:
-                ``"substring"`` (default) or ``"regex"``.
-
-        Returns:
-            :class:`PriorityAnnotation` model.
-        """
-        self._check_open()
-        retention = None
-        if retain is not None or retain_match is not None:
-            retention = RetentionCriteria(
-                instructions=retain,
-                match_patterns=retain_match,
-                match_mode=retain_match_mode,
-            )
-        annotation = self._commit_engine.annotate(
-            target_hash, priority, reason, retention=retention
-        )
-        self._commit_session()
-
-        # Annotations affect ALL cached snapshots that include the target commit.
-        # Strategy: clear everything, then optionally re-add a patched current HEAD.
-        # Exception: if patch returns the same snapshot object (NORMAL/PINNED on
-        # already-included commit), the annotation is a no-op for compiled output
-        # and we can skip the clear entirely.
-        if self._cache.uses_default_compiler:
-            current_head = self.head
-            patched = None
-            if current_head:
-                snapshot = self._cache.get(current_head)
-                if snapshot is not None:
-                    patched = self._cache.patch_for_annotate(
-                        snapshot, target_hash, priority
-                    )
-            if patched is not None and patched is snapshot:
-                pass  # No-op: annotation didn't change compiled output
-            else:
-                self._cache.clear()
-                if patched is not None:
-                    self._cache.put(current_head, patched)
-        else:
-            self._cache.clear()
-
-        return annotation
+        """See :attr:`annotations` manager :meth:`set`."""
+        return self._annotations_mgr.set(target_hash=target_hash, priority=priority, reason=reason, retain=retain, retain_match=retain_match, retain_match_mode=retain_match_mode)
 
     def get_annotations(self, target_hash: str) -> list[PriorityAnnotation]:
-        """Get the full annotation history for a commit.
-
-        Returns:
-            List of :class:`PriorityAnnotation` in chronological order.
-        """
-        rows = self._annotation_repo.get_history(target_hash)
-        return [
-            PriorityAnnotation(
-                id=row.id,
-                tract_id=row.tract_id,
-                target_hash=row.target_hash,
-                priority=row.priority,
-                reason=row.reason,
-                retention=RetentionCriteria(**row.retention_json)
-                if row.retention_json else None,
-                created_at=row.created_at,
-            )
-            for row in rows
-        ]
+        """See :attr:`annotations` manager :meth:`get`."""
+        return self._annotations_mgr.get(target_hash=target_hash)
 
     def annotation_counts(self, limit: int = 500) -> dict[str, int]:
-        """Count pinned and skipped annotations across recent commits.
-
-        Args:
-            limit: Maximum number of commits to scan. Default 500.
-
-        Returns:
-            Dict with ``"pinned"`` and ``"skip"`` integer counts.
-        """
-        entries = self.log(limit=limit)
-        commit_hashes = [e.commit_hash for e in entries]
-        pinned = 0
-        skip = 0
-        if commit_hashes:
-            annotations = self._annotation_repo.batch_get_latest(commit_hashes)
-            for _hash, ann_row in annotations.items():
-                if ann_row.priority == Priority.PINNED:
-                    pinned += 1
-                elif ann_row.priority == Priority.SKIP:
-                    skip += 1
-        return {"pinned": pinned, "skip": skip}
+        """See :attr:`annotations` manager :meth:`counts`."""
+        return self._annotations_mgr.counts(limit=limit)
 
     # ------------------------------------------------------------------
     # Tag system
     # ------------------------------------------------------------------
 
     def tag(self, target_hash: str, tag_name: str) -> None:
-        """Add a mutable tag annotation to a commit.
-
-        Unlike immutable tags set at commit time, annotation tags can be
-        added retrospectively.
-
-        Args:
-            target_hash: Hash of the commit to tag.
-            tag_name: Tag name to add.
-
-        Raises:
-            CommitNotFoundError: If the commit doesn't exist.
-            TagNotRegisteredError: If strict mode is on and tag is not registered.
-        """
-        self._check_open()
-        commit = self._commit_repo.get(target_hash)
-        if commit is None:
-            raise CommitNotFoundError(target_hash)
-        if self._strict_tags and self._tag_registry_repo is not None:
-            if not self._tag_registry_repo.is_registered(self._tract_id, tag_name):
-                raise TagNotRegisteredError(tag_name)
-        if self._tag_annotation_repo is not None:
-            from datetime import timezone
-            now = datetime.now(timezone.utc)
-            self._tag_annotation_repo.add_tag(
-                self._tract_id, target_hash, tag_name, now,
-            )
-            self._commit_session()
+        """See :attr:`tags` manager :meth:`add`."""
+        return self._tags_mgr.add(target_hash=target_hash, tag_name=tag_name)
 
     def untag(self, target_hash: str, tag_name: str) -> bool:
-        """Remove a mutable tag annotation from a commit.
-
-        Args:
-            target_hash: Hash of the commit to untag.
-            tag_name: Tag name to remove.
-
-        Returns:
-            True if the tag was removed, False if it didn't exist.
-        """
-        self._check_open()
-        if self._tag_annotation_repo is None:
-            return False
-        result = self._tag_annotation_repo.remove_tag(
-            self._tract_id, target_hash, tag_name,
-        )
-        self._commit_session()
-        return result
+        """See :attr:`tags` manager :meth:`remove`."""
+        return self._tags_mgr.remove(target_hash=target_hash, tag_name=tag_name)
 
     def get_tags(self, target_hash: str) -> list[str]:
-        """Get all tags for a commit (immutable + mutable combined).
-
-        Args:
-            target_hash: Hash of the commit.
-
-        Returns:
-            Deduplicated list of tag names.
-        """
-        tags: set[str] = set()
-        # Immutable tags from CommitRow
-        commit_row = self._commit_repo.get(target_hash)
-        if commit_row is not None and commit_row.tags_json:
-            tags.update(commit_row.tags_json)
-        # Mutable annotation tags
-        if self._tag_annotation_repo is not None:
-            annotation_tags = self._tag_annotation_repo.get_tags(target_hash)
-            tags.update(annotation_tags)
-        return sorted(tags)
+        """See :attr:`tags` manager :meth:`get`."""
+        return self._tags_mgr.get(target_hash=target_hash)
 
     def register_tag(self, name: str, description: str | None = None) -> None:
-        """Register a new tag name.
-
-        Registered tags can be used with ``tag()`` and ``commit(tags=[...])``.
-        In strict mode (default), only registered tags are allowed.
-
-        Args:
-            name: Tag name.
-            description: Optional description of the tag.
-        """
-        if self._tag_registry_repo is None:
-            return
-        from datetime import timezone
-        now = datetime.now(timezone.utc)
-        self._tag_registry_repo.register(
-            self._tract_id, name, description, auto_created=False, created_at=now,
-        )
-        self._commit_session()
+        """See :attr:`tags` manager :meth:`register`."""
+        return self._tags_mgr.register(name=name, description=description)
 
     def list_tags(self) -> list[dict]:
-        """List all registered tags with descriptions and usage counts.
-
-        Returns:
-            List of dicts with ``name``, ``description``, ``auto_created``,
-            and ``count`` keys.
-        """
-        if self._tag_registry_repo is None:
-            return []
-        rows = self._tag_registry_repo.list_all(self._tract_id)
-        tag_names = [r.tag_name for r in rows]
-
-        # Count annotation tags in batch
-        annotation_counts: dict[str, int] = {}
-        if self._tag_annotation_repo is not None:
-            for tn in tag_names:
-                annotation_hashes = self._tag_annotation_repo.get_commits_by_tag(
-                    self._tract_id, tn,
-                )
-                annotation_counts[tn] = len(annotation_hashes)
-
-        # Walk ancestors ONCE, count immutable tags across all registered tags
-        immutable_counts: dict[str, int] = {tn: 0 for tn in tag_names}
-        head = self.head
-        if head is not None:
-            tag_name_set = set(tag_names)
-            ancestors = self._get_merge_aware_ancestors(head, limit=500)
-            for ancestor in ancestors:
-                if ancestor.tags_json:
-                    for t in ancestor.tags_json:
-                        if t in tag_name_set:
-                            immutable_counts[t] = immutable_counts.get(t, 0) + 1
-
-        result = []
-        for row in rows:
-            count = annotation_counts.get(row.tag_name, 0) + immutable_counts.get(row.tag_name, 0)
-            result.append({
-                "name": row.tag_name,
-                "description": row.description,
-                "auto_created": bool(row.auto_created),
-                "count": count,
-            })
-        return result
+        """See :attr:`tags` manager :meth:`list`."""
+        return self._tags_mgr.list()
 
     def query_by_tags(
         self,
@@ -4938,90 +2914,16 @@ class Tract:
         match: str = "any",
         limit: int = 100,
     ) -> list[CommitInfo]:
-        """Query commits by tags (combining immutable and mutable tags).
-
-        Args:
-            tags: Tag names to filter by.
-            match: ``"any"`` (OR -- commit has at least one tag) or
-                ``"all"`` (AND -- commit has every listed tag).
-            limit: Maximum results.
-
-        Returns:
-            List of :class:`CommitInfo` matching the tag criteria.
-        """
-        if not tags:
-            return []
-
-        head = self.head
-        if head is None:
-            return []
-
-        # Walk ancestors ONCE and reuse
-        ancestors = self._get_merge_aware_ancestors(head, limit=500)
-
-        # Batch-fetch annotation tags for all ancestors
-        annotation_map: dict[str, list[str]] = {}
-        if self._tag_annotation_repo is not None:
-            all_hashes = [r.commit_hash for r in ancestors]
-            annotation_map = self._tag_annotation_repo.batch_get_tags(all_hashes)
-
-        tag_set = set(tags)
-        results: list[CommitInfo] = []
-        for row in ancestors:
-            # Combine immutable + mutable tags
-            commit_tags = set(row.tags_json) if row.tags_json else set()
-            commit_tags.update(annotation_map.get(row.commit_hash, []))
-
-            if match == "any":
-                if commit_tags & tag_set:
-                    results.append(self._commit_engine._row_to_info(row))
-            else:  # "all"
-                if tag_set <= commit_tags:
-                    results.append(self._commit_engine._row_to_info(row))
-
-            if len(results) >= limit:
-                break
-
-        return results
+        """See :attr:`tags` manager :meth:`query`."""
+        return self._tags_mgr.query(tags=tags, match=match, limit=limit)
 
     def _seed_base_tags(self) -> None:
         """Seed the tag registry with base tags (idempotent)."""
-        if self._tag_registry_repo is None:
-            return
-
-        from datetime import timezone
-        now = datetime.now(timezone.utc)
-
-        base_tags = {
-            "instruction": "System messages / instructions",
-            "tool_call": "Messages containing tool calls",
-            "tool_result": "Tool result messages",
-            "reasoning": "Assistant reasoning without tool calls",
-            "revision": "EDIT operations",
-            "observation": "User messages with data / observations",
-            "decision": "Assistant messages with explicit choices",
-            "summary": "Compression output / summaries",
-        }
-        for tag_name, description in base_tags.items():
-            self._tag_registry_repo.register(
-                self._tract_id, tag_name, description,
-                auto_created=True, created_at=now,
-            )
-        self._commit_session()
+        return self._tags_mgr._seed_base()
 
     def _validate_tags(self, tags: list[str]) -> None:
-        """Validate tags against registry in strict mode.
-
-        Raises:
-            TagNotRegisteredError: If any tag is not registered (reports all
-                unregistered tags at once).
-        """
-        if not self._strict_tags or self._tag_registry_repo is None:
-            return
-        registered = self._tag_registry_repo.batch_is_registered(self._tract_id, tags)
-        unregistered = [tag for tag in tags if tag not in registered]
-        if unregistered:
-            raise TagNotRegisteredError(unregistered)
+        """See :attr:`tags` manager :meth:`_validate`."""
+        return self._tags_mgr._validate(tags=tags)
 
     def _classify_tags(
         self,
@@ -5031,49 +2933,8 @@ class Tract:
         operation: CommitOperation | None = None,
         metadata: dict | None = None,
     ) -> list[str]:
-        """Heuristic-based tag classification (no LLM call).
-
-        Args:
-            content_type: The content type discriminator.
-            role: The message role (if dialogue).
-            operation: The commit operation.
-            metadata: The commit metadata.
-
-        Returns:
-            Deduplicated list of tag names.
-        """
-        tags: list[str] = []
-
-        # Classify based on content type and role
-        if content_type == "instruction" or role == "system":
-            tags.append("instruction")
-        if role == "assistant":
-            if metadata and metadata.get("tool_calls"):
-                tags.append("tool_call")
-            else:
-                tags.append("reasoning")
-        if role == "user":
-            if metadata and metadata.get("tool_call_id"):
-                tags.append("tool_result")
-        if role == "tool":
-            tags.append("tool_result")
-        if content_type == "tool_io":
-            if "tool_call" not in tags and "tool_result" not in tags:
-                tags.append("tool_call")
-        if operation == CommitOperation.EDIT:
-            tags.append("revision")
-        if content_type == "session" or (content_type and "session" in content_type):
-            tags.append("observation")
-
-        # Deduplicate preserving order
-        seen: set[str] = set()
-        unique_tags: list[str] = []
-        for tag in tags:
-            if tag not in seen:
-                seen.add(tag)
-                unique_tags.append(tag)
-
-        return unique_tags
+        """See :attr:`tags` manager :meth:`_classify`."""
+        return self._tags_mgr._classify(content_type=content_type, role=role, operation=operation, metadata=metadata)
 
     def _auto_classify(
         self,
@@ -5106,26 +2967,8 @@ class Tract:
         return message, tags
 
     def _enrich_with_priorities(self, entries: list[CommitInfo]) -> list[CommitInfo]:
-        """Enrich CommitInfo entries with effective_priority.
-
-        Resolves each commit's effective priority by checking explicit
-        annotations first, then falling back to DEFAULT_TYPE_PRIORITIES.
-        """
-        if not entries:
-            return entries
-        hashes = [e.commit_hash for e in entries]
-        annotations = self._annotation_repo.batch_get_latest(hashes)
-        enriched: list[CommitInfo] = []
-        for entry in entries:
-            ann = annotations.get(entry.commit_hash)
-            if ann is not None:
-                priority = ann.priority
-            else:
-                priority = DEFAULT_TYPE_PRIORITIES.get(
-                    entry.content_type, Priority.NORMAL,
-                )
-            enriched.append(entry.model_copy(update={"effective_priority": priority.value}))
-        return enriched
+        """See :attr:`annotations` manager :meth:`_enrich_with_priorities`."""
+        return self._annotations_mgr._enrich_with_priorities(entries=entries)
 
     def _get_merge_aware_ancestors(
         self,
@@ -5170,63 +3013,8 @@ class Tract:
         tags: list[str] | None = None,
         tag_match: str = "any",
     ) -> list[CommitInfo]:
-        """Walk commit history from HEAD backward.
-
-        Each returned :class:`CommitInfo` has ``effective_priority`` set
-        (``"skip"``, ``"normal"``, ``"important"``, or ``"pinned"``).
-
-        Args:
-            limit: Maximum number of commits to return.  Default 20.
-            op_filter: If set, only include commits with this operation type.
-            tags: If set, only include commits that have these tags
-                (combining immutable commit tags and mutable annotation tags).
-            tag_match: ``"any"`` (OR -- at least one tag matches) or
-                ``"all"`` (AND -- all tags must match).  Default ``"any"``.
-
-        Returns:
-            List of :class:`CommitInfo` in reverse chronological order
-            (newest first).  Empty list if no commits.
-        """
-        current_head = self.head
-        if current_head is None:
-            return []
-
-        if tags is None:
-            # No tag filter -- use fast path
-            ancestors = self._get_merge_aware_ancestors(
-                current_head, limit=limit, op_filter=op_filter,
-            )
-            entries = [self._commit_engine._row_to_info(row) for row in ancestors]
-            return self._enrich_with_priorities(entries)
-
-        # Tag filtering: walk more commits and filter
-        ancestors = self._get_merge_aware_ancestors(
-            current_head, limit=500, op_filter=op_filter,
-        )
-        tag_set = set(tags)
-
-        # Batch-fetch annotation tags for all ancestor commits
-        annotation_map: dict[str, list[str]] = {}
-        if self._tag_annotation_repo is not None:
-            all_hashes = [r.commit_hash for r in ancestors]
-            annotation_map = self._tag_annotation_repo.batch_get_tags(all_hashes)
-
-        results: list[CommitInfo] = []
-        for row in ancestors:
-            # Combine immutable + mutable tags
-            commit_tags = set(row.tags_json) if row.tags_json else set()
-            commit_tags.update(annotation_map.get(row.commit_hash, []))
-
-            if tag_match == "any":
-                if commit_tags & tag_set:
-                    results.append(self._commit_engine._row_to_info(row))
-            else:  # "all"
-                if tag_set <= commit_tags:
-                    results.append(self._commit_engine._row_to_info(row))
-
-            if len(results) >= limit:
-                break
-        return self._enrich_with_priorities(results)
+        """See :attr:`search` manager :meth:`log`."""
+        return self._search_mgr.log(limit=limit, op_filter=op_filter, tags=tags, tag_match=tag_match)
 
     def find(
         self,
@@ -5240,102 +3028,8 @@ class Tract:
         branch: str | None = None,
         limit: int = 50,
     ) -> list[CommitInfo]:
-        """Search commits by content, tags, content type, or metadata.
-
-        Walks the ancestry of the specified branch (or current HEAD) and
-        returns commits matching **all** provided criteria (AND logic).
-
-        Args:
-            content: Substring match in commit content text.
-            pattern: Regex match in commit content text.
-            tag: Match commits that have this tag (immutable or mutable).
-            content_type: Match commits with this content type.
-            metadata_key: Match commits that have this key in metadata.
-            metadata_value: When used with ``metadata_key``, match commits
-                where ``metadata[metadata_key] == metadata_value``.
-            branch: Search a specific branch.  Defaults to current HEAD.
-            limit: Maximum number of results.  Default 50.
-
-        Returns:
-            List of matching :class:`CommitInfo` in reverse chronological
-            order (newest first).
-        """
-        self._check_open()
-        import re
-
-        # Resolve starting commit hash
-        if branch is not None:
-            start_hash = self._ref_repo.get_branch(self._tract_id, branch)
-            if start_hash is None:
-                raise BranchNotFoundError(branch)
-        else:
-            start_hash = self.head
-
-        if start_hash is None:
-            return []
-
-        # Pre-compile regex if provided
-        compiled_re = re.compile(pattern) if pattern is not None else None
-
-        # Walk a generous window of ancestors for filtering
-        scan_limit = max(limit * 10, 500)
-        ancestors = self._get_merge_aware_ancestors(start_hash, limit=scan_limit)
-
-        # Batch-fetch annotation tags if tag filter is active
-        annotation_map: dict[str, list[str]] = {}
-        if tag is not None and self._tag_annotation_repo is not None:
-            all_hashes = [r.commit_hash for r in ancestors]
-            annotation_map = self._tag_annotation_repo.batch_get_tags(all_hashes)
-
-        results: list[CommitInfo] = []
-        for row in ancestors:
-            # --- content_type filter ---
-            if content_type is not None and row.content_type != content_type:
-                continue
-
-            # --- metadata filters ---
-            if metadata_key is not None:
-                md = row.metadata_json
-                if not isinstance(md, dict) or metadata_key not in md:
-                    continue
-                if metadata_value is not None and md[metadata_key] != metadata_value:
-                    continue
-
-            # --- tag filter (immutable + mutable) ---
-            if tag is not None:
-                commit_tags: set[str] = set(row.tags_json) if row.tags_json else set()
-                commit_tags.update(annotation_map.get(row.commit_hash, []))
-                if tag not in commit_tags:
-                    continue
-
-            # --- content / pattern filters (load blob lazily) ---
-            if content is not None or compiled_re is not None:
-                blob = self._blob_repo.get(row.content_hash)
-                if blob is None:
-                    continue
-                try:
-                    blob_text = blob.payload_json
-                except Exception:
-                    # Blob payload unreadable (corrupt data or detached instance);
-                    # skip rather than failing the entire search.
-                    logger.debug(
-                        "Skipping blob %s: payload unreadable", row.content_hash,
-                        exc_info=True,
-                    )
-                    continue
-
-                if content is not None and content not in blob_text:
-                    continue
-                if compiled_re is not None and not compiled_re.search(blob_text):
-                    continue
-
-            info = self._commit_engine._row_to_info(row)
-            results.append(info)
-
-            if len(results) >= limit:
-                break
-
-        return self._enrich_with_priorities(results)
+        """See :attr:`search` manager :meth:`find`."""
+        return self._search_mgr.find(content=content, pattern=pattern, tag=tag, content_type=content_type, metadata_key=metadata_key, metadata_value=metadata_value, branch=branch, limit=limit)
 
     def find_one(
         self,
@@ -5348,138 +3042,28 @@ class Tract:
         metadata_value: str | None = None,
         branch: str | None = None,
     ) -> CommitInfo | None:
-        """Search commits and return the first match, or ``None``.
-
-        Accepts the same filters as :meth:`find`.  Equivalent to
-        ``find(..., limit=1)[0]`` but returns ``None`` instead of
-        raising on empty results.
-
-        Returns:
-            The first matching :class:`CommitInfo`, or ``None``.
-        """
-        hits = self.find(
-            content=content,
-            pattern=pattern,
-            tag=tag,
-            content_type=content_type,
-            metadata_key=metadata_key,
-            metadata_value=metadata_value,
-            branch=branch,
-            limit=1,
-        )
-        return hits[0] if hits else None
+        """See :attr:`search` manager :meth:`find_one`."""
+        return self._search_mgr.find_one(content=content, pattern=pattern, tag=tag, content_type=content_type, metadata_key=metadata_key, metadata_value=metadata_value, branch=branch)
 
     def skipped(self, limit: int = 100) -> list[CommitInfo]:
-        """Return commits with effective priority SKIP.
-
-        These commits are excluded from :meth:`compile` output.
-
-        Args:
-            limit: Maximum number of commits to scan. Default 100.
-
-        Returns:
-            List of :class:`CommitInfo` with ``effective_priority == "skip"``,
-            in reverse chronological order.
-        """
-        entries = self.log(limit=limit)
-        return [e for e in entries if e.effective_priority == Priority.SKIP.value]
+        """See :attr:`search` manager :meth:`skipped`."""
+        return self._search_mgr.skipped(limit=limit)
 
     def pinned(self, limit: int = 100) -> list[CommitInfo]:
-        """Return commits with effective priority PINNED.
-
-        These commits are always included in :meth:`compile` output and
-        preserved during compression.
-
-        Args:
-            limit: Maximum number of commits to scan. Default 100.
-
-        Returns:
-            List of :class:`CommitInfo` with ``effective_priority == "pinned"``,
-            in reverse chronological order.
-        """
-        entries = self.log(limit=limit)
-        return [e for e in entries if e.effective_priority == Priority.PINNED.value]
+        """See :attr:`search` manager :meth:`pinned`."""
+        return self._search_mgr.pinned(limit=limit)
 
     def manifest(self, max_log_entries: int = 30) -> str:
-        """Build a lightweight text manifest of current context.
-
-        Returns a formatted summary including branch/HEAD info, a
-        commit log table (metadata only, newest first), active
-        configuration, and tag frequency summary.
-
-        Unlike :meth:`status` and :meth:`compile`, this method is
-        **safe to call from middleware handlers** (gates, maintainers)
-        because it uses only :meth:`log` and :meth:`get_all_configs`
-        — never :meth:`compile` — avoiding middleware recursion.
-
-        Args:
-            max_log_entries: Maximum commits to include (default 30).
-
-        Returns:
-            Formatted text string suitable for human or LLM inspection.
-        """
-        from tract.gate import build_manifest
-        return build_manifest(self, max_log_entries)
+        """See :attr:`search` manager :meth:`manifest`."""
+        return self._search_mgr.manifest(max_log_entries=max_log_entries)
 
     def status(self) -> StatusInfo:
-        """Get current tract status.
-
-        Returns :class:`StatusInfo` with HEAD position, branch name,
-        detached state, compiled token count, budget info, and last 3 commits.
-        """
-        from tract.operations.history import StatusInfo
-
-        current_head = self.head
-        branch_name = self._ref_repo.get_current_branch(self._tract_id)
-        is_detached = self._ref_repo.is_detached(self._tract_id)
-
-        # Get compiled token count (uses cache if available)
-        token_count = 0
-        token_source = ""
-        commit_count = 0
-        if current_head is not None:
-            compiled = self.compile()
-            token_count = compiled.token_count
-            token_source = compiled.token_source
-            commit_count = compiled.commit_count
-
-        # Get token budget max
-        token_budget_max = None
-        if self._config.token_budget and self._config.token_budget.max_tokens:
-            token_budget_max = self._config.token_budget.max_tokens
-
-        # Get last 3 commits for preview
-        recent = self.log(limit=3)
-
-        return StatusInfo(
-            head_hash=current_head,
-            branch_name=branch_name,
-            is_detached=is_detached,
-            commit_count=commit_count,
-            token_count=token_count,
-            token_budget_max=token_budget_max,
-            token_source=token_source,
-            recent_commits=recent,
-        )
+        """See :attr:`search` manager :meth:`status`."""
+        return self._search_mgr.status()
 
     def health(self) -> HealthReport:
-        """Run health checks on this tract's DAG.
-
-        Validates blob integrity, parent references, branch HEAD validity,
-        and identifies unreachable (orphaned) commits.
-
-        Returns:
-            :class:`HealthReport` with validation results and any warnings.
-        """
-        from tract.operations.health import check_health
-
-        return check_health(
-            self._tract_id,
-            self._commit_repo,
-            self._blob_repo,
-            self._ref_repo,
-            self._parent_repo,
-        )
+        """See :attr:`search` manager :meth:`health`."""
+        return self._search_mgr.health()
 
     def _compile_at(self, commit_hash: str) -> CompiledContext:
         """Compile at a specific commit, using LRU cache if available.
@@ -5506,70 +3090,8 @@ class Tract:
         commit_a: str | None = None,
         commit_b: str | None = None,
     ) -> DiffResult:
-        """Compare two commits and return structured diff.
-
-        Args:
-            commit_a: First commit (hash or prefix).  If None and commit_b is
-                an EDIT commit, auto-resolves to the edit target (edit_target).
-                If None and commit_b is not EDIT, uses commit_b's parent.
-            commit_b: Second commit (hash or prefix).  Defaults to HEAD.
-
-        Returns:
-            :class:`DiffResult` with per-message diffs, token deltas,
-            and config changes.
-
-        Raises:
-            TraceError: If no commits exist.
-            CommitNotFoundError: If references can't be resolved.
-        """
-        self._check_open()
-        from tract.operations.diff import compute_diff
-
-        # Default commit_b to HEAD
-        if commit_b is None:
-            current_head = self.head
-            if current_head is None:
-                raise TraceError("No commits to diff")
-            commit_b = current_head
-        else:
-            commit_b = self.resolve_commit(commit_b)
-
-        # Look up commit_b row
-        row_b = self._commit_repo.get(commit_b)
-        if row_b is None:
-            raise CommitNotFoundError(commit_b)
-
-        # Auto-resolve commit_a
-        if commit_a is None:
-            if row_b.operation == CommitOperation.EDIT and row_b.edit_target:
-                commit_a = row_b.edit_target
-            elif row_b.parent_hash:
-                commit_a = row_b.parent_hash
-            else:
-                # First commit, diff against empty
-                commit_a = None
-        else:
-            commit_a = self.resolve_commit(commit_a)
-
-        # Compile both commits to get their messages
-        if commit_a is not None:
-            compiled_a = self._compile_at(commit_a)
-        else:
-            compiled_a = CompiledContext(
-                messages=[], token_count=0, commit_count=0,
-                token_source="", generation_configs=[], commit_hashes=[],
-            )
-
-        compiled_b = self._compile_at(commit_b)
-
-        return compute_diff(
-            commit_a_hash=commit_a or "(empty)",
-            commit_b_hash=commit_b,
-            messages_a=compiled_a.messages,
-            messages_b=compiled_b.messages,
-            configs_a=compiled_a.generation_configs,
-            configs_b=compiled_b.generation_configs,
-        )
+        """See :attr:`search` manager :meth:`diff`."""
+        return self._search_mgr.diff(commit_a=commit_a, commit_b=commit_b)
 
     def compare(
         self,
@@ -5579,108 +3101,12 @@ class Tract:
         commit_a: str | None = None,
         commit_b: str | None = None,
     ) -> "DiffResult":
-        """Compare compiled contexts between two branches or commits without switching HEAD.
-
-        Unlike :meth:`diff` which compares sequential commits on the current branch,
-        ``compare()`` works across branches.  Useful for A/B variant comparison,
-        inspecting divergent context windows, or auditing branch differences before
-        a merge.
-
-        Exactly one of ``branch_a``/``commit_a`` may be provided for side A,
-        and exactly one of ``branch_b``/``commit_b`` for side B.
-
-        Args:
-            branch_a: First branch name.  Resolved to the branch tip.
-                Defaults to the current branch when *commit_a* is also None.
-            branch_b: Second branch name.  Resolved to the branch tip.
-            commit_a: Specific commit hash (or prefix / ref) for side A.
-                Mutually exclusive with *branch_a*.
-            commit_b: Specific commit hash (or prefix / ref) for side B.
-                Mutually exclusive with *branch_b*.
-
-        Returns:
-            :class:`DiffResult` comparing the two compiled contexts.
-
-        Raises:
-            ValueError: If both branch and commit are given for the same side,
-                or if no target is specified for side B.
-            TraceError: If the current branch has no commits (when defaulting side A).
-            CommitNotFoundError: If a reference cannot be resolved.
-        """
-        self._check_open()
-        from tract.operations.diff import compute_diff
-
-        # --- Validate mutual exclusivity ---
-        if branch_a is not None and commit_a is not None:
-            raise ValueError("Cannot specify both branch_a and commit_a; use one or the other.")
-        if branch_b is not None and commit_b is not None:
-            raise ValueError("Cannot specify both branch_b and commit_b; use one or the other.")
-
-        # --- Resolve side A ---
-        if commit_a is not None:
-            hash_a = self.resolve_commit(commit_a)
-        elif branch_a is not None:
-            hash_a = self.resolve_commit(branch_a)
-        else:
-            # Default to current HEAD
-            current_head = self.head
-            if current_head is None:
-                raise TraceError("No commits on current branch to use as side A")
-            hash_a = current_head
-
-        # --- Resolve side B ---
-        if commit_b is not None:
-            hash_b = self.resolve_commit(commit_b)
-        elif branch_b is not None:
-            hash_b = self.resolve_commit(branch_b)
-        else:
-            raise ValueError("Must specify branch_b or commit_b for the comparison target.")
-
-        # --- Compile both sides without switching HEAD ---
-        compiled_a = self._compile_at(hash_a)
-        compiled_b = self._compile_at(hash_b)
-
-        return compute_diff(
-            commit_a_hash=hash_a,
-            commit_b_hash=hash_b,
-            messages_a=compiled_a.messages,
-            messages_b=compiled_b.messages,
-            configs_a=compiled_a.generation_configs,
-            configs_b=compiled_b.generation_configs,
-        )
+        """See :attr:`search` manager :meth:`compare`."""
+        return self._search_mgr.compare(branch_a=branch_a, branch_b=branch_b, commit_a=commit_a, commit_b=commit_b)
 
     def edit_history(self, commit_hash: str) -> list[CommitInfo]:
-        """Get the full edit chain for a commit.
-
-        Returns a chronological list starting with the original commit,
-        followed by each EDIT in the order they were created.
-
-        Args:
-            commit_hash: A commit hash, branch name, or hash prefix.
-                Can be the original commit or any of its edits.
-
-        Returns:
-            List of :class:`CommitInfo` in chronological order:
-            ``[original, edit1, edit2, ...]``.  If the commit has never
-            been edited, returns a single-element list.
-
-        Raises:
-            CommitNotFoundError: If the commit cannot be resolved.
-        """
-        self._check_open()
-        resolved = self.resolve_commit(commit_hash)
-        row = self._commit_repo.get(resolved)
-        if row is None:
-            raise CommitNotFoundError(resolved)
-
-        # If the resolved commit is itself an edit, follow to the original
-        original_hash = row.edit_target if row.edit_target else resolved
-
-        rows = self._commit_repo.get_edits_for(original_hash, self._tract_id)
-        if not rows:
-            raise CommitNotFoundError(resolved)
-
-        return [self._commit_engine._row_to_info(r) for r in rows]
+        """See :attr:`search` manager :meth:`edit_history`."""
+        return self._search_mgr.edit_history(commit_hash=commit_hash)
 
     def restore(
         self,
@@ -5689,61 +3115,8 @@ class Tract:
         *,
         message: str | None = None,
     ) -> CommitInfo:
-        """Restore a previous version of a commit by creating a new EDIT.
-
-        Looks up the edit history for the given commit, picks the version
-        at index ``version``, and creates a new EDIT commit with that
-        version's content.
-
-        Args:
-            commit_hash: A commit hash, branch name, or hash prefix.
-                Can be the original commit or any of its edits.
-            version: Zero-based index into the edit history
-                (0 = original, 1 = first edit, etc.).
-            message: Optional commit message.  Defaults to
-                ``"restore to version {version}"``.
-
-        Returns:
-            :class:`CommitInfo` for the new EDIT commit.
-
-        Raises:
-            CommitNotFoundError: If the commit cannot be resolved.
-            IndexError: If ``version`` is out of range.
-        """
-        self._check_open()
-        history = self.edit_history(commit_hash)
-        if version < 0 or version >= len(history):
-            raise IndexError(
-                f"Version {version} out of range (0..{len(history) - 1})"
-            )
-
-        source = history[version]
-        original = history[0]
-
-        if message is None:
-            message = f"restore to version {version}"
-
-        # Get the content blob to reconstruct the content model
-        blob_row = self._blob_repo.get(source.content_hash)
-        if blob_row is None:
-            raise CommitNotFoundError(source.commit_hash)
-
-        # Reconstruct the content model from the blob
-        import json
-        content_data = json.loads(blob_row.payload_json)
-        content = validate_content(
-            content_data, custom_registry=self._custom_type_registry
-        )
-
-        return self.commit(
-            content,
-            operation=CommitOperation.EDIT,
-            edit_target=original.commit_hash,
-            message=message,
-            generation_config=source.generation_config.to_dict()
-            if source.generation_config
-            else None,
-        )
+        """See :attr:`search` manager :meth:`restore`."""
+        return self._search_mgr.restore(commit_hash=commit_hash, version=version, message=message)
 
     def query_by_config(
         self,
@@ -5753,122 +3126,12 @@ class Tract:
         *,
         conditions: list[tuple[str, Operator, Any]] | None = None,
     ) -> list[CommitInfo]:
-        """Query commits by generation config values.
-
-        Supports three calling patterns:
-
-        1. **Single field**::
-
-            t.query_by_config("model", "=", "gpt-4o")
-            t.query_by_config("temperature", ">", 0.5)
-
-        2. **Multi-field AND** — all conditions must match::
-
-            t.query_by_config(conditions=[
-                ("model", "=", "gpt-4o"),
-                ("temperature", ">", 0.5),
-            ])
-
-        3. **Whole-config match**::
-
-            t.query_by_config(LLMConfig(model="gpt-4o", temperature=0.7))
-            # Finds commits matching ALL non-None fields with "=" semantics
-
-        Supported operators:
-
-        - ``"="``  — equal
-        - ``"!="`` — not equal
-        - ``">"``  — greater than
-        - ``"<"``  — less than
-        - ``">="`` — greater than or equal
-        - ``"<="`` — less than or equal
-        - ``"in"`` — set membership (value is a list)
-        - ``"not in"`` — negated set membership (value is a list)
-        - ``"between"`` — inclusive range (value is ``[low, high]``)
-        - ``"not between"`` — outside inclusive range (value is ``[low, high]``)
-
-        Examples::
-
-            # Set membership and its negation
-            t.query_by_config("model", "in", ["gpt-4o", "gpt-4o-mini"])
-            t.query_by_config("model", "not in", ["gpt-4o", "gpt-4o-mini"])
-
-            # Inclusive range and its negation
-            t.query_by_config("temperature", "between", [0.3, 0.8])
-            t.query_by_config("temperature", "not between", [0.3, 0.8])
-
-            # Compose multiple conditions (AND)
-            t.query_by_config(conditions=[
-                ("temperature", "between", [0.3, 0.8]),
-                ("model", "!=", "gpt-3.5-turbo"),
-            ])
-
-        Args:
-            field_or_config: A field name (str) for single-field query, or
-                an LLMConfig object for whole-config matching.
-            operator: Comparison operator (single-field mode only).
-                One of ``=``, ``!=``, ``>``, ``<``, ``>=``, ``<=``,
-                ``in``, ``not in``, ``between``, ``not between``.
-            value: Value to compare against (single-field mode only).
-                For ``in``, pass a list. For ``between``, pass
-                ``[low, high]`` (inclusive).
-            conditions: List of ``(field, operator, value)`` tuples for
-                multi-field AND queries.
-
-        Returns:
-            List of :class:`CommitInfo` matching the condition(s),
-            ordered by created_at.
-        """
-        if isinstance(field_or_config, LLMConfig):
-            # Whole-config match: convert non-None fields to AND conditions
-            conds: list[tuple[str, str, object]] = []
-            for k, v in field_or_config.non_none_fields().items():
-                if isinstance(v, tuple):
-                    v = list(v)  # SQLite expects list for JSON arrays
-                conds.append((k, "=", v))
-            if not conds:
-                return []
-            rows = self._commit_repo.get_by_config_multi(self._tract_id, conds)
-        elif conditions is not None:
-            # Multi-field AND
-            rows = self._commit_repo.get_by_config_multi(self._tract_id, conditions)
-        elif isinstance(field_or_config, str) and operator is not None:
-            # Single-field (backward compatible)
-            rows = self._commit_repo.get_by_config_multi(
-                self._tract_id, [(field_or_config, operator, value)]
-            )
-        else:
-            raise TypeError(
-                "query_by_config requires either: "
-                "(field, operator, value), "
-                "conditions=[...], "
-                "or an LLMConfig object"
-            )
-        return [self._commit_engine._row_to_info(row) for row in rows]
+        """See :attr:`search` manager :meth:`query_by_config`."""
+        return self._search_mgr.query_by_config(field_or_config=field_or_config, operator=operator, value=value, conditions=conditions)
 
     def resolve_commit(self, ref_or_prefix: str) -> str:
-        """Resolve a commit reference to a full commit hash.
-
-        Resolution order:
-        1. Full commit hash (exact match)
-        2. Branch name
-        3. Hash prefix (min 4 chars)
-
-        Args:
-            ref_or_prefix: A commit hash, branch name, or hash prefix.
-
-        Returns:
-            The full commit hash.
-
-        Raises:
-            CommitNotFoundError: If no commit can be resolved.
-            AmbiguousPrefixError: If a prefix matches multiple commits.
-        """
-        from tract.operations.navigation import resolve_commit as _resolve
-
-        return _resolve(
-            ref_or_prefix, self._tract_id, self._commit_repo, self._ref_repo
-        )
+        """See :attr:`branches` manager :meth:`resolve`."""
+        return self._branches_mgr.resolve(ref_or_prefix=ref_or_prefix)
 
     def reset(
         self,
@@ -5876,58 +3139,12 @@ class Tract:
         *,
         mode: str = "soft",
     ) -> str:
-        """Reset HEAD to a target commit.
-
-        Stores the current HEAD as ORIG_HEAD before moving.
-
-        Args:
-            target: A commit hash, branch name, or hash prefix.
-            mode: ``"soft"`` (default) or ``"hard"``.  In Trace both behave
-                identically (no working directory to clean).
-
-        Returns:
-            The resolved target commit hash (new HEAD).
-
-        Raises:
-            CommitNotFoundError: If target cannot be resolved.
-        """
-        self._check_open()
-        from tract.operations.navigation import reset as _reset
-
-        resolved = self.resolve_commit(target)
-        result = _reset(resolved, mode, self._tract_id, self._ref_repo)  # type: ignore[arg-type]  # resolve_commit narrows str
-        self._commit_session()
-        return result
+        """See :attr:`branches` manager :meth:`reset`."""
+        return self._branches_mgr.reset(target=target, mode=mode)
 
     def checkout(self, target: str) -> str:
-        """Checkout a commit or branch.
-
-        - Branch name: attach HEAD to that branch (enables commits).
-        - Commit hash/prefix: detach HEAD (read-only inspection).
-        - ``"-"``: return to previous position via PREV_HEAD.
-
-        Stores the current HEAD as PREV_HEAD before switching.
-
-        Args:
-            target: A branch name, commit hash, hash prefix, or ``"-"``.
-
-        Returns:
-            The resolved commit hash at the new HEAD position.
-
-        Raises:
-            CommitNotFoundError: If the target cannot be resolved.
-            TraceError: If ``"-"`` is used but no PREV_HEAD exists.
-        """
-        self._check_open()
-        from tract.operations.navigation import checkout as _checkout
-
-        commit_hash, _is_detached = _checkout(
-            target, self._tract_id, self._commit_repo, self._ref_repo
-        )
-        self._commit_session()
-        if self._config_index is not None:
-            self._config_index.invalidate()
-        return commit_hash
+        """See :attr:`branches` manager :meth:`checkout`."""
+        return self._branches_mgr.checkout(target=target)
 
     def branch(
         self,
@@ -5936,205 +3153,32 @@ class Tract:
         source: str | None = None,
         switch: bool = True,
     ) -> str:
-        """Create a new branch.
-
-        Args:
-            name: Branch name (git-style naming rules apply).
-            source: Commit hash to branch from.  Defaults to HEAD.
-            switch: If True (default), switch HEAD to the new branch.
-
-        Returns:
-            The commit hash the new branch points to.
-
-        Raises:
-            BranchExistsError: If branch name already exists.
-            InvalidBranchNameError: If branch name is invalid.
-            TraceError: If no commits exist and no source specified.
-        """
-        self._check_open()
-        from tract.operations.branch import create_branch
-
-        result = create_branch(
-            name,
-            self._tract_id,
-            self._ref_repo,
-            self._commit_repo,
-            source=source,
-            switch=switch,
-        )
-        self._commit_session()
-        return result
+        """See :attr:`branches` manager :meth:`create`."""
+        return self._branches_mgr.create(name=name, source=source, switch=switch)
 
     def switch(self, target: str) -> str:
-        """Switch to a branch (branch-only, unlike checkout).
-
-        Unlike :meth:`checkout`, this method ONLY accepts branch names.
-        It will not silently detach HEAD on commit hashes -- use
-        :meth:`checkout` for that.
-
-        Args:
-            target: A branch name.
-
-        Returns:
-            The commit hash at the target branch HEAD.
-
-        Raises:
-            BranchNotFoundError: If target is not a valid branch name.
-        """
-        self._check_open()
-        # Validate that target is a branch
-        branch_hash = self._ref_repo.get_branch(self._tract_id, target)
-        if branch_hash is None:
-            raise BranchNotFoundError(target)
-
-        from tract.operations.navigation import checkout as _checkout
-
-        commit_hash, _is_detached = _checkout(
-            target, self._tract_id, self._commit_repo, self._ref_repo
-        )
-        self._commit_session()
-        if self._config_index is not None:
-            self._config_index.invalidate()
-        return commit_hash
+        """See :attr:`branches` manager :meth:`switch`."""
+        return self._branches_mgr.switch(target=target)
 
     def list_branches(self) -> list[BranchInfo]:
-        """List all branches with current branch indicator.
-
-        Returns:
-            List of :class:`BranchInfo` with ``is_current=True`` for
-            the active branch.
-        """
-        from tract.models.branch import BranchInfo
-        from tract.operations.branch import list_branches
-
-        branch_names = list_branches(self._tract_id, self._ref_repo)
-        current = self._ref_repo.get_current_branch(self._tract_id)
-
-        branches: list[BranchInfo] = []
-        for name in branch_names:
-            commit_hash = self._ref_repo.get_branch(self._tract_id, name)
-            if commit_hash is not None:
-                branches.append(
-                    BranchInfo(
-                        name=name,
-                        commit_hash=commit_hash,
-                        is_current=(name == current),
-                    )
-                )
-        return branches
+        """See :attr:`branches` manager :meth:`list`."""
+        return self._branches_mgr.list()
 
     def delete_branch(self, name: str, *, force: bool = False) -> None:
-        """Delete a branch.
-
-        Args:
-            name: Branch name to delete.
-            force: If True, delete even if branch has unmerged commits.
-
-        Raises:
-            BranchNotFoundError: If branch doesn't exist.
-            TraceError: If trying to delete the current branch.
-            UnmergedBranchError: If branch has unmerged commits (without force).
-        """
-        self._check_open()
-        from tract.operations.branch import delete_branch
-
-        delete_branch(
-            name,
-            self._tract_id,
-            self._ref_repo,
-            self._commit_repo,
-            self._parent_repo,
-            force=force,
-        )
-        self._commit_session()
+        """See :attr:`branches` manager :meth:`delete`."""
+        return self._branches_mgr.delete(name=name, force=force)
 
     # ------------------------------------------------------------------
     # Snapshot system
     # ------------------------------------------------------------------
 
     def snapshot(self, label: str = "", *, metadata: dict | None = None) -> str:
-        """Create a named snapshot (restore point) at the current HEAD.
-
-        Snapshots are implemented as specially-tagged commits with metadata.
-        They record the current state for later restoration.
-
-        Args:
-            label: Human-readable snapshot label (e.g., "before-merge",
-                "pre-compress").
-            metadata: Optional extra metadata to store with the snapshot.
-
-        Returns:
-            The snapshot tag name (e.g., ``"snapshot:before-merge:abc123"``).
-
-        Raises:
-            TraceError: If there is no HEAD (empty tract).
-        """
-        self._check_open()
-        import time
-
-        current_head = self.head
-        if current_head is None:
-            raise TraceError("Cannot create snapshot: no commits yet")
-
-        head_short = current_head[:7]
-        timestamp = int(time.time())
-        tag_name = (
-            f"snapshot:{label}:{head_short}"
-            if label
-            else f"snapshot:{timestamp}:{head_short}"
-        )
-
-        # Gather lightweight state (avoid expensive compile via status())
-        branch_name = self._ref_repo.get_current_branch(self._tract_id)
-
-        # Build snapshot metadata
-        snap_meta: dict = {
-            "snapshot": True,
-            "label": label,
-            "head": current_head,
-            "branch": branch_name,
-            "timestamp": timestamp,
-            **(metadata or {}),
-        }
-
-        # Register the tag so strict-mode allows it
-        self.register_tag(tag_name, description=f"Snapshot: {label or 'unnamed'}")
-
-        # Store as a metadata commit with the snapshot tag
-        from tract.models.content import MetadataContent
-
-        self.commit(
-            MetadataContent(kind="snapshot", data=snap_meta),
-            message=f"Snapshot: {label or 'unnamed'}",
-            metadata=snap_meta,
-            tags=[tag_name],
-        )
-
-        return tag_name
+        """See :attr:`persistence` manager :meth:`snapshot`."""
+        return self._persistence_mgr.snapshot(label=label, metadata=metadata)
 
     def list_snapshots(self) -> list[dict]:
-        """List all snapshots for this tract.
-
-        Returns:
-            List of snapshot metadata dicts, newest first.  Each dict has
-            keys: ``tag``, ``label``, ``head``, ``branch``, ``timestamp``,
-            ``hash``.
-        """
-        snapshots: list[dict] = []
-        for entry in self.log(limit=500):
-            meta = entry.metadata or {}
-            if meta.get("snapshot"):
-                snapshots.append({
-                    "tag": next(
-                        (t for t in entry.tags if t.startswith("snapshot:")), ""
-                    ),
-                    "label": meta.get("label", ""),
-                    "head": meta.get("head", ""),
-                    "branch": meta.get("branch", ""),
-                    "timestamp": meta.get("timestamp", 0),
-                    "hash": entry.commit_hash,
-                })
-        return snapshots
+        """See :attr:`persistence` manager :meth:`list_snapshots`."""
+        return self._persistence_mgr.list_snapshots()
 
     def restore_snapshot(
         self,
@@ -6142,276 +3186,46 @@ class Tract:
         *,
         create_branch: bool = True,
     ) -> str:
-        """Restore to a previously created snapshot point.
-
-        Args:
-            tag_or_label: Snapshot tag name or label substring to match.
-            create_branch: If ``True`` (default), create a recovery branch
-                at the snapshot point (safe -- no history loss).  If
-                ``False``, reset HEAD directly.
-
-        Returns:
-            The commit hash restored to.
-
-        Raises:
-            ValueError: If no matching snapshot is found.
-        """
-        self._check_open()
-        snapshots = self.list_snapshots()
-        match: dict | None = None
-        for snap in snapshots:
-            if snap["tag"] == tag_or_label or tag_or_label in snap.get("label", ""):
-                match = snap
-                break
-
-        if match is None:
-            raise ValueError(f"Snapshot not found: {tag_or_label}")
-
-        target_head: str = match["head"]
-
-        if create_branch:
-            branch_name = f"restore/{match['label'] or 'snapshot'}"
-            self.branch(branch_name, source=target_head)
-            self.switch(branch_name)
-        else:
-            self.reset(target_head)
-
-        return target_head
+        """See :attr:`persistence` manager :meth:`restore_snapshot`."""
+        return self._persistence_mgr.restore_snapshot(tag_or_label=tag_or_label, create_branch=create_branch)
 
     def export_state(self, *, include_blobs: bool = True) -> dict:
-        """Export the current branch's DAG as a portable JSON-serializable dict.
-
-        Creates a snapshot of all commits reachable from HEAD with their
-        content, metadata, annotations, and branch info. The result can be
-        saved to a file and loaded into a different tract via
-        :meth:`load_state`.
-
-        Note:
-            The exported dict contains full commit details, but
-            :meth:`load_state` only replays content payloads — it does not
-            reconstruct the original DAG. See :meth:`load_state` for the
-            list of what is and is not preserved on import.
-
-        Args:
-            include_blobs: If True (default), include full content payloads.
-                If False, include only commit metadata (smaller but not
-                restorable).
-
-        Returns:
-            A dict with keys: version, tract_id, branch, head, commits,
-            branches, exported_at.
-        """
-        self._check_open()
-        from tract.operations.ancestry import walk_ancestry
-
-        head = self.head
-        if head is None:
-            return {
-                "version": 1,
-                "tract_id": self._tract_id,
-                "branch": self.current_branch,
-                "head": None,
-                "commits": [],
-                "branches": {},
-                "exported_at": datetime.now(timezone.utc).isoformat(),
-            }
-
-        # Walk full ancestry from HEAD
-        commits_data = []
-        ancestry = walk_ancestry(
-            self._commit_repo, self._blob_repo, head,
-            parent_repo=self._parent_repo,
-        )
-
-        for commit_row in ancestry:
-            entry: dict = {
-                "hash": commit_row.commit_hash,
-                "content_type": commit_row.content_type,
-                "operation": commit_row.operation.value if hasattr(commit_row.operation, "value") else str(commit_row.operation),
-                "message": commit_row.message,
-                "metadata": commit_row.metadata_json,
-                "created_at": commit_row.created_at.isoformat() if commit_row.created_at else None,
-            }
-
-            # Parent hashes -- get_parents returns list[str]
-            if self._parent_repo:
-                parents = self._parent_repo.get_parents(commit_row.commit_hash)
-                entry["parents"] = parents
-            else:
-                entry["parents"] = [commit_row.parent_hash] if commit_row.parent_hash else []
-
-            # Blob content
-            if include_blobs:
-                blob = self._blob_repo.get(commit_row.content_hash)
-                if blob:
-                    entry["content_hash"] = commit_row.content_hash
-                    entry["payload"] = blob.payload_json
-                else:
-                    entry["content_hash"] = commit_row.content_hash
-                    entry["payload"] = None
-            else:
-                entry["content_hash"] = commit_row.content_hash
-
-            # Annotations
-            ann = self._annotation_repo.get_latest(commit_row.commit_hash)
-            if ann:
-                entry["priority"] = ann.priority.value if hasattr(ann.priority, "value") else str(ann.priority)
-
-            commits_data.append(entry)
-
-        # Branch info
-        branches = {}
-        for branch_info in self.list_branches():
-            branches[branch_info.name] = branch_info.commit_hash
-
-        return {
-            "version": 1,
-            "tract_id": self._tract_id,
-            "branch": self.current_branch,
-            "head": head,
-            "commits": commits_data,
-            "branches": branches,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
-        }
+        """See :attr:`persistence` manager :meth:`export_state`."""
+        return self._persistence_mgr.export_state(include_blobs=include_blobs)
 
     def load_state(self, state: dict) -> int:
-        """Load commits from an exported state dict into this tract.
-
-        Replays the exported commits as new APPEND commits on the current
-        branch. Does NOT overwrite existing commits.
-
-        This is a **content replay** tool, not a structural backup/restore.
-
-        Preserved on import:
-            - Content payloads (the actual data in each commit)
-            - ``content_type``
-            - ``metadata``
-            - ``message``
-            - ``priority`` annotations (non-normal values)
-
-        Not preserved on import:
-            - DAG structure and parent links (commits are re-appended linearly)
-            - Branches (all commits land on the current branch)
-            - Operation types (EDIT operations become APPENDs)
-            - Original timestamps (commits get new ``created_at`` values)
-            - Tags
-            - ``edit_target`` relationships
-            - Original commit hashes
-
-        Args:
-            state: A dict previously returned by :meth:`export_state`.
-
-        Returns:
-            Number of commits loaded.
-
-        Raises:
-            ValueError: If the state dict is invalid or version unsupported.
-        """
-        self._check_open()
-        if not isinstance(state, dict) or state.get("version") != 1:
-            raise ValueError("Invalid or unsupported export state (expected version=1)")
-
-        commits = state.get("commits", [])
-        if not commits:
-            return 0
-
-        loaded = 0
-        for entry in commits:
-            payload = entry.get("payload")
-            if payload is None:
-                continue  # skip commits without content (include_blobs=False)
-
-            content_type = entry.get("content_type", "")
-            message = entry.get("message")
-            metadata_json = entry.get("metadata")
-
-            # Parse metadata
-            metadata = None
-            if metadata_json:
-                try:
-                    metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
-                except (ValueError, TypeError):
-                    metadata = None
-
-            # Reconstruct content from payload
-            try:
-                payload_dict = json.loads(payload) if isinstance(payload, str) else payload
-            except (ValueError, TypeError):
-                continue
-
-            # Ensure content_type is present in payload dict
-            if "content_type" not in payload_dict:
-                payload_dict["content_type"] = content_type
-
-            # Use validate_content to reconstruct the proper content model
-            try:
-                content = validate_content(
-                    payload_dict,
-                    custom_registry=self._custom_type_registry,
-                )
-            except Exception:
-                # Content validation failed (unrecognized type, schema mismatch,
-                # or corrupt payload); skip this entry rather than aborting import.
-                logger.warning(
-                    "load_state: skipping entry with content_type=%r: validation failed",
-                    content_type, exc_info=True,
-                )
-                continue
-
-            info = self.commit(
-                content,
-                message=message or f"imported: {content_type}",
-                metadata=metadata,
-            )
-
-            # Restore priority annotation if present
-            priority_val = entry.get("priority")
-            if priority_val and priority_val != "normal":
-                try:
-                    priority = Priority(priority_val)
-                    self.annotate(info.commit_hash, priority, reason="imported")
-                except (ValueError, KeyError):
-                    pass
-
-            loaded += 1
-
-        return loaded
+        """See :attr:`persistence` manager :meth:`load_state`."""
+        return self._persistence_mgr.load_state(state=state)
 
     @property
     def llm_client(self) -> LLMClient | None:
-        """The configured LLM client, or ``None`` if not configured.
-
-        Use this for advanced agent patterns that need raw LLM calls
-        without committing to conversation history (e.g. custom
-        multi-turn agent loops, evaluation pipelines).
-
-        For most use cases, prefer :meth:`chat`, :meth:`generate`,
-        or :meth:`run`.
-
-        Returns:
-            The LLM client instance, or ``None``.
-        """
-        return self._llm_client
+        """The configured LLM client, or ``None``."""
+        s = getattr(self, '_llm_state', None)
+        return s.llm_client if s is not None else self._llm_client
 
     @property
     def default_config(self) -> LLMConfig | None:
-        """The default LLM configuration, or ``None`` if not set."""
-        return self._default_config
+        """The default LLM configuration, or ``None``."""
+        s = getattr(self, '_llm_state', None)
+        return s.default_config if s is not None else self._default_config
 
     @property
     def retry_config(self) -> RetryConfig | None:
         """The retry configuration for LLM calls, or ``None``."""
-        return self._retry_config
+        s = getattr(self, '_llm_state', None)
+        return s.retry_config if s is not None else self._retry_config
 
     @property
     def commit_reasoning(self) -> bool:
         """Whether reasoning traces are committed during agent loops."""
-        return self._commit_reasoning
+        s = getattr(self, '_llm_state', None)
+        return s.commit_reasoning if s is not None else self._commit_reasoning
 
     @property
     def tool_summarization_config(self) -> ToolSummarizationConfig | None:
         """Tool summarization configuration, or ``None`` if disabled."""
-        return self._tool_summarization_config
+        s = getattr(self, '_llm_state', None)
+        return s.tool_summarization_config if s is not None else self._tool_summarization_config
 
     def configure_llm(
         self,
@@ -6419,32 +3233,8 @@ class Tract:
         *,
         resolver: ResolverCallable | None = None,
     ) -> None:
-        """Configure the LLM client for semantic operations.
-
-        Args:
-            client: An LLM client conforming to the
-                :class:`~tract.llm.protocols.LLMClient` protocol.
-            resolver: Optional conflict resolver.  If *None*, an
-                :class:`~tract.llm.resolver.OpenAIResolver` is created
-                from *client* (suitable for OpenAI-compatible APIs).
-                Pass a custom resolver for non-OpenAI clients.
-        """
-        self._check_open()
-        # Close the old client if we own it (prevents resource leak on swap)
-        if self._owns_llm_client and self._llm_client is not None:
-            try:
-                self._llm_client.close()
-            except Exception:
-                pass
-        self._llm_client = client
-        self._owns_llm_client = False  # External client — caller owns lifecycle
-        if resolver is not None:
-            self._default_resolver = resolver
-        else:
-            from tract.llm.resolver import OpenAIResolver
-
-            self._default_resolver = OpenAIResolver(client)
-        self._log_config_change("llm_client", source="api")
+        """See :attr:`config` manager :meth:`configure_llm`."""
+        return self._config_mgr.configure_llm(client=client, resolver=resolver)
 
     def configure_operations(
         self,
@@ -6452,76 +3242,14 @@ class Tract:
         /,
         **operation_configs: LLMConfig,
     ) -> None:
-        """Set per-operation LLM defaults.
-
-        Accepts either an OperationConfigs instance (new style) or keyword
-        arguments (backward compatible).
-
-        Args:
-            _configs: OperationConfigs instance with typed fields.
-            **operation_configs: Operation name -> LLMConfig mappings.
-                Valid names: ``"chat"``, ``"merge"``, ``"compress"``.
-
-        Raises:
-            TypeError: If both positional and keyword arguments provided,
-                or if a keyword value is not an LLMConfig.
-
-        Example::
-
-            from tract import LLMConfig, OperationConfigs
-            # New style:
-            t.configure_operations(OperationConfigs(
-                chat=LLMConfig(model="gpt-4o"),
-                compress=LLMConfig(model="gpt-3.5-turbo"),
-            ))
-            # Backward compatible:
-            t.configure_operations(
-                chat=LLMConfig(model="gpt-4o"),
-                compress=LLMConfig(model="gpt-3.5-turbo"),
-            )
-        """
-        self._check_open()
-        if _configs is not None and operation_configs:
-            raise TypeError(
-                "Cannot mix positional OperationConfigs with keyword arguments"
-            )
-        if _configs is not None:
-            if not isinstance(_configs, OperationConfigs):
-                raise TypeError(
-                    f"Expected OperationConfigs, got {type(_configs).__name__}"
-                )
-            self._operation_configs = _configs
-            self._log_config_change(
-                "operation_config",
-                config_json=self._serialize_operation_configs(),
-                source="api",
-            )
-            return
-        # Keyword path: validate and construct OperationConfigs
-        for name, cfg in operation_configs.items():
-            if not isinstance(cfg, LLMConfig):
-                raise TypeError(
-                    f"Expected LLMConfig for '{name}', "
-                    f"got {type(cfg).__name__}"
-                )
-            if name not in _VALID_OPERATION_NAMES:
-                raise ValueError(
-                    f"Unknown operation '{name}'. "
-                    f"Valid operations: {', '.join(sorted(_VALID_OPERATION_NAMES))}"
-                )
-        # Merge with existing: only replace fields that are provided
-        self._operation_configs = replace(self._operation_configs, **operation_configs)
-        # Log config change
-        self._log_config_change(
-            "operation_config",
-            config_json=self._serialize_operation_configs(),
-            source="api",
-        )
+        """See :attr:`config` manager :meth:`configure_operations`."""
+        return self._config_mgr.configure_operations(_configs, **operation_configs)
 
     @property
     def operation_configs(self) -> OperationConfigs:
         """Current per-operation LLM configurations (read-only, frozen)."""
-        return self._operation_configs
+        s = getattr(self, '_llm_state', None)
+        return s.operation_configs if s is not None else self._operation_configs
 
     def configure_clients(
         self,
@@ -6529,58 +3257,14 @@ class Tract:
         /,
         **operation_clients: LLMClient,
     ) -> None:
-        """Set per-operation LLM client overrides.
-
-        Each operation can use a different LLM client (e.g. OpenAI for chat,
-        Ollama for compression).  Operations without a per-operation client
-        fall back to the tract-level default set via ``configure_llm()`` or
-        ``Tract.open(api_key=...)``.
-
-        Accepts either an OperationClients instance or keyword arguments.
-
-        Args:
-            _clients: OperationClients instance with typed fields.
-            **operation_clients: Operation name -> client mappings.
-                Valid names: ``"chat"``, ``"merge"``, ``"compress"``.
-
-        Raises:
-            TypeError: If both positional and keyword arguments provided.
-            ValueError: If an unknown operation name is given.
-
-        Example::
-
-            t.configure_clients(
-                chat=openai_client,
-                compress=ollama_client,
-            )
-        """
-        self._check_open()
-        if _clients is not None and operation_clients:
-            raise TypeError(
-                "Cannot mix positional OperationClients with keyword arguments"
-            )
-        if _clients is not None:
-            if not isinstance(_clients, OperationClients):
-                raise TypeError(
-                    f"Expected OperationClients, got {type(_clients).__name__}"
-                )
-            self._operation_clients = _clients
-            self._log_config_change("operation_client", source="api")
-            return
-        for name in operation_clients:
-            if name not in _VALID_OPERATION_NAMES:
-                raise ValueError(
-                    f"Unknown operation '{name}'. "
-                    f"Valid operations: {', '.join(sorted(_VALID_OPERATION_NAMES))}"
-                )
-        self._operation_clients = replace(self._operation_clients, **operation_clients)
-        # Log config change
-        self._log_config_change("operation_client", source="api")
+        """See :attr:`config` manager :meth:`configure_clients`."""
+        return self._config_mgr.configure_clients(_clients, **operation_clients)
 
     @property
     def operation_clients(self) -> OperationClients:
         """Current per-operation LLM client overrides (read-only, frozen)."""
-        return self._operation_clients
+        s = getattr(self, '_llm_state', None)
+        return s.operation_clients if s is not None else self._operation_clients
 
     def _log_config_change(
         self,
@@ -6591,35 +3275,12 @@ class Tract:
         previous_json: str | None = None,
         source: str | None = None,
     ) -> None:
-        """Log a configuration change to the audit trail.
-
-        No-op when persistence repo is not available.
-        """
-        repo = self._persistence_repo
-        if repo is None:
-            return
-        from tract.storage.schema import ConfigChangeRow
-
-        entry = ConfigChangeRow(
-            tract_id=self._tract_id,
-            change_type=change_type,
-            change_key=change_key,
-            config_json=config_json,
-            previous_json=previous_json,
-            source=source,
-            created_at=datetime.now(timezone.utc),
-        )
-        repo.save_config_change(entry)
-        self._commit_session()
+        """See :attr:`config` manager :meth:`_log_change`."""
+        return self._config_mgr._log_change(change_type=change_type, change_key=change_key, config_json=config_json, previous_json=previous_json, source=source)
 
     def _serialize_operation_configs(self) -> str | None:
         """Serialize current operation configs to JSON string."""
-        result = {}
-        for f in dc_fields(self._operation_configs):
-            val = getattr(self._operation_configs, f.name)
-            if val is not None:
-                result[f.name] = val.to_dict()
-        return json.dumps(result) if result else None
+        return self._config_mgr._serialize_operation_configs()
 
     def config_history(
         self,
@@ -6627,34 +3288,8 @@ class Tract:
         change_type: str | None = None,
         limit: int = 100,
     ) -> list[dict]:
-        """Get the configuration change audit trail.
-
-        Returns a list of dicts, each with keys: change_type, change_key,
-        config_json, previous_json, source, created_at.
-        Ordered by most recent first.
-
-        Args:
-            change_type: Filter by change type (e.g. "operation_config",
-                "llm_client", "operation_client", "prompts").
-            limit: Maximum number of entries to return.
-        """
-        repo = self._persistence_repo
-        if repo is None:
-            return []
-        rows = repo.get_config_changes(
-            self._tract_id, change_type=change_type, limit=limit,
-        )
-        return [
-            {
-                "change_type": row.change_type,
-                "change_key": row.change_key,
-                "config_json": row.config_json,
-                "previous_json": row.previous_json,
-                "source": row.source,
-                "created_at": row.created_at,
-            }
-            for row in rows
-        ]
+        """See :attr:`config` manager :meth:`history`."""
+        return self._config_mgr.history(change_type=change_type, limit=limit)
 
     def configure_prompts(
         self,
@@ -6662,192 +3297,36 @@ class Tract:
         /,
         **prompt_overrides: str,
     ) -> None:
-        """Set per-operation prompt overrides.
-
-        Accepts either an OperationPrompts instance or keyword arguments.
-
-        Args:
-            _prompts: OperationPrompts instance with typed fields.
-            **prompt_overrides: Operation name -> prompt string mappings.
-                Valid names: ``"compress"``, ``"merge"``,
-                ``"message"``, ``"commit_message"``.
-
-        Raises:
-            TypeError: If both positional and keyword arguments provided.
-            ValueError: If an unknown operation name is given.
-        """
-        self._check_open()
-        if _prompts is not None and prompt_overrides:
-            raise TypeError(
-                "Cannot mix positional OperationPrompts with keyword arguments"
-            )
-        if _prompts is not None:
-            if not isinstance(_prompts, OperationPrompts):
-                raise TypeError(
-                    f"Expected OperationPrompts, got {type(_prompts).__name__}"
-                )
-            self._operation_prompts = _prompts
-            self._log_config_change(
-                "prompts",
-                config_json=self._serialize_prompts(),
-                source="api",
-            )
-            return
-        for name, val in prompt_overrides.items():
-            if not isinstance(val, str):
-                raise TypeError(
-                    f"Expected str for '{name}', got {type(val).__name__}"
-                )
-            if name not in _VALID_PROMPT_NAMES:
-                raise ValueError(
-                    f"Unknown operation '{name}'. "
-                    f"Valid operations: {', '.join(sorted(_VALID_PROMPT_NAMES))}"
-                )
-        self._operation_prompts = replace(self._operation_prompts, **prompt_overrides)
-        self._log_config_change(
-            "prompts",
-            config_json=self._serialize_prompts(),
-            source="api",
-        )
+        """See :attr:`config` manager :meth:`configure_prompts`."""
+        return self._config_mgr.configure_prompts(_prompts, **prompt_overrides)
 
     @property
     def operation_prompts(self) -> OperationPrompts:
         """Current per-operation prompt overrides (read-only, frozen)."""
-        return self._operation_prompts
+        s = getattr(self, '_llm_state', None)
+        return s.operation_prompts if s is not None else self._operation_prompts
 
     def _serialize_prompts(self) -> str | None:
         """Serialize current operation prompts to JSON string."""
-        result = {}
-        for f in dc_fields(self._operation_prompts):
-            val = getattr(self._operation_prompts, f.name)
-            if val is not None:
-                result[f.name] = val
-        return json.dumps(result) if result else None
+        return self._config_mgr._serialize_prompts()
 
     def _resolve_llm_client(self, operation: str) -> LLMClient:
-        """Resolve the LLM client for a given operation.
-
-        Two-level lookup: per-operation client > tract-level default.
-
-        Args:
-            operation: Operation name (``"chat"``, ``"merge"``, etc.).
-
-        Returns:
-            The resolved LLM client.
-
-        Raises:
-            RuntimeError: If no client is configured at any level.
-        """
-        client = getattr(self._operation_clients, operation, None)
-        if client is not None:
-            return client
-        if self._llm_client is not None:
-            return self._llm_client
-        raise RuntimeError(
-            "No LLM client configured. Pass api_key= to Tract.open() "
-            "or call configure_llm(client)."
-        )
+        """See :attr:`config` manager :meth:`_resolve_llm_client`."""
+        return self._config_mgr._resolve_llm_client(operation=operation)
 
     def _has_llm_client(self, operation: str | None = None) -> bool:
-        """Check if an LLM client is available.
-
-        Args:
-            operation: If given, also checks per-operation client.
-
-        Returns:
-            True if a client is available at any level.
-        """
-        if operation is not None:
-            op_client = getattr(self._operation_clients, operation, None)
-            if op_client is not None:
-                return True
-        return self._llm_client is not None
+        """See :attr:`config` manager :meth:`_has_llm_client`."""
+        return self._config_mgr._has_llm_client(operation=operation)
 
     def _resolve_resolver(
         self, resolver: ResolverCallable | str | None, operation: str = "merge",
     ) -> ResolverCallable | None:
-        """Resolve a resolver argument to a callable.
-
-        Handles three cases:
-        1. ``resolver="llm"`` — build an :class:`OpenAIResolver` from the
-           configured LLM client for *operation*.
-        2. ``resolver=None`` — fall back to ``_default_resolver`` if set.
-        3. Anything else (callable) — return as-is.
-
-        Returns:
-            A resolver callable or *None*.
-        """
-        if resolver == "llm":
-            if not self._has_llm_client(operation):
-                raise RuntimeError(
-                    "resolver='llm' requires an LLM client.  "
-                    "Pass api_key= to Tract.open() or call configure_llm()."
-                )
-            from tract.llm.resolver import OpenAIResolver
-
-            llm_cfg = self._resolve_llm_config(operation) or {}
-            return OpenAIResolver(
-                self._resolve_llm_client(operation),
-                model=llm_cfg.get("model"),
-                temperature=llm_cfg.get("temperature", 0.3),
-                max_tokens=llm_cfg.get("max_tokens", 2048),
-            )
-        if resolver is None:
-            return self._default_resolver
-        return resolver
+        """See :attr:`config` manager :meth:`_resolve_resolver`."""
+        return self._config_mgr._resolve_resolver(resolver=resolver, operation=operation)
 
     def _auto_message(self, content_type: str, text: str) -> str:
-        """Generate a commit message, using LLM summarization when available.
-
-        Falls back to truncation when:
-        - ``auto_message`` was not enabled on ``Tract.open()``
-        - No LLM client is available (per-operation or default)
-        - Currently inside a batch (``_in_batch``)
-        - The LLM call fails for any reason
-
-        Args:
-            content_type: The content type discriminator.
-            text: The text content to summarize.
-
-        Returns:
-            A concise one-sentence commit message, or a truncated preview.
-        """
-        if (
-            not self._auto_message_enabled
-            or self._in_batch
-            or not self._has_llm_client("message")
-        ):
-            return _fallback_message(content_type, text)
-
-        try:
-            from tract.prompts.commit_message import (
-                COMMIT_MESSAGE_SYSTEM,
-                build_commit_message_prompt,
-            )
-
-            client = self._resolve_llm_client("message")
-            llm_kwargs = self._resolve_llm_config(
-                "message", temperature=0.0, max_tokens=200,
-            )
-            messages = [
-                {"role": "system", "content": COMMIT_MESSAGE_SYSTEM},
-                {"role": "user", "content": build_commit_message_prompt(content_type, text)},
-            ]
-            response = client.chat(messages, **llm_kwargs)
-            summary = self._extract_content(response, client=client).strip()
-            # Strip <think>...</think> tags from models that emit reasoning.
-            # Also strip unclosed <think> blocks (model hit max_tokens mid-thought).
-            import re as _re
-            summary = _re.sub(r"<think>.*?</think>\s*", "", summary, flags=_re.DOTALL).strip()
-            summary = _re.sub(r"<think>.*", "", summary, flags=_re.DOTALL).strip()
-            if not summary:
-                return _fallback_message(content_type, text)
-            # Cap at 100 chars for safety
-            if len(summary) > 100:
-                summary = summary[:97] + "..."
-            return summary
-        except Exception:
-            return _fallback_message(content_type, text)
+        """See :attr:`llm` manager :meth:`_auto_message`."""
+        return self._llm_mgr._auto_message(content_type=content_type, text=text)
 
     def merge(
         self,
@@ -6957,8 +3436,8 @@ class Tract:
             self._commit_session()
 
         self._cache.clear()
-        if self._config_index is not None:
-            self._config_index.invalidate()
+        if hasattr(self, '_config_mgr') and self._config_mgr is not None:
+            self._config_mgr.invalidate_cache()
         return result
 
     def commit_merge(
@@ -7035,8 +3514,8 @@ class Tract:
 
         # Clear compile cache
         self._cache.clear()
-        if self._config_index is not None:
-            self._config_index.invalidate()
+        if hasattr(self, '_config_mgr') and self._config_mgr is not None:
+            self._config_mgr.invalidate_cache()
 
         return result
 
@@ -7157,8 +3636,8 @@ class Tract:
         )
         self._commit_session()
         self._cache.clear()
-        if self._config_index is not None:
-            self._config_index.invalidate()
+        if hasattr(self, '_config_mgr') and self._config_mgr is not None:
+            self._config_mgr.invalidate_cache()
         return result
 
     def _compress_pre(
@@ -7171,49 +3650,8 @@ class Tract:
         content: str | None = None,
         system_prompt: str | None = None,
     ) -> tuple[Any, dict, str | None]:
-        """Shared pre-LLM guards and setup for compress/acompress.
-
-        Returns (llm_client, llm_kwargs, effective_system_prompt).
-        """
-        self._check_open()
-
-        if self._ref_repo.is_detached(self._tract_id):
-            raise DetachedHeadError()
-
-        if self._event_repo is None:
-            from tract.exceptions import CompressionError
-            raise CompressionError("Compression repository not available")
-
-        has_client = self._has_llm_client("compress")
-        llm_client = self._resolve_llm_client("compress") if has_client else None
-
-        has_explicit_llm = (
-            model is not None
-            or temperature is not None
-            or max_tokens is not None
-            or llm_config is not None
-        )
-        if has_explicit_llm and llm_client is None and content is None:
-            from tract.llm.errors import LLMConfigError
-            raise LLMConfigError(
-                "LLM parameters provided (model, temperature, max_tokens, or "
-                "llm_config) but no LLM client is configured. Call "
-                "configure_llm() or pass api_key to Tract.open(), or provide "
-                "content= for manual compression."
-            )
-
-        llm_kwargs = self._resolve_llm_config(
-            "compress", model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config,
-        ) if llm_client is not None else {}
-
-        effective_system_prompt = system_prompt
-        if effective_system_prompt is None and self._operation_prompts.compress is not None:
-            effective_system_prompt = self._operation_prompts.compress
-
-        self._run_middleware("pre_compress")
-
-        return llm_client, llm_kwargs, effective_system_prompt
+        """See :attr:`compression` manager :meth:`_compress_pre`."""
+        return self._compression_mgr._compress_pre(model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, content=content, system_prompt=system_prompt)
 
     def _compress_finalize(
         self,
@@ -7229,67 +3667,7 @@ class Tract:
         llm_kwargs: dict,
     ) -> CompressResult:
         """Shared post-LLM finalization for compress/acompress default strategy."""
-        from tract.operations.compression import (
-            _classify_by_priority,
-            _commit_compression,
-            _partition_around_pinned,
-            _resolve_commit_range,
-        )
-
-        head_hash = self._ref_repo.get_head(self._tract_id)
-        branch_name = self._ref_repo.get_current_branch(self._tract_id)
-        range_commits = _resolve_commit_range(
-            self._commit_repo, self._ref_repo, self._annotation_repo,
-            self._tract_id, head_hash,
-            commits=commits, from_commit=from_commit, to_commit=to_commit,
-        )
-        pinned_commits, _important, normal_commits, skip_commits = (
-            _classify_by_priority(range_commits, self._annotation_repo, preserve=preserve)
-        )
-        normal_commits = normal_commits + _important
-        pinned_hashes = {r.commit_hash for r in pinned_commits}
-        skip_hashes = {r.commit_hash for r in skip_commits}
-        groups = _partition_around_pinned(range_commits, pinned_hashes, skip_hashes)
-        original_tokens = sum(c.token_count for c in normal_commits)
-
-        nested = self._session.begin_nested()
-        try:
-            result = _commit_compression(
-                tract_id=self._tract_id,
-                commit_repo=self._commit_repo,
-                blob_repo=self._blob_repo,
-                ref_repo=self._ref_repo,
-                commit_engine=self._commit_engine,
-                token_counter=self._token_counter,
-                event_repo=self._event_repo,
-                summaries=range_result.summary_commits,
-                range_commits=range_commits,
-                pinned_commits=pinned_commits,
-                normal_commits=normal_commits,
-                pinned_hashes=pinned_hashes,
-                skip_hashes=skip_hashes,
-                groups=groups,
-                original_tokens=original_tokens,
-                target_tokens=target_tokens,
-                instructions=instructions,
-                system_prompt=effective_system_prompt,
-                branch_name=branch_name,
-                type_registry=self._custom_type_registry,
-                expected_head=head_hash,
-                generation_config=range_result.generation_config,
-            )
-        except Exception:
-            nested.rollback()
-            raise
-
-        self._commit_session()
-        self._cache.clear()
-
-        if llm_kwargs:
-            import dataclasses as _dc
-            result = _dc.replace(result, config=LLMConfig.from_dict(llm_kwargs))
-
-        return result
+        return self._compression_mgr._compress_finalize(range_result=range_result, commits=commits, from_commit=from_commit, to_commit=to_commit, target_tokens=target_tokens, preserve=preserve, instructions=instructions, effective_system_prompt=effective_system_prompt, llm_kwargs=llm_kwargs)
 
     def compress(
         self,
@@ -7311,130 +3689,8 @@ class Tract:
         strategy: str = "default",
         window_size: int = 5,
     ) -> CompressResult:
-        """Compress commit chains into summaries.
-
-        Supports two content modes:
-        - **Manual** (``content`` provided): Uses your text as the summary.
-        - **LLM** (``configure_llm()`` called): Uses LLM for summarization.
-
-        PINNED commits survive verbatim. SKIP commits are excluded.
-        Original commits remain in DB (non-destructive).
-
-        Args:
-            commits: Explicit list of commit hashes to compress.
-            from_commit: Start of range (inclusive).
-            to_commit: End of range (inclusive).
-            target_tokens: Target token count for summaries.
-            preserve: Hashes to treat as temporarily PINNED.
-            content: Manual summary text (bypasses LLM).
-            instructions: Extra guidance appended to the **user message** of the
-                summarization LLM call (the default prompt is preserved). This
-                is added as "Additional instructions: ..." at the end of the
-                task prompt. Use this to steer what the summary focuses on.
-                Stored in provenance for auditability.
-            system_prompt: Completely replaces the **system message** of the
-                summarization LLM call (``DEFAULT_SUMMARIZE_SYSTEM``). This
-                controls the LLM's persona and behavioral guidelines. When
-                ``None``, the built-in neutral default is used. Built-in
-                variants for common use cases::
-
-                    from tract.prompts.summarize import (
-                        DEFAULT_SUMMARIZE_SYSTEM,        # neutral (default)
-                        CONVERSATION_SUMMARIZE_SYSTEM,   # full-conversation recap
-                        TOOL_SUMMARIZE_SYSTEM,           # tool-call sequences
-                    )
-
-                Stored in provenance for auditability.
-            model: Override model for LLM summarization.
-            temperature: Override temperature for LLM summarization.
-            max_tokens: Override max_tokens for LLM summarization.
-            llm_config: Full LLMConfig override for this call.
-            two_stage: When True and LLM is available, generate guidance first
-                (what should the summary focus on?) then generate summaries using
-                that guidance. When None/False, uses one-shot summarization.
-            strategy: Compression strategy. ``"default"`` uses partition-around-pinned
-                on the specified range. ``"sliding_window"`` keeps the last
-                ``window_size`` commits in full detail and compresses everything
-                older (PINNED commits always survive).
-            window_size: For ``strategy="sliding_window"``: number of most-recent
-                commits to keep in full detail. Defaults to 5.
-
-        Returns:
-            :class:`CompressResult`.
-
-        Raises:
-            DetachedHeadError: If HEAD is detached.
-            CompressionError: On various error conditions.
-            LLMConfigError: If explicit LLM params given without client.
-        """
-        from tract.operations.compression import (
-            _classify_by_priority,
-            _commit_compression,
-            _partition_around_pinned,
-            _reconstruct_content,
-            compress_range,
-            sliding_window_compress,
-        )
-
-        llm_client, llm_kwargs, effective_system_prompt = self._compress_pre(
-            model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config,
-            content=content, system_prompt=system_prompt,
-        )
-
-        # --- Sliding window strategy ---
-        if strategy == "sliding_window":
-            return self._compress_sliding_window(
-                window_size=window_size,
-                target_tokens=target_tokens,
-                preserve=preserve,
-                content=content,
-                instructions=instructions,
-                system_prompt=effective_system_prompt,
-                llm_client=llm_client,
-                llm_kwargs=llm_kwargs,
-                two_stage=two_stage,
-                sliding_window_compress_fn=sliding_window_compress,
-                _classify_by_priority_fn=_classify_by_priority,
-                _commit_compression_fn=_commit_compression,
-                _partition_around_pinned_fn=_partition_around_pinned,
-                _reconstruct_content_fn=_reconstruct_content,
-            )
-
-        # --- Default strategy (partition-around-pinned) ---
-        range_result = compress_range(
-            tract_id=self._tract_id,
-            commit_repo=self._commit_repo,
-            blob_repo=self._blob_repo,
-            annotation_repo=self._annotation_repo,
-            ref_repo=self._ref_repo,
-            commit_engine=self._commit_engine,
-            token_counter=self._token_counter,
-            event_repo=self._event_repo,
-            parent_repo=self._parent_repo,
-            commits=commits,
-            from_commit=from_commit,
-            to_commit=to_commit,
-            target_tokens=target_tokens,
-            preserve=preserve,
-            llm_client=llm_client,
-            llm_kwargs=llm_kwargs,
-            generation_config=llm_kwargs if llm_kwargs else None,
-            content=content,
-            instructions=instructions,
-            system_prompt=effective_system_prompt,
-            type_registry=self._custom_type_registry,
-            two_stage=two_stage or False,
-        )
-
-        return self._compress_finalize(
-            range_result,
-            commits=commits, from_commit=from_commit, to_commit=to_commit,
-            target_tokens=target_tokens, preserve=preserve,
-            instructions=instructions,
-            effective_system_prompt=effective_system_prompt,
-            llm_kwargs=llm_kwargs,
-        )
+        """See :attr:`compression` manager :meth:`compress`."""
+        return self._compression_mgr.compress(commits=commits, from_commit=from_commit, to_commit=to_commit, target_tokens=target_tokens, preserve=preserve, content=content, instructions=instructions, system_prompt=system_prompt, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, two_stage=two_stage, triggered_by=triggered_by, strategy=strategy, window_size=window_size)
 
     def _compress_sliding_window(
         self,
@@ -7454,128 +3710,8 @@ class Tract:
         _partition_around_pinned_fn,
         _reconstruct_content_fn,
     ) -> CompressResult:
-        """Internal helper for sliding-window compression strategy.
-
-        Keeps the most recent ``window_size`` commits in full detail and
-        compresses everything older into summaries.  PINNED commits outside
-        the window are preserved verbatim.
-        """
-        from tract.exceptions import CompressionError
-
-        # Step 1: Generate summaries for pre-window commits
-        range_result = sliding_window_compress_fn(
-            tract_id=self._tract_id,
-            commit_repo=self._commit_repo,
-            blob_repo=self._blob_repo,
-            annotation_repo=self._annotation_repo,
-            ref_repo=self._ref_repo,
-            commit_engine=self._commit_engine,
-            token_counter=self._token_counter,
-            event_repo=self._event_repo,
-            parent_repo=self._parent_repo,
-            window_size=window_size,
-            target_tokens=target_tokens,
-            preserve=preserve,
-            llm_client=llm_client,
-            llm_kwargs=llm_kwargs,
-            generation_config=llm_kwargs if llm_kwargs else None,
-            content=content,
-            instructions=instructions,
-            system_prompt=system_prompt,
-            type_registry=self._custom_type_registry,
-            two_stage=two_stage or False,
-        )
-
-        if range_result is None:
-            raise CompressionError(
-                "Nothing to compress -- all commits are within the sliding "
-                "window or are pinned/skipped"
-            )
-
-        # Step 2: Re-resolve the pre-window commits for the commit phase
-        head_hash = self._ref_repo.get_head(self._tract_id)
-        branch_name = self._ref_repo.get_current_branch(self._tract_id)
-
-        # Walk ancestry to split into window / pre-window
-        all_ancestors = list(self._commit_repo.get_ancestors(head_hash))
-        window_commits = all_ancestors[:window_size]  # newest first
-        pre_window_commits = all_ancestors[window_size:]  # older commits
-        pre_window_oldest_first = list(reversed(pre_window_commits))
-
-        # Classify pre-window commits
-        pinned_commits, _important, normal_commits, skip_commits = (
-            _classify_by_priority_fn(
-                pre_window_oldest_first, self._annotation_repo, preserve=preserve
-            )
-        )
-        normal_commits = normal_commits + _important
-        pinned_hashes = {r.commit_hash for r in pinned_commits}
-        skip_hashes = {r.commit_hash for r in skip_commits}
-        groups = _partition_around_pinned_fn(
-            pre_window_oldest_first, pinned_hashes, skip_hashes
-        )
-        original_tokens = sum(c.token_count for c in normal_commits)
-
-        # Step 3: Commit the compressed pre-window chain, then replay window
-        nested = self._session.begin_nested()
-        try:
-            result = _commit_compression_fn(
-                tract_id=self._tract_id,
-                commit_repo=self._commit_repo,
-                blob_repo=self._blob_repo,
-                ref_repo=self._ref_repo,
-                commit_engine=self._commit_engine,
-                token_counter=self._token_counter,
-                event_repo=self._event_repo,
-                summaries=range_result.summary_commits,
-                range_commits=pre_window_oldest_first,
-                pinned_commits=pinned_commits,
-                normal_commits=normal_commits,
-                pinned_hashes=pinned_hashes,
-                skip_hashes=skip_hashes,
-                groups=groups,
-                original_tokens=original_tokens,
-                target_tokens=target_tokens,
-                instructions=instructions,
-                system_prompt=system_prompt,
-                branch_name=branch_name,
-                type_registry=self._custom_type_registry,
-                expected_head=head_hash,
-                generation_config=range_result.generation_config,
-            )
-
-            # Step 4: Replay window commits on top of the compressed chain
-            # Window commits are in newest-first order; reverse to oldest-first
-            for row in reversed(window_commits):
-                content_model = _reconstruct_content_fn(
-                    row, self._blob_repo, self._custom_type_registry
-                )
-                self._commit_engine.create_commit(
-                    content=content_model,
-                    operation=row.operation,
-                    message=row.message or "Replayed window commit",
-                    metadata=row.metadata_json,
-                    generation_config=row.generation_config_json,
-                )
-
-            # Update result with final HEAD (after window replay)
-            import dataclasses as _dc
-
-            new_head = self._ref_repo.get_head(self._tract_id) or ""
-            result = _dc.replace(result, new_head=new_head)
-
-        except Exception:
-            nested.rollback()
-            raise
-
-        self._commit_session()
-        self._cache.clear()
-
-        if llm_kwargs:
-            import dataclasses as _dc
-            result = _dc.replace(result, config=LLMConfig.from_dict(llm_kwargs))
-
-        return result
+        """See :attr:`compression` manager :meth:`_compress_sliding_window`."""
+        return self._compression_mgr._compress_sliding_window(window_size=window_size, target_tokens=target_tokens, preserve=preserve, content=content, instructions=instructions, system_prompt=system_prompt, llm_client=llm_client, llm_kwargs=llm_kwargs, two_stage=two_stage, sliding_window_compress_fn=sliding_window_compress_fn, _classify_by_priority_fn=_classify_by_priority_fn, _commit_compression_fn=_commit_compression_fn, _partition_around_pinned_fn=_partition_around_pinned_fn, _reconstruct_content_fn=_reconstruct_content_fn)
 
     def _compress_tool_calls_pre(
         self,
@@ -7591,90 +3727,8 @@ class Tract:
         max_tokens: int | None = None,
         llm_config: LLMConfig | None = None,
     ) -> tuple[Any, list[dict], dict, list, list]:
-        """Shared pre-LLM logic for compress_tool_calls/acompress_tool_calls.
-
-        Returns (llm_client, messages, llm_kwargs, results_to_compact, turns).
-        """
-        self._check_open()
-        from tract.exceptions import CompressionError
-        from tract.operations.compression import build_role_label
-        from tract.prompts.summarize import (
-            TOOL_COMPACT_CONTEXT_SYSTEM,
-            TOOL_COMPACT_SYSTEM,
-            build_tool_compact_prompt,
-        )
-
-        turns = self.find_tool_turns(name=name)
-
-        if commits is not None:
-            commit_set = set(commits)
-            turns = [
-                turn for turn in turns
-                if any(h in commit_set for h in turn.all_hashes)
-            ]
-
-        if not turns:
-            raise CompressionError("No tool turns found to compact")
-
-        results_to_compact: list[CommitInfo] = []
-        parts: list[str] = []
-
-        for turn in turns:
-            call_meta = turn.call.metadata or {}
-            call_text = self.get_content(turn.call) or ""
-            parts.append(f"{build_role_label('assistant', call_meta)}: {call_text}")
-
-            for r in turn.results:
-                r_meta = r.metadata or {}
-                r_text = self.get_content(r) or ""
-                parts.append(f"{build_role_label('tool', r_meta)}: {r_text}")
-                results_to_compact.append(r)
-
-        if not results_to_compact:
-            raise CompressionError("No tool results found to compact")
-
-        sequence_text = "\n".join(parts)
-
-        context_text: str | None = None
-        if include_context:
-            try:
-                compiled = self.compile()
-                context_text = "\n".join(
-                    f"{m.role}: {m.content}" for m in compiled.messages
-                )
-            except Exception:
-                context_text = None
-
-        prompt = build_tool_compact_prompt(
-            sequence_text,
-            result_count=len(results_to_compact),
-            target_tokens=target_tokens,
-            instructions=instructions,
-            context_text=context_text,
-        )
-        if system_prompt is not None:
-            sys_prompt = system_prompt
-        elif include_context and context_text is not None:
-            sys_prompt = TOOL_COMPACT_CONTEXT_SYSTEM
-        else:
-            sys_prompt = TOOL_COMPACT_SYSTEM
-
-        llm_kwargs: dict = {}
-        if any(v is not None for v in (model, temperature, max_tokens, llm_config)):
-            resolved = self._resolve_llm_config(
-                "compress", model=model, temperature=temperature,
-                max_tokens=max_tokens, llm_config=llm_config,
-            )
-            if resolved:
-                llm_kwargs = resolved
-
-        llm = self._resolve_llm_client("compress")
-        messages = [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": prompt},
-        ]
-
-        return llm, messages, llm_kwargs, results_to_compact, turns
+        """See :attr:`compression` manager :meth:`_compress_tool_calls_pre`."""
+        return self._compression_mgr._compress_tool_calls_pre(commits=commits, name=name, target_tokens=target_tokens, instructions=instructions, system_prompt=system_prompt, include_context=include_context, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config)
 
     def _compress_tool_calls_post(
         self,
@@ -7689,61 +3743,7 @@ class Tract:
         llm_config: LLMConfig | None = None,
     ) -> ToolCompactResult:
         """Shared post-LLM logic for compress_tool_calls/acompress_tool_calls."""
-        from tract.exceptions import CompressionError
-        from tract.models.compression import ToolCompactResult
-
-        raw_content = self._extract_content(response, client=llm)
-        try:
-            summaries = json.loads(raw_content)
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise CompressionError(
-                f"LLM returned invalid JSON for tool compaction: {exc}\n"
-                f"Response: {raw_content[:200]}"
-            ) from exc
-
-        if not isinstance(summaries, list) or len(summaries) != len(results_to_compact):
-            raise CompressionError(
-                f"Expected {len(results_to_compact)} summaries, "
-                f"got {len(summaries) if isinstance(summaries, list) else type(summaries).__name__}"
-            )
-
-        original_tokens = 0
-        compacted_tokens = 0
-        edit_commits: list[str] = []
-        source_commits: list[str] = []
-
-        for result_ci, summary in zip(results_to_compact, summaries):
-            r_meta: CommitMetadata = result_ci.metadata or {}  # type: ignore[assignment]  # {} is valid CommitMetadata (total=False)
-            original_tokens += result_ci.token_count
-            source_commits.append(result_ci.commit_hash)
-
-            edited = self.tool_result(
-                tool_call_id=r_meta.get("tool_call_id", ""),
-                name=r_meta.get("name", ""),
-                content=str(summary),
-                edit=result_ci.commit_hash,
-            )
-            compacted_tokens += edited.token_count
-            edit_commits.append(edited.commit_hash)
-
-        all_tool_names = sorted({n for turn in turns for n in turn.tool_names})
-
-        effective_config = LLMConfig.from_dict(
-            self._resolve_llm_config(
-                "compress", model=model, temperature=temperature,
-                max_tokens=max_tokens, llm_config=llm_config,
-            )
-        )
-
-        return ToolCompactResult(
-            edit_commits=tuple(edit_commits),
-            source_commits=tuple(source_commits),
-            original_tokens=original_tokens,
-            compacted_tokens=compacted_tokens,
-            tool_names=tuple(all_tool_names),
-            turn_count=len(turns),
-            config=effective_config,
-        )
+        return self._compression_mgr._compress_tool_calls_post(response=response, llm=llm, results_to_compact=results_to_compact, turns=turns, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config)
 
     def compress_tool_calls(
         self,
@@ -7760,59 +3760,8 @@ class Tract:
         llm_config: LLMConfig | None = None,
         triggered_by: str | None = None,
     ) -> "ToolCompactResult":
-        """Compact tool-call sequences using EDIT commits.
-
-        Sends the full tool-calling sequence to the LLM for holistic
-        context, then applies per-result summaries as EDIT commits.
-        This preserves commit structure, tool roles, metadata
-        (``tool_call_id``, ``name``), and keeps tool turns queryable
-        via :meth:`find_tool_turns`.
-
-        For bulk compression that collapses commits into a single
-        summary (losing structure), use :meth:`compress` directly.
-
-        Args:
-            commits: Optional commit hashes to scope which turns to
-                compact.  When ``None`` (default), uses
-                :meth:`find_tool_turns` to auto-detect all tool-call
-                turns on the current branch.  When explicit, only turns
-                whose hashes overlap with this list are compacted.
-            name: Filter to compact only turns involving this tool name.
-                Passed to :meth:`find_tool_turns`.
-            target_tokens: Target token count per compacted result.
-            instructions: Extra guidance appended to the compaction
-                prompt.
-            system_prompt: Override the compaction system prompt.
-            include_context: If ``True``, compile the current context
-                and include it in the compaction prompt so the LLM can
-                judge relevance. Defaults to ``False``.
-            model: Override model for LLM compaction.
-            temperature: Override temperature for LLM compaction.
-            max_tokens: Override max_tokens for LLM compaction.
-            llm_config: Full LLMConfig override for this call.
-            triggered_by: Optional provenance string.
-
-        Returns:
-            :class:`ToolCompactResult` with edit commit details.
-
-        Raises:
-            CompressionError: If no tool turns found or LLM returns
-                malformed response.
-        """
-        llm, messages, llm_kwargs, results_to_compact, turns = self._compress_tool_calls_pre(
-            commits, name=name, target_tokens=target_tokens,
-            instructions=instructions, system_prompt=system_prompt,
-            include_context=include_context, model=model,
-            temperature=temperature, max_tokens=max_tokens, llm_config=llm_config,
-        )
-
-        response = llm.chat(messages, **llm_kwargs)
-
-        return self._compress_tool_calls_post(
-            response, llm, results_to_compact, turns,
-            model=model, temperature=temperature,
-            max_tokens=max_tokens, llm_config=llm_config,
-        )
+        """See :attr:`compression` manager :meth:`compress_tool_calls`."""
+        return self._compression_mgr.compress_tool_calls(commits=commits, name=name, target_tokens=target_tokens, instructions=instructions, system_prompt=system_prompt, include_context=include_context, model=model, temperature=temperature, max_tokens=max_tokens, llm_config=llm_config, triggered_by=triggered_by)
 
     def gc(
         self,
@@ -7821,62 +3770,8 @@ class Tract:
         archive_retention_days: int | None = None,
         branch: str | None = None,
     ) -> GCResult:
-        """Garbage-collect unreachable commits.
-
-        Removes commits not reachable from any branch tip, subject to
-        configurable retention periods.
-
-        Args:
-            orphan_retention_days: Days before orphaned commits become
-                eligible for removal. Default 7.
-            archive_retention_days: If set, days before archived (compression
-                source) commits become eligible for removal. None (default)
-                means archives are never removed.
-            branch: If set, only check this branch for reachability.
-                WARNING: commits reachable from other branches may be removed.
-
-        Returns:
-            :class:`GCResult`.
-
-        Raises:
-            CompressionError: If compression repository is not available.
-        """
-        self._check_open()
-        from tract.exceptions import CompressionError
-        from tract.operations.compression import execute_gc, plan_gc
-
-        if self._event_repo is None:
-            raise CompressionError("Compression repository not available")
-
-        if self._parent_repo is None:
-            raise CompressionError("Parent repository not available")
-
-        # Pre-GC middleware (can block)
-        self._run_middleware("pre_gc")
-
-        # Plan phase: determine which commits to remove
-        commits_to_remove, tokens_to_free = plan_gc(
-            tract_id=self._tract_id,
-            commit_repo=self._commit_repo,
-            ref_repo=self._ref_repo,
-            parent_repo=self._parent_repo,
-            event_repo=self._event_repo,
-            orphan_retention_days=orphan_retention_days,
-            archive_retention_days=archive_retention_days,
-            branch=branch,
-        )
-
-        # Execute phase: remove commits
-        result = execute_gc(
-            tract_id=self._tract_id,
-            commits_to_remove=commits_to_remove,
-            commit_repo=self._commit_repo,
-            blob_repo=self._blob_repo,
-            event_repo=self._event_repo,
-        )
-        self._cache.clear()
-        self._commit_session()
-        return result
+        """See :attr:`compression` manager :meth:`gc`."""
+        return self._compression_mgr.gc(orphan_retention_days=orphan_retention_days, archive_retention_days=archive_retention_days, branch=branch)
 
     def record_usage(
         self,
@@ -7884,79 +3779,8 @@ class Tract:
         *,
         head_hash: str | None = None,
     ) -> CompiledContext:
-        """Record API-reported token usage, updating cached compilation.
-
-        Accepts either a :class:`TokenUsage` dataclass or a provider-specific
-        dict.  Supported dict formats:
-
-        - **OpenAI:** ``{prompt_tokens, completion_tokens, total_tokens}``
-        - **Anthropic:** ``{input_tokens, output_tokens}``
-
-        Args:
-            usage: :class:`TokenUsage` or dict with token counts.
-            head_hash: Associate with a specific HEAD.  Defaults to current HEAD.
-
-        Returns:
-            Updated :class:`CompiledContext` with API-reported token count.
-
-        Raises:
-            TraceError: If no commits exist or *head_hash* doesn't match.
-            ContentValidationError: If dict format is unrecognised.
-        """
-        self._check_open()
-        # Normalize input
-        if isinstance(usage, dict):
-            usage = self._normalize_usage_dict(usage)
-        elif not isinstance(usage, TokenUsage):
-            raise ContentValidationError(
-                f"Expected TokenUsage or dict, got {type(usage).__name__}"
-            )
-
-        current_head = self.head
-        target_hash = head_hash or current_head
-        if target_hash is None:
-            raise TraceError("Cannot record usage: no commits exist")
-
-        # Validate explicit head_hash matches current HEAD
-        if head_hash is not None and head_hash != current_head:
-            raise TraceError(
-                f"Cannot record usage: head_hash {head_hash} "
-                f"does not match current HEAD {current_head}"
-            )
-
-        # If no snapshot yet, trigger a compile to populate one
-        snapshot = self._cache.get(target_hash)
-        if snapshot is None:
-            self.compile()
-            snapshot = self._cache.get(target_hash)
-
-        # Update snapshot with API-reported counts.
-        # Use prompt + completion because the compiled context at HEAD
-        # includes the assistant response (committed before record_usage).
-        if snapshot is not None:
-            context_tokens = usage.prompt_tokens + usage.completion_tokens
-            token_source = f"api:{usage.prompt_tokens}+{usage.completion_tokens}"
-            updated = replace(snapshot, token_count=context_tokens, token_source=token_source)
-            self._cache.put(target_hash, updated)
-            # Persist override so it survives cache eviction
-            self._cache.store_api_override(target_hash, context_tokens, token_source)
-            # Persist as compile record for cross-session durability
-            if self._compile_record_repo is not None:
-                self._save_compile_record(target_hash, context_tokens, updated.commit_count, token_source, updated.commit_hashes)
-            return self._cache.to_compiled(updated)
-
-        # Fallback (custom compiler, no snapshot): return minimal result
-        context_tokens = usage.prompt_tokens + usage.completion_tokens
-        token_source = f"api:{usage.prompt_tokens}+{usage.completion_tokens}"
-        # Persist as compile record even without snapshot
-        if self._compile_record_repo is not None:
-            self._save_compile_record(target_hash, context_tokens, 0, token_source)
-        return CompiledContext(
-            messages=[],
-            token_count=context_tokens,
-            commit_count=0,
-            token_source=token_source,
-        )
+        """See :attr:`compression` manager :meth:`record_usage`."""
+        return self._compression_mgr.record_usage(usage=usage, head_hash=head_hash)
 
     def _save_compile_record(
         self,
@@ -8072,85 +3896,8 @@ class Tract:
         tool_names: list[ToolName | str] | None = None,
         overrides: dict[ToolName | str, str] | None = None,
     ) -> list:
-        """Shared tool resolution: profile filtering, name filtering, overrides.
-
-        Returns list of ToolDefinition objects.
-        """
-        from tract.toolkit.definitions import get_all_tools
-        from tract.toolkit.models import ToolProfile as _ToolProfile
-        from tract.toolkit.profiles import get_profile
-
-        # Resolve profile
-        if isinstance(profile, str):
-            resolved_profile = get_profile(profile)
-        elif isinstance(profile, _ToolProfile):
-            resolved_profile = profile
-        else:
-            raise TypeError(
-                f"profile must be a string or ToolProfile, got {type(profile).__name__}"
-            )
-
-        # Special case: compact profile generates domain-grouped tools
-        if resolved_profile.name == "compact":
-            from tract.toolkit.compact import ACTION_TO_DOMAIN, get_compact_tools
-
-            compact_tools = get_compact_tools(self)
-            if tool_names is not None:
-                allowed = set(tool_names)
-                # Translate action-level names (e.g. "commit", "status") to
-                # the compact domain tools that contain them (e.g.
-                # "tract_context").  This lets callers use the same tool_names
-                # regardless of whether the profile is "full" or "compact".
-                expanded = set(allowed)  # keep any direct compact names
-                for name in allowed:
-                    domain = ACTION_TO_DOMAIN.get(name)
-                    if domain is not None:
-                        expanded.add(f"tract_{domain}")
-                compact_tools = [t for t in compact_tools if t.name in expanded]
-            if overrides:
-                compact_tools = [
-                    replace(t, description=overrides[t.name])
-                    if t.name in overrides else t
-                    for t in compact_tools
-                ]
-            return compact_tools
-
-        all_tools = get_all_tools(self)
-
-        # Apply profile filtering
-        filtered = resolved_profile.filter_tools(all_tools)
-
-        # Include dynamic operation tools (not in static profile configs)
-        filtered_names = {t.name for t in filtered}
-        for tool in all_tools:
-            if tool.name.startswith("fire_") and tool.name not in filtered_names:
-                filtered.append(tool)
-
-        # Filter to specific tool names if requested
-        if tool_names is not None:
-            allowed = set(tool_names)
-            filtered = [t for t in filtered if t.name in allowed]
-
-        # Apply description overrides
-        if overrides:
-            new_filtered = []
-            for tool in filtered:
-                if tool.name in overrides:
-                    tool = replace(tool, description=overrides[tool.name])
-                new_filtered.append(tool)
-            filtered = new_filtered
-
-        # Append custom tools registered via @t.tool
-        if self._custom_tools:
-            existing_names = {t.name for t in filtered}
-            for ct in self._custom_tools.values():
-                if ct.name not in existing_names:
-                    # Apply tool_names filter if active
-                    if tool_names is not None and ct.name not in set(tool_names):
-                        continue
-                    filtered.append(ct)
-
-        return filtered
+        """See :attr:`toolkit` manager :meth:`_resolve_tools`."""
+        return self._toolkit_mgr._resolve_tools(profile=profile, tool_names=tool_names, overrides=overrides)
 
     def as_tools(
         self,
@@ -8160,40 +3907,8 @@ class Tract:
         overrides: dict[ToolName | str, str] | None = None,
         format: Literal["openai", "anthropic"] = "openai",
     ) -> list[dict]:
-        """Get tool definitions for this tract in LLM-consumable format.
-
-        Combines tool definitions, profile filtering, optional description
-        overrides, and format conversion in one call.
-
-        Args:
-            profile: A profile name (``"compact"``, ``"self"``, ``"supervisor"``,
-                ``"full"``) or a :class:`~tract.toolkit.models.ToolProfile`
-                instance.  Falls back to ``tool_profile`` from :meth:`open`,
-                then ``"compact"``.
-            tool_names: Optional list of tool names to include. When provided,
-                only tools whose names are in this list are returned (applied
-                after profile filtering).
-            overrides: Optional dict mapping tool names to replacement
-                descriptions.  Applied on top of the profile's descriptions.
-            format: Output format -- ``"openai"`` (default) or ``"anthropic"``.
-
-        Returns:
-            List of tool definition dicts in the requested format.
-        """
-        effective_profile = (
-            self._tool_profile or "compact"
-        ) if profile is self._PROFILE_SENTINEL else profile
-        filtered = self._resolve_tools(
-            profile=effective_profile, tool_names=tool_names, overrides=overrides,
-        )
-        if format == "openai":
-            return [tool.to_openai() for tool in filtered]
-        elif format == "anthropic":
-            return [tool.to_anthropic() for tool in filtered]
-        else:
-            raise ValueError(
-                f"Unknown format '{format}'. Supported: 'openai', 'anthropic'."
-            )
+        """See :attr:`toolkit` manager :meth:`as_tools`."""
+        return self._toolkit_mgr.as_tools(profile=profile, tool_names=tool_names, overrides=overrides, format=format)
 
     def as_callable_tools(
         self,
@@ -8202,70 +3917,20 @@ class Tract:
         tool_names: list[ToolName | str] | None = None,
         overrides: dict[ToolName | str, str] | None = None,
     ) -> list:
-        """Get tools as typed Python callables for framework integration.
-
-        Returns tract tools as functions with proper ``__name__``, ``__doc__``,
-        ``__signature__``, and type annotations.  Works with any framework
-        that introspects callables: Agno, LangChain, CrewAI, LangGraph, etc.
-
-        Args:
-            profile: A profile name (``"compact"``, ``"self"``, ``"supervisor"``,
-                ``"full"``) or a :class:`~tract.toolkit.models.ToolProfile`
-                instance.  Falls back to ``tool_profile`` from :meth:`open`,
-                then ``"compact"``.
-            tool_names: Optional list of tool names to include.
-            overrides: Optional dict mapping tool names to replacement
-                descriptions.  Applied on top of the profile's descriptions.
-
-        Returns:
-            List of typed Python callables, one per tool.
-        """
-        from tract.toolkit.callables import tools_to_callables
-
-        effective_profile = (
-            self._tool_profile or "compact"
-        ) if profile is self._PROFILE_SENTINEL else profile
-        filtered = self._resolve_tools(
-            profile=effective_profile, tool_names=tool_names, overrides=overrides,
-        )
-        return tools_to_callables(filtered)
+        """See :attr:`toolkit` manager :meth:`as_callable_tools`."""
+        return self._toolkit_mgr.as_callable_tools(profile=profile, tool_names=tool_names, overrides=overrides)
 
     def switch_profile(self, profile: ProfileName | ToolProfile | str) -> None:
-        """Switch the active tool profile.
-
-        Changes which tools are available for the current session.
-        Clears any per-tool overrides.
-
-        Args:
-            profile: Profile name (``"self"``, ``"supervisor"``, ``"full"``) or
-                a ToolProfile instance.
-        """
-        if self._tool_executor is None:
-            from tract.toolkit.executor import ToolExecutor
-            self._tool_executor = ToolExecutor(self)
-        self._tool_executor.set_profile(profile)
+        """See :attr:`toolkit` manager :meth:`switch_profile`."""
+        return self._toolkit_mgr.switch_profile(profile=profile)
 
     def unlock_tool(self, tool_name: ToolName | str) -> None:
-        """Force-enable a tool regardless of current profile.
-
-        Args:
-            tool_name: Name of the tool to unlock.
-        """
-        if self._tool_executor is None:
-            from tract.toolkit.executor import ToolExecutor
-            self._tool_executor = ToolExecutor(self)
-        self._tool_executor.unlock_tool(tool_name)
+        """See :attr:`toolkit` manager :meth:`unlock_tool`."""
+        return self._toolkit_mgr.unlock_tool(tool_name=tool_name)
 
     def lock_tool(self, tool_name: ToolName | str) -> None:
-        """Force-disable a tool regardless of current profile.
-
-        Args:
-            tool_name: Name of the tool to lock.
-        """
-        if self._tool_executor is None:
-            from tract.toolkit.executor import ToolExecutor
-            self._tool_executor = ToolExecutor(self)
-        self._tool_executor.lock_tool(tool_name)
+        """See :attr:`toolkit` manager :meth:`lock_tool`."""
+        return self._toolkit_mgr.lock_tool(tool_name=tool_name)
 
     def tool(
         self,
@@ -8274,65 +3939,19 @@ class Tract:
         name: str | None = None,
         description: str | None = None,
     ) -> Any:
-        """Register a custom tool from a typed Python function.
-
-        Works as a decorator (with or without arguments)::
-
-            @t.tool
-            def search(query: str) -> str:
-                \"\"\"Search the database.\"\"\"
-                ...
-
-            @t.tool(name="calc", description="Math evaluator")
-            def calculator(expression: str) -> str:
-                ...
-
-        Registered tools are automatically included in :meth:`run` and
-        :meth:`as_tools` alongside tract's built-in tools.
-
-        Args:
-            fn: The function to register (when used as ``@t.tool``
-                without parentheses).
-            name: Override the tool name (defaults to ``fn.__name__``).
-            description: Override the description (defaults to the first
-                line of the docstring).
-
-        Returns:
-            The original function (unmodified), or a decorator if called
-            with keyword arguments.
-        """
-        from tract.toolkit.callables import callable_to_tool
-
-        def _register(func: Any) -> Any:
-            tool_def = callable_to_tool(func, name=name, description=description)
-            self._custom_tools[tool_def.name] = tool_def
-            return func
-
-        if fn is not None:
-            # Used as @t.tool (no parentheses)
-            return _register(fn)
-        # Used as @t.tool(...) (with parentheses)
-        return _register
+        """See :attr:`toolkit` manager :meth:`tool`."""
+        return self._toolkit_mgr.tool(fn=fn, name=name, description=description)
 
     def remove_tool(self, tool_name: str) -> None:
-        """Unregister a custom tool previously added via :meth:`tool`.
-
-        Args:
-            tool_name: Name of the custom tool to remove.
-
-        Raises:
-            KeyError: If no custom tool with that name is registered.
-        """
-        if tool_name not in self._custom_tools:
-            available = ", ".join(sorted(self._custom_tools.keys())) or "(none)"
-            raise KeyError(
-                f"No custom tool '{tool_name}'. Registered: {available}"
-            )
-        del self._custom_tools[tool_name]
+        """See :attr:`toolkit` manager :meth:`remove_tool`."""
+        return self._toolkit_mgr.remove_tool(tool_name=tool_name)
 
     @property
     def custom_tools(self) -> dict[str, Any]:
         """Read-only view of registered custom tools (name -> ToolDefinition)."""
+        mgr = getattr(self, '_toolkit_mgr', None)
+        if mgr is not None:
+            return mgr.custom_tools
         return dict(self._custom_tools)
 
     # ------------------------------------------------------------------
@@ -8342,96 +3961,29 @@ class Tract:
     @property
     def tract_dir(self) -> "Path | None":
         """Path to .tract/ directory, or None for in-memory databases."""
+        mgr = getattr(self, '_persistence_mgr', None)
+        if mgr is not None:
+            return mgr.tract_dir
         from pathlib import Path
-
         if self._db_path == ":memory:":
             return None
-        db = Path(self._db_path)
-        return db.parent / ".tract"
+        return Path(self._db_path).parent / ".tract"
 
     @property
     def quarantined(self) -> list[str]:
         """List of modules that failed to load on startup."""
+        mgr = getattr(self, '_persistence_mgr', None)
+        if mgr is not None:
+            return mgr.quarantined
         return list(self._quarantined)
 
     def _ensure_tract_dir(self, subdir: str | None = None) -> "Path":
-        """Create .tract/ (and optional subdir) lazily. Returns the dir path.
-
-        Raises RuntimeError for in-memory databases.
-        """
-        td = self.tract_dir
-        if td is None:
-            raise RuntimeError(
-                "File-based persistence is not available for in-memory databases."
-            )
-        if subdir:
-            target = td / subdir
-        else:
-            target = td
-        target.mkdir(parents=True, exist_ok=True)
-        return target
+        """See :attr:`persistence` manager :meth:`_ensure_tract_dir`."""
+        return self._persistence_mgr._ensure_tract_dir(subdir=subdir)
 
     def _load_persisted_state(self) -> None:
-        """Load persisted configs and behavioral specs from DB.
-
-        Called during Tract.open() after all repos are initialized.
-        """
-        import logging
-
-        logger = logging.getLogger(__name__)
-        repo = self._persistence_repo
-        if repo is None:
-            return
-
-        # Load operation configs from DB
-        for config_row in repo.get_operation_configs(self._tract_id):
-            try:
-                json.loads(config_row.config_json)  # validate JSON
-            except Exception:
-                logger.warning(
-                    "Failed to load config '%s': skipping.",
-                    config_row.config_key,
-                    exc_info=True,
-                )
-                self._quarantined.append(f"config:{config_row.config_key}")
-
-        # Load behavioral specs from DB (profiles and templates)
-        spec_repo = self._behavioral_spec_repo
-        if spec_repo is None:
-            return
-
-        for row in spec_repo.list_specs(self._tract_id):
-            try:
-                data = json.loads(row.spec_json)
-            except Exception:
-                logger.warning(
-                    "Failed to parse behavioral spec '%s/%s': skipping.",
-                    row.spec_type,
-                    row.spec_name,
-                    exc_info=True,
-                )
-                self._quarantined.append(f"spec:{row.spec_type}:{row.spec_name}")
-                continue
-
-            try:
-                if row.spec_type == "profile":
-                    from tract.profiles import WorkflowProfile
-                    profile = WorkflowProfile.from_spec(data)
-                    self._profile_registry[profile.name] = profile
-                elif row.spec_type == "template":
-                    from tract.templates import DirectiveTemplate
-                    template = DirectiveTemplate.from_spec(data)
-                    self._template_registry[template.name] = template
-                # gate and maintainer specs are loaded but NOT auto-wired
-                # (callables cannot be restored; users must re-register)
-            except Exception:
-                logger.warning(
-                    "Failed to restore behavioral spec '%s/%s': skipping.",
-                    row.spec_type,
-                    row.spec_name,
-                    exc_info=True,
-                )
-                self._quarantined.append(f"spec:{row.spec_type}:{row.spec_name}")
+        """See :attr:`persistence` manager :meth:`_load_persisted_state`."""
+        return self._persistence_mgr._load_persisted_state(self._profile_registry, self._template_registry)
 
     # ------------------------------------------------------------------
     # Behavioral spec persistence (gates, maintainers, profiles, templates)
@@ -8443,121 +3995,28 @@ class Tract:
         spec_name: str,
         spec_data: dict,
     ) -> None:
-        """Save a behavioral spec to the database.
-
-        Args:
-            spec_type: One of ``"gate"``, ``"maintainer"``, ``"middleware"``,
-                ``"profile"``, ``"template"``.
-            spec_name: Unique name within the spec type.
-            spec_data: JSON-serializable dict with the spec configuration.
-
-        Raises:
-            ValueError: If spec_type is invalid.
-            RuntimeError: If no behavioral spec repository is available.
-        """
-        valid_types = {"gate", "maintainer", "middleware", "profile", "template"}
-        if spec_type not in valid_types:
-            raise ValueError(
-                f"Invalid spec_type '{spec_type}'. "
-                f"Valid types: {sorted(valid_types)}"
-            )
-        repo = self._behavioral_spec_repo
-        if repo is None:
-            return  # in-memory or no persistence
-
-        from tract.storage.schema import BehavioralSpecRow
-
-        now = datetime.now(timezone.utc)
-        row = BehavioralSpecRow(
-            tract_id=self._tract_id,
-            spec_type=spec_type,
-            spec_name=spec_name,
-            spec_json=json.dumps(spec_data, default=str),
-            created_at=now,
-            updated_at=now,
-        )
-        repo.save(row)
-        self._commit_session()
+        """See :attr:`persistence` manager :meth:`persist_behavioral_spec`."""
+        return self._persistence_mgr.persist_behavioral_spec(spec_type=spec_type, spec_name=spec_name, spec_data=spec_data)
 
     def load_behavioral_specs(
         self,
         *,
         spec_type: str | None = None,
     ) -> list[dict]:
-        """Load persisted behavioral specs from the database.
-
-        Args:
-            spec_type: Optional filter by type (``"gate"``, ``"maintainer"``,
-                ``"profile"``, ``"template"``).
-
-        Returns:
-            List of dicts with keys: spec_type, spec_name, spec_data, created_at, updated_at.
-        """
-        repo = self._behavioral_spec_repo
-        if repo is None:
-            return []
-
-        rows = repo.list_specs(self._tract_id, spec_type=spec_type)
-        result = []
-        for row in rows:
-            try:
-                data = json.loads(row.spec_json)
-            except Exception:
-                data = {}
-            result.append({
-                "spec_type": row.spec_type,
-                "spec_name": row.spec_name,
-                "spec_data": data,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            })
-        return result
+        """See :attr:`persistence` manager :meth:`load_behavioral_specs`."""
+        return self._persistence_mgr.load_behavioral_specs(spec_type=spec_type)
 
     def list_behavioral_specs(
         self,
         *,
         spec_type: str | None = None,
     ) -> list[dict]:
-        """List persisted behavioral specs (summary view).
-
-        Args:
-            spec_type: Optional filter by type.
-
-        Returns:
-            List of dicts with keys: spec_type, spec_name, created_at, updated_at.
-        """
-        repo = self._behavioral_spec_repo
-        if repo is None:
-            return []
-
-        rows = repo.list_specs(self._tract_id, spec_type=spec_type)
-        return [
-            {
-                "spec_type": row.spec_type,
-                "spec_name": row.spec_name,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            }
-            for row in rows
-        ]
+        """See :attr:`persistence` manager :meth:`list_behavioral_specs`."""
+        return self._persistence_mgr.list_behavioral_specs(spec_type=spec_type)
 
     def remove_behavioral_spec(self, spec_type: str, spec_name: str) -> bool:
-        """Remove a persisted behavioral spec.
-
-        Args:
-            spec_type: Spec type (``"gate"``, ``"maintainer"``, etc.).
-            spec_name: Spec name.
-
-        Returns:
-            True if deleted, False if not found.
-        """
-        repo = self._behavioral_spec_repo
-        if repo is None:
-            return False
-        deleted = repo.delete(self._tract_id, spec_type, spec_name)
-        if deleted:
-            self._commit_session()
-        return deleted
+        """See :attr:`persistence` manager :meth:`remove_behavioral_spec`."""
+        return self._persistence_mgr.remove_behavioral_spec(spec_type=spec_type, spec_name=spec_name)
 
     def save_workflow(
         self,
@@ -8566,36 +4025,8 @@ class Tract:
         *,
         description: str = "",
     ) -> "Path":
-        """Write a workflow to .tract/workflows/{name}.py.
-
-        Args:
-            name: Workflow name (used as filename).
-            code: Python source code.
-            description: Human-readable description.
-
-        Returns:
-            Path to the written file.
-
-        Raises:
-            SyntaxError: If code has syntax errors (validated before writing).
-            RuntimeError: If database is in-memory.
-        """
-        # Security: reject path separators and traversal in workflow name
-        if "/" in name or "\\" in name or ".." in name:
-            raise ValueError(
-                f"Invalid workflow name {name!r}: must not contain "
-                "'/', '\\', or '..'."
-            )
-
-        # Validate syntax
-        compile(code, f"{name}.py", "exec")
-
-        # Write file
-        workflows_dir = self._ensure_tract_dir("workflows")
-        file_path = workflows_dir / f"{name}.py"
-        file_path.write_text(code, encoding="utf-8")
-
-        return file_path
+        """See :attr:`persistence` manager :meth:`save_workflow`."""
+        return self._persistence_mgr.save_workflow(name=name, code=code, description=description)
 
     def close(self) -> None:
         """Close the session and dispose the engine."""
@@ -8603,9 +4034,12 @@ class Tract:
             return
         self._closed = True
         # Close internally-created LLM client (not externally-provided ones)
-        if self._owns_llm_client and self._llm_client is not None:
+        s = getattr(self, '_llm_state', None)
+        owns = s.owns_llm_client if s else self._owns_llm_client
+        client = s.llm_client if s else self._llm_client
+        if owns and client is not None:
             try:
-                self._llm_client.close()
+                client.close()
             except Exception:
                 logger.debug("Failed to close LLM client", exc_info=True)
         try:
@@ -8638,15 +4072,21 @@ class Tract:
         if self._closed:
             return
         # Async-close the LLM client if it supports it
-        if self._owns_llm_client and self._llm_client is not None:
-            _aclose = getattr(self._llm_client, "aclose", None)
+        s = getattr(self, '_llm_state', None)
+        owns = s.owns_llm_client if s else self._owns_llm_client
+        client = s.llm_client if s else self._llm_client
+        if owns and client is not None:
+            _aclose = getattr(client, "aclose", None)
             if _aclose is not None:
                 try:
                     await _aclose()
                 except Exception:
                     logger.debug("Failed to async-close LLM client", exc_info=True)
                 # Prevent sync close() from double-closing the client
-                self._owns_llm_client = False
+                if s:
+                    s.owns_llm_client = False
+                else:
+                    self._owns_llm_client = False
         # Delegate remaining teardown to sync close()
         self.close()
 

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 # Sentinel for "use the default profile"
-_PROFILE_SENTINEL = object()
+from tract.managers.state import PROFILE_SENTINEL as _PROFILE_SENTINEL
 
 
 class ToolkitManager:

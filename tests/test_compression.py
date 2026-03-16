@@ -916,7 +916,7 @@ class TestCompressToolCallsAutoDetect:
         from tract.models.compression import ToolCompactResult
 
         with Tract.open() as t:
-            t._llm_client = MockLLMClient([json.dumps(["Tool summary."])])
+            t._llm_state.llm_client = MockLLMClient([json.dumps(["Tool summary."])])
             t.system("test")
             # Simulate a tool-calling turn
             t.assistant(
@@ -938,7 +938,7 @@ class TestCompressToolCallsAutoDetect:
         from tract.models.compression import ToolCompactResult
 
         with Tract.open() as t:
-            t._llm_client = MockLLMClient([json.dumps(["Grep summary."])])
+            t._llm_state.llm_client = MockLLMClient([json.dumps(["Grep summary."])])
             t.system("test")
             # grep turn
             t.assistant(
@@ -967,7 +967,7 @@ class TestCompressToolCallsAutoDetect:
         from tract.models.compression import ToolCompactResult
 
         with Tract.open() as t:
-            t._llm_client = MockLLMClient([json.dumps(["Compacted."])])
+            t._llm_state.llm_client = MockLLMClient([json.dumps(["Compacted."])])
             t.system("test")
             asst = t.assistant(
                 "",

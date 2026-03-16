@@ -267,6 +267,8 @@ class Session:
         )
         tract._spawn_repo = self._spawn_repo
         tract._session_owner = self
+        tract._create_managers()
+        tract._create_deferred_managers()
 
         self._tracts[tract_id] = tract
         return tract
@@ -331,13 +333,19 @@ class Session:
         tract = self._tracts.pop(tract_id)
         tract._cache.clear()
         # Close the LLM client if the tract owns one
-        if tract._owns_llm_client and tract._llm_client is not None:
+        s = getattr(tract, '_llm_state', None)
+        owns = s.owns_llm_client if s else tract._owns_llm_client
+        client = s.llm_client if s else tract._llm_client
+        if owns and client is not None:
             try:
-                tract._llm_client.close()
+                client.close()
             except Exception as e:
                 logger.warning("Failed to close LLM client for tract %s: %s", tract_id, e, exc_info=True)
             # Prevent tract.close() from double-closing
-            tract._owns_llm_client = False
+            if s:
+                s.owns_llm_client = False
+            else:
+                tract._owns_llm_client = False
         try:
             tract._session.close()
         except Exception as e:
@@ -689,6 +697,10 @@ class Session:
         # Set up tag repos on child so get_tags() works
         child._tag_annotation_repo = SqliteTagAnnotationRepository(child_session)
         child._tag_registry_repo = SqliteTagRegistryRepository(child_session)
+
+        # Create managers after all repos are set
+        child._create_managers()
+        child._create_deferred_managers()
 
         # 4. Apply curation pipeline (child is already on its branch via proxy)
         if curate:

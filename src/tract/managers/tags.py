@@ -30,13 +30,13 @@ class TagManager:
     def __init__(
         self,
         tract_id: str,
-        tag_annotation_repo: TagAnnotationRepository | None,
-        tag_registry_repo: TagRegistryRepository | None,
+        get_tag_annotation_repo: Callable,  # lambda -> repo (late-bound)
+        get_tag_registry_repo: Callable,  # lambda -> repo (late-bound)
         commit_repo: CommitRepository,
         blob_repo: BlobRepository,
         annotation_repo: AnnotationRepository,
         parent_repo: ParentRepository,
-        strict_tags: bool,
+        get_strict_tags: Callable,  # lambda -> bool (late-bound)
         check_open: Callable[[], None],
         commit_session: Callable[[], None],
         get_ancestors: Callable,  # was _get_merge_aware_ancestors
@@ -44,13 +44,13 @@ class TagManager:
         get_head: Callable[[], str | None],
     ) -> None:
         self._tract_id = tract_id
-        self._tag_annotation_repo = tag_annotation_repo
-        self._tag_registry_repo = tag_registry_repo
+        self._get_tag_annotation_repo = get_tag_annotation_repo
+        self._get_tag_registry_repo = get_tag_registry_repo
         self._commit_repo = commit_repo
         self._blob_repo = blob_repo
         self._annotation_repo = annotation_repo
         self._parent_repo = parent_repo
-        self._strict_tags = strict_tags
+        self._get_strict_tags = get_strict_tags
         self._check_open = check_open
         self._commit_session = commit_session
         self._get_ancestors = get_ancestors
@@ -77,14 +77,14 @@ class TagManager:
         commit = self._commit_repo.get(target_hash)
         if commit is None:
             raise CommitNotFoundError(target_hash)
-        if self._strict_tags and self._tag_registry_repo is not None:
-            if not self._tag_registry_repo.is_registered(self._tract_id, tag_name):
+        if self._get_strict_tags() and self._get_tag_registry_repo() is not None:
+            if not self._get_tag_registry_repo().is_registered(self._tract_id, tag_name):
                 raise TagNotRegisteredError(tag_name)
-        if self._tag_annotation_repo is not None:
+        if self._get_tag_annotation_repo() is not None:
             from datetime import timezone
 
             now = datetime.now(timezone.utc)
-            self._tag_annotation_repo.add_tag(
+            self._get_tag_annotation_repo().add_tag(
                 self._tract_id, target_hash, tag_name, now,
             )
             self._commit_session()
@@ -100,9 +100,9 @@ class TagManager:
             True if the tag was removed, False if it didn't exist.
         """
         self._check_open()
-        if self._tag_annotation_repo is None:
+        if self._get_tag_annotation_repo() is None:
             return False
-        result = self._tag_annotation_repo.remove_tag(
+        result = self._get_tag_annotation_repo().remove_tag(
             self._tract_id, target_hash, tag_name,
         )
         self._commit_session()
@@ -123,8 +123,8 @@ class TagManager:
         if commit_row is not None and commit_row.tags_json:
             tags.update(commit_row.tags_json)
         # Mutable annotation tags
-        if self._tag_annotation_repo is not None:
-            annotation_tags = self._tag_annotation_repo.get_tags(target_hash)
+        if self._get_tag_annotation_repo() is not None:
+            annotation_tags = self._get_tag_annotation_repo().get_tags(target_hash)
             tags.update(annotation_tags)
         return sorted(tags)
 
@@ -138,12 +138,12 @@ class TagManager:
             name: Tag name.
             description: Optional description of the tag.
         """
-        if self._tag_registry_repo is None:
+        if self._get_tag_registry_repo() is None:
             return
         from datetime import timezone
 
         now = datetime.now(timezone.utc)
-        self._tag_registry_repo.register(
+        self._get_tag_registry_repo().register(
             self._tract_id, name, description,
             auto_created=False, created_at=now,
         )
@@ -156,16 +156,16 @@ class TagManager:
             List of dicts with ``name``, ``description``, ``auto_created``,
             and ``count`` keys.
         """
-        if self._tag_registry_repo is None:
+        if self._get_tag_registry_repo() is None:
             return []
-        rows = self._tag_registry_repo.list_all(self._tract_id)
+        rows = self._get_tag_registry_repo().list_all(self._tract_id)
         tag_names = [r.tag_name for r in rows]
 
         # Count annotation tags in batch
         annotation_counts: dict[str, int] = {}
-        if self._tag_annotation_repo is not None:
+        if self._get_tag_annotation_repo() is not None:
             for tn in tag_names:
-                annotation_hashes = self._tag_annotation_repo.get_commits_by_tag(
+                annotation_hashes = self._get_tag_annotation_repo().get_commits_by_tag(
                     self._tract_id, tn,
                 )
                 annotation_counts[tn] = len(annotation_hashes)
@@ -223,9 +223,9 @@ class TagManager:
 
         # Batch-fetch annotation tags for all ancestors
         annotation_map: dict[str, list[str]] = {}
-        if self._tag_annotation_repo is not None:
+        if self._get_tag_annotation_repo() is not None:
             all_hashes = [r.commit_hash for r in ancestors]
-            annotation_map = self._tag_annotation_repo.batch_get_tags(all_hashes)
+            annotation_map = self._get_tag_annotation_repo().batch_get_tags(all_hashes)
 
         tag_set = set(tags)
         results: list[CommitInfo] = []
@@ -248,7 +248,7 @@ class TagManager:
 
     def _seed_base(self) -> None:
         """Seed the tag registry with base tags (idempotent)."""
-        if self._tag_registry_repo is None:
+        if self._get_tag_registry_repo() is None:
             return
 
         from datetime import timezone
@@ -266,7 +266,7 @@ class TagManager:
             "summary": "Compression output / summaries",
         }
         for tag_name, description in base_tags.items():
-            self._tag_registry_repo.register(
+            self._get_tag_registry_repo().register(
                 self._tract_id, tag_name, description,
                 auto_created=True, created_at=now,
             )
@@ -279,11 +279,11 @@ class TagManager:
             TagNotRegisteredError: If any tag is not registered (reports all
                 unregistered tags at once).
         """
-        if not self._strict_tags or self._tag_registry_repo is None:
+        if not self._get_strict_tags() or self._get_tag_registry_repo() is None:
             return
         from tract.exceptions import TagNotRegisteredError
 
-        registered = self._tag_registry_repo.batch_is_registered(self._tract_id, tags)
+        registered = self._get_tag_registry_repo().batch_is_registered(self._tract_id, tags)
         unregistered = [tag for tag in tags if tag not in registered]
         if unregistered:
             raise TagNotRegisteredError(unregistered)

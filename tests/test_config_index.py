@@ -185,7 +185,7 @@ class TestConfigAfterCheckout:
             t.user("seed")
             # Force index build
             _ = t.config_index
-            assert not t._config_index.is_stale
+            assert not t._config_mgr._config_index.is_stale
             t.branch("feature")
             # branch with switch=True should invalidate
             # Access config_index to trigger rebuild

@@ -38,9 +38,9 @@ logger = logging.getLogger(__name__)
 class LLMManager:
     """LLM operations: chat, generate, run, revise and their async counterparts."""
 
-    # Sentinels used by run/arun for tools/profile default detection
-    _TOOLS_SENTINEL = object()
-    _PROFILE_SENTINEL = object()
+    # Shared sentinels — must match Tract's for delegation identity checks
+    from tract.managers.state import TOOLS_SENTINEL as _TOOLS_SENTINEL
+    from tract.managers.state import PROFILE_SENTINEL as _PROFILE_SENTINEL
 
     def __init__(
         self,

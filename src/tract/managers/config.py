@@ -177,9 +177,13 @@ class ConfigManager:
                     )
         content = ConfigContent(settings=settings)
         info = self._commit_fn(content, message=f"configure: {', '.join(settings)}")
+        self.invalidate_cache()
+        return info
+
+    def invalidate_cache(self) -> None:
+        """Mark the cached config index as stale so it rebuilds on next access."""
         if self._config_index is not None:
             self._config_index.invalidate()
-        return info
 
     def configure_llm(
         self,

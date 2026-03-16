@@ -522,7 +522,7 @@ class TestTractRunFacade:
     def test_run_through_facade(self, tract_instance):
         """t.run(task='...') delegates to run_loop."""
         # Inject a mock LLM client
-        tract_instance._llm_client = MockLLMClient([_make_response("Done via facade.")])
+        tract_instance._llm_state.llm_client = MockLLMClient([_make_response("Done via facade.")])
         result = tract_instance.run(task="Facade test")
         assert result.status == "completed"
         assert result.final_response == "Done via facade."

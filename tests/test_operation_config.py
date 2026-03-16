@@ -202,7 +202,7 @@ class TestResolveLLMConfig:
     def test_resolve_call_level_wins(self):
         """Call-level model overrides operation and tract defaults."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="tract-default")
+        t._llm_state.default_config = LLMConfig(model="tract-default")
         t.configure_operations(chat=LLMConfig(model="op-model"))
 
         resolved = t._resolve_llm_config("chat", model="call-model")
@@ -212,7 +212,7 @@ class TestResolveLLMConfig:
     def test_resolve_operation_level_wins_over_tract(self):
         """Operation-level model overrides tract default."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="tract-default")
+        t._llm_state.default_config = LLMConfig(model="tract-default")
         t.configure_operations(chat=LLMConfig(model="op-model"))
 
         resolved = t._resolve_llm_config("chat")
@@ -222,7 +222,7 @@ class TestResolveLLMConfig:
     def test_resolve_tract_default_used(self):
         """Without call or operation config, tract default is used."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="tract-default")
+        t._llm_state.default_config = LLMConfig(model="tract-default")
 
         resolved = t._resolve_llm_config("chat")
         assert resolved["model"] == "tract-default"
@@ -944,7 +944,7 @@ class TestDefaultConfig:
         """Tract.open(api_key=..., model=...) creates _default_config internally."""
         # We can't test with real api_key, but we can set _default_config manually
         t = Tract.open()
-        t._default_config = LLMConfig(model="default-model", temperature=0.5)
+        t._llm_state.default_config = LLMConfig(model="default-model", temperature=0.5)
         resolved = t._resolve_llm_config("chat")
         assert resolved["model"] == "default-model"
         t.close()
@@ -952,7 +952,7 @@ class TestDefaultConfig:
     def test_default_config_all_fields_available(self):
         """All LLMConfig fields from _default_config are accessible (for future Plan 02)."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="default", temperature=0.3)
+        t._llm_state.default_config = LLMConfig(model="default", temperature=0.3)
         # Currently only model is resolved from default -- temperature requires Plan 02
         resolved = t._resolve_llm_config("chat")
         assert resolved["model"] == "default"
@@ -978,7 +978,7 @@ class TestFourLevelResolution:
     def test_sugar_beats_llm_config(self):
         """Sugar param (model=) overrides llm_config.model."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="default")
+        t._llm_state.default_config = LLMConfig(model="default")
         t.configure_operations(chat=LLMConfig(model="op"))
         llm_cfg = LLMConfig(model="llm-config")
 
@@ -1001,7 +1001,7 @@ class TestFourLevelResolution:
     def test_operation_beats_default(self):
         """Operation config overrides tract default."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="default")
+        t._llm_state.default_config = LLMConfig(model="default")
         t.configure_operations(chat=LLMConfig(model="op"))
 
         resolved = t._resolve_llm_config("chat")
@@ -1011,7 +1011,7 @@ class TestFourLevelResolution:
     def test_default_used_as_fallback(self):
         """Tract default is used when no higher-level config is set."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="default", temperature=0.5)
+        t._llm_state.default_config = LLMConfig(model="default", temperature=0.5)
 
         resolved = t._resolve_llm_config("chat")
         assert resolved["model"] == "default"
@@ -1021,7 +1021,7 @@ class TestFourLevelResolution:
     def test_all_nine_fields_resolved(self):
         """All 9 typed fields go through the resolution chain."""
         t = Tract.open()
-        t._default_config = LLMConfig(
+        t._llm_state.default_config = LLMConfig(
             model="m", temperature=0.1, top_p=0.2, max_tokens=100,
             stop_sequences=("s",), frequency_penalty=0.3,
             presence_penalty=0.4, top_k=10, seed=42,
@@ -1041,7 +1041,7 @@ class TestFourLevelResolution:
     def test_mixed_levels(self):
         """Different fields come from different levels."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="default-model", seed=42)
+        t._llm_state.default_config = LLMConfig(model="default-model", seed=42)
         t.configure_operations(chat=LLMConfig(temperature=0.5))
         llm_cfg = LLMConfig(top_p=0.9)
 
@@ -1056,7 +1056,7 @@ class TestFourLevelResolution:
     def test_extra_kwargs_merge_order(self):
         """Extra kwargs merge: default < operation < llm_config < call."""
         t = Tract.open()
-        t._default_config = LLMConfig(extra={"a": 1, "b": 1})
+        t._llm_state.default_config = LLMConfig(extra={"a": 1, "b": 1})
         t.configure_operations(chat=LLMConfig(extra={"b": 2, "c": 2}))
         llm_cfg = LLMConfig(extra={"c": 3, "d": 3})
 
@@ -1071,7 +1071,7 @@ class TestFourLevelResolution:
     def test_default_temperature_resolved(self):
         """Temperature from default config is used when no higher level sets it."""
         t = Tract.open()
-        t._default_config = LLMConfig(temperature=0.3)
+        t._llm_state.default_config = LLMConfig(temperature=0.3)
 
         resolved = t._resolve_llm_config("chat")
         assert resolved["temperature"] == 0.3

@@ -10,7 +10,7 @@ class TestConfigResolutionSource:
     def test_sources_not_included_by_default(self):
         """Default behavior: no _resolution_sources in result."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="gpt-4o")
+        t._llm_state.default_config = LLMConfig(model="gpt-4o")
         result = t._resolve_llm_config("chat")
         assert "_resolution_sources" not in result
 
@@ -24,7 +24,7 @@ class TestConfigResolutionSource:
     def test_tract_default_source(self):
         """Tract default config is tracked as source='tract_default'."""
         t = Tract.open()
-        t._default_config = LLMConfig(model="gpt-4o", temperature=0.7)
+        t._llm_state.default_config = LLMConfig(model="gpt-4o", temperature=0.7)
         result = t._resolve_llm_config("chat", include_sources=True)
         sources = result["_resolution_sources"]
         assert sources["model"] == "tract_default"
@@ -49,7 +49,7 @@ class TestConfigResolutionSource:
     def test_mixed_sources(self):
         """Multiple sources in a single resolution."""
         t = Tract.open()
-        t._default_config = LLMConfig(temperature=0.5)
+        t._llm_state.default_config = LLMConfig(temperature=0.5)
         t.configure_operations(chat=LLMConfig(top_p=0.9))
         result = t._resolve_llm_config(
             "chat", model="gpt-4o", include_sources=True,

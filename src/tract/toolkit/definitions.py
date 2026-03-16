@@ -1101,7 +1101,7 @@ def _handle_configure_model(
 
     if operation is not None:
         # Merge with existing operation config (if any)
-        existing = getattr(tract._operation_configs, operation, None)
+        existing = getattr(tract.operation_configs, operation, None)
         if existing is not None and non_none:
             merged = dataclasses.replace(existing, **non_none)
         else:
@@ -1115,12 +1115,12 @@ def _handle_configure_model(
         return f"Configured {operation}: {', '.join(parts)}"
     else:
         # Merge with existing tract-wide default (preserves fields not overridden)
-        existing = tract._default_config
+        existing = tract.default_config
         if existing is not None and non_none:
             merged = dataclasses.replace(existing, **non_none)
         else:
             merged = overlay
-        tract._default_config = merged
+        tract._llm_state.default_config = merged
         parts = []
         if model:
             parts.append(f"model={model}")

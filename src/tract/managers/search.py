@@ -50,6 +50,7 @@ class SearchManager:
         get_config_fn: Callable | None = None,  # Callable - ConfigManager.get (for get_config)
         commit_fn: Callable | None = None,  # Callable - Tract.commit
         tag_annotation_repo=None,
+        tract_ref: Any = None,  # The Tract instance (for build_manifest)
     ) -> None:
         self._tract_id = tract_id
         self._commit_repo = commit_repo
@@ -74,6 +75,7 @@ class SearchManager:
         self._get_config_fn = get_config_fn
         self._commit_fn = commit_fn
         self._tag_annotation_repo = tag_annotation_repo
+        self._tract_ref = tract_ref
 
     # ------------------------------------------------------------------
     # Log / ancestry
@@ -366,7 +368,7 @@ class SearchManager:
     def manifest(self, max_log_entries: int = 30) -> str:
         """Build a lightweight text manifest of current context."""
         from tract.gate import build_manifest
-        return build_manifest(self, max_log_entries)
+        return build_manifest(self._tract_ref, max_log_entries)
 
     # ------------------------------------------------------------------
     # Diff / compare

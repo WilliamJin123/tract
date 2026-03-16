@@ -380,7 +380,7 @@ class TestCloseDoesNotCloseOperationClients:
         default = MockLLMClient(name="default")
         t.configure_llm(default)
         # Simulate ownership (normally set by Tract.open when it creates the client)
-        t._owns_llm_client = True
+        t._llm_state.owns_llm_client = True
 
         t.close()
         assert default.closed

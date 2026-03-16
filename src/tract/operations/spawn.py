@@ -254,6 +254,8 @@ def spawn_tract(
         event_repo=child_event_repo,
     )
     child._spawn_repo = spawn_repo
+    child._create_managers()
+    child._create_deferred_managers()
 
     # Inherit tools from parent if requested
     if inherit_tools:

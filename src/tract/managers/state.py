@@ -1,5 +1,10 @@
-"""Shared mutable LLM configuration state."""
+"""Shared mutable LLM configuration state and sentinels."""
 from __future__ import annotations
+
+# Shared sentinel objects used by Tract, LLMManager, and ToolkitManager
+# for detecting "not provided" vs None in tool/profile parameters.
+TOOLS_SENTINEL = object()
+PROFILE_SENTINEL = object()
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
