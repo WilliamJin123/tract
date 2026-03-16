@@ -93,12 +93,33 @@ TOOL_COMPACT_SYSTEM: str = (
 )
 
 
+TOOL_COMPACT_CONTEXT_SYSTEM: str = (
+    "You are compacting tool results from an AI agent's workflow. "
+    "You have been given the full conversation context so far, followed "
+    "by the tool-calling sequence. "
+    "Your job is to produce a concise summary for EACH tool result "
+    "that preserves only the information relevant to the ongoing conversation.\n\n"
+    "Guidelines:\n"
+    "- Read the conversation to understand the current goal.\n"
+    "- Return a JSON array of strings, one summary per tool result, in order.\n"
+    "- Each summary should capture: key findings relevant to the conversation, "
+    "specific values, file paths, line numbers, error messages.\n"
+    "- Eliminate: data with no bearing on the conversation goals, raw file "
+    "contents, full directory listings, verbose API responses, formatting noise.\n"
+    "- If a result is entirely irrelevant to the conversation, say so in one line.\n"
+    "- Keep each summary to 1-3 sentences unless the result contains "
+    "critical details that require more.\n"
+    "- Return ONLY the JSON array, no other text."
+)
+
+
 def build_tool_compact_prompt(
     sequence_text: str,
     result_count: int,
     *,
     target_tokens: int | None = None,
     instructions: str | None = None,
+    context_text: str | None = None,
 ) -> str:
     """Build the user prompt for per-result tool compaction.
 
@@ -107,16 +128,30 @@ def build_tool_compact_prompt(
         result_count: Number of tool results to produce summaries for.
         target_tokens: Optional per-result target token count.
         instructions: Extra guidance appended to the prompt.
+        context_text: Optional conversation context preceding the tool
+            sequence. When provided, the prompt frames the task as
+            context-aware compaction so the LLM can judge relevance.
 
     Returns:
         The formatted user prompt string.
     """
-    prompt = (
-        f"Compact the tool results in this sequence. "
-        f"Return a JSON array with exactly {result_count} "
-        f"string(s), one summary per tool result in order.\n\n"
-        f"{sequence_text}"
-    )
+    if context_text is not None:
+        prompt = (
+            f"Here is the conversation so far:\n\n{context_text}\n\n"
+            f"---\n\n"
+            f"Compact the tool results in this sequence, keeping only "
+            f"information relevant to the conversation above. "
+            f"Return a JSON array with exactly {result_count} "
+            f"string(s), one summary per tool result in order.\n\n"
+            f"{sequence_text}"
+        )
+    else:
+        prompt = (
+            f"Compact the tool results in this sequence. "
+            f"Return a JSON array with exactly {result_count} "
+            f"string(s), one summary per tool result in order.\n\n"
+            f"{sequence_text}"
+        )
 
     if target_tokens is not None:
         prompt += f"\n\nTarget length: {target_tokens} tokens per summary."

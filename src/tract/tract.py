@@ -3650,6 +3650,7 @@ class Tract:
         target_tokens: int | None = None,
         instructions: str | None = None,
         system_prompt: str | None = None,
+        include_context: bool = False,
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
@@ -3663,6 +3664,7 @@ class Tract:
         from tract.models.compression import ToolCompactResult
         from tract.operations.compression import build_role_label
         from tract.prompts.summarize import (
+            TOOL_COMPACT_CONTEXT_SYSTEM,
             TOOL_COMPACT_SYSTEM,
             build_tool_compact_prompt,
         )
@@ -3698,15 +3700,30 @@ class Tract:
 
         sequence_text = "\n".join(parts)
 
+        # Build context text if requested
+        context_text: str | None = None
+        if include_context:
+            try:
+                compiled = self.compile()
+                context_text = "\n".join(
+                    f"{m.role}: {m.content}" for m in compiled.messages
+                )
+            except Exception:
+                context_text = None
+
         prompt = build_tool_compact_prompt(
             sequence_text,
             result_count=len(results_to_compact),
             target_tokens=target_tokens,
             instructions=instructions,
+            context_text=context_text,
         )
-        sys_prompt = (
-            system_prompt if system_prompt is not None else TOOL_COMPACT_SYSTEM
-        )
+        if system_prompt is not None:
+            sys_prompt = system_prompt
+        elif include_context and context_text is not None:
+            sys_prompt = TOOL_COMPACT_CONTEXT_SYSTEM
+        else:
+            sys_prompt = TOOL_COMPACT_SYSTEM
 
         llm_kwargs_resolved: dict = {}
         if any(v is not None for v in (model, temperature, max_tokens, llm_config)):
@@ -7053,6 +7070,7 @@ class Tract:
         target_tokens: int | None = None,
         instructions: str | None = None,
         system_prompt: str | None = None,
+        include_context: bool = False,
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
@@ -7082,6 +7100,9 @@ class Tract:
             instructions: Extra guidance appended to the compaction
                 prompt.
             system_prompt: Override the compaction system prompt.
+            include_context: If ``True``, compile the current context
+                and include it in the compaction prompt so the LLM can
+                judge relevance. Defaults to ``False``.
             model: Override model for LLM compaction.
             temperature: Override temperature for LLM compaction.
             max_tokens: Override max_tokens for LLM compaction.
@@ -7095,11 +7116,12 @@ class Tract:
             CompressionError: If no tool turns found or LLM returns
                 malformed response.
         """
-        
+
         from tract.exceptions import CompressionError
         from tract.models.compression import ToolCompactResult
         from tract.operations.compression import build_role_label
         from tract.prompts.summarize import (
+            TOOL_COMPACT_CONTEXT_SYSTEM,
             TOOL_COMPACT_SYSTEM,
             build_tool_compact_prompt,
         )
@@ -7140,16 +7162,31 @@ class Tract:
 
         sequence_text = "\n".join(parts)
 
-        # 3. Build prompt and call LLM
+        # 3. Build context text if requested
+        context_text: str | None = None
+        if include_context:
+            try:
+                compiled = self.compile()
+                context_text = "\n".join(
+                    f"{m.role}: {m.content}" for m in compiled.messages
+                )
+            except Exception:
+                context_text = None
+
+        # 4. Build prompt and call LLM
         prompt = build_tool_compact_prompt(
             sequence_text,
             result_count=len(results_to_compact),
             target_tokens=target_tokens,
             instructions=instructions,
+            context_text=context_text,
         )
-        sys_prompt = (
-            system_prompt if system_prompt is not None else TOOL_COMPACT_SYSTEM
-        )
+        if system_prompt is not None:
+            sys_prompt = system_prompt
+        elif include_context and context_text is not None:
+            sys_prompt = TOOL_COMPACT_CONTEXT_SYSTEM
+        else:
+            sys_prompt = TOOL_COMPACT_SYSTEM
 
         # Resolve LLM config and client
         llm_kwargs: dict = {}
