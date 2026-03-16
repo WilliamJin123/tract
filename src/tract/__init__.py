@@ -112,9 +112,6 @@ from tract.profiles import (
     register_profile as register_workflow_profile,
 )
 
-# External SDK adapters (always available — no external deps)
-from tract.adapters import AgentAdapter, PassthroughAdapter, AnthropicAdapter, AdapterRegistry
-
 # LLM protocol (always available — these are just Protocol definitions)
 from tract.llm.protocols import LLMClient, AgentLoop
 from tract.llm.protocols import AsyncLLMClient, acall_llm
@@ -343,11 +340,6 @@ __all__ = [
     "SessionContent",
     "SpawnInfo",
     "CollapseResult",
-    # External SDK adapters
-    "AgentAdapter",
-    "PassthroughAdapter",
-    "AnthropicAdapter",
-    "AdapterRegistry",
     # LLM protocol
     "LLMClient",
     "AgentLoop",
