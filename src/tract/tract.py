@@ -64,9 +64,14 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
     from sqlalchemy.orm import Session
 
+    from tract.autonomous import AutoBranchResult, AutoRebaseResult, AutoSplitResult
+    from tract.intelligence import CherryPickResult, DedupResult
     from tract.llm.protocols import LLMClient, ResolverCallable
     from tract.loop import LoopResult
     from tract.middleware import MiddlewareEvent
+    from tract.profiles import WorkflowProfile
+    from tract.routing import Route, RoutingResult, RoutingTable, SemanticRouter
+    from tract.templates import DirectiveTemplate
     from tract.toolkit.models import ToolProfile
     from tract.models.branch import BranchInfo
     from tract.models.compression import CompressResult, GCResult, ReorderWarning, ToolCompactResult, ToolDropResult
@@ -396,7 +401,7 @@ class Tract:
         self._quarantined: list[str] = []
 
         # Workflow profile state
-        self._active_profile: object | None = None  # WorkflowProfile when loaded
+        self._active_profile: WorkflowProfile | None = None
 
         # Per-instance template and profile registries (seeded from defaults)
         from tract.templates import default_template_registry
@@ -411,7 +416,7 @@ class Tract:
         self._prompt_dir: str | Path | None = None
 
         # Routing table (lazy init via _ensure_routing_table)
-        self._routing_table: object | None = None  # RoutingTable when initialized
+        self._routing_table: RoutingTable | None = None
 
     def _check_open(self) -> None:
         """Raise :class:`ClosedError` if closed, or :class:`ThreadSafetyError` if wrong thread."""
@@ -975,15 +980,15 @@ class Tract:
         """List all available directive templates from this instance's registry."""
         return list(self._template_registry.values())
 
-    def register_template(self, template: object) -> None:
+    def register_template(self, template: DirectiveTemplate) -> None:
         """Register a custom directive template on this Tract instance.
 
         Args:
             template: A :class:`DirectiveTemplate` instance.
         """
-        self._template_registry[template.name] = template  # type: ignore[union-attr]
+        self._template_registry[template.name] = template
 
-    def get_template(self, name: str) -> object:
+    def get_template(self, name: str) -> DirectiveTemplate:
         """Get a template by name from this instance's registry.
 
         Raises:
@@ -1059,19 +1064,19 @@ class Tract:
         self.configure(**stage_config)
 
     @property
-    def active_profile(self) -> object | None:
+    def active_profile(self) -> WorkflowProfile | None:
         """The currently loaded workflow profile, or None."""
         return self._active_profile
 
-    def register_profile(self, profile: object) -> None:
+    def register_profile(self, profile: WorkflowProfile) -> None:
         """Register a custom workflow profile on this Tract instance.
 
         Args:
             profile: A :class:`WorkflowProfile` instance.
         """
-        self._profile_registry[profile.name] = profile  # type: ignore[union-attr]
+        self._profile_registry[profile.name] = profile
 
-    def get_profile(self, name: str) -> object:
+    def get_profile(self, name: str) -> WorkflowProfile:
         """Get a workflow profile by name from this instance's registry.
 
         Raises:
@@ -1379,9 +1384,9 @@ class Tract:
         self,
         query: str,
         *,
-        router: object | None = None,
+        router: SemanticRouter | None = None,
         apply: bool = False,
-    ) -> object:
+    ) -> RoutingResult:
         """Route a query to the best matching branch, stage, or workflow.
 
         Uses a :class:`~tract.routing.SemanticRouter` for LLM-powered
@@ -1443,9 +1448,9 @@ class Tract:
         self,
         query: str,
         *,
-        router: object | None = None,
+        router: SemanticRouter | None = None,
         apply: bool = False,
-    ) -> object:
+    ) -> RoutingResult:
         """Async version of :meth:`route`.
 
         Uses ``aroute()`` on the SemanticRouter if provided.
@@ -1496,7 +1501,7 @@ class Tract:
         *,
         limit: int = 10,
         **llm_kwargs: Any,
-    ) -> Any:
+    ) -> CherryPickResult:
         """Select the most relevant commits for a task/query using LLM judgment.
 
         Builds a manifest of recent commits (with content previews) and asks
@@ -1531,7 +1536,7 @@ class Tract:
         *,
         limit: int = 10,
         **llm_kwargs: Any,
-    ) -> Any:
+    ) -> CherryPickResult:
         """Async version of :meth:`cherry_pick`."""
         self._check_open()
         from tract.intelligence import acherry_pick as _acherry_pick
@@ -1544,7 +1549,7 @@ class Tract:
         threshold: float = 0.8,
         auto_skip: bool = False,
         **llm_kwargs: Any,
-    ) -> Any:
+    ) -> DedupResult:
         """Detect and optionally handle duplicate/overlapping commits using LLM judgment.
 
         Builds a manifest of recent commits with content previews and asks
@@ -1582,7 +1587,7 @@ class Tract:
         threshold: float = 0.8,
         auto_skip: bool = False,
         **llm_kwargs: Any,
-    ) -> Any:
+    ) -> DedupResult:
         """Async version of :meth:`deduplicate`."""
         self._check_open()
         from tract.intelligence import adeduplicate as _adeduplicate
@@ -1593,7 +1598,7 @@ class Tract:
     # Autonomous operations
     # ------------------------------------------------------------------
 
-    def auto_split(self, commit_hash: str, **llm_kwargs: Any) -> Any:
+    def auto_split(self, commit_hash: str, **llm_kwargs: Any) -> AutoSplitResult:
         """Split a commit into smaller, logically coherent pieces using LLM judgment.
 
         Gets the commit content, asks an LLM to split it, then creates new
@@ -1613,14 +1618,14 @@ class Tract:
 
         return _auto_split(self, commit_hash, **llm_kwargs)
 
-    async def aauto_split(self, commit_hash: str, **llm_kwargs: Any) -> Any:
+    async def aauto_split(self, commit_hash: str, **llm_kwargs: Any) -> AutoSplitResult:
         """Async version of :meth:`auto_split`."""
         self._check_open()
         from tract.autonomous import aauto_split as _aauto_split
 
         return await _aauto_split(self, commit_hash, **llm_kwargs)
 
-    def auto_rebase(self, **llm_kwargs: Any) -> Any:
+    def auto_rebase(self, **llm_kwargs: Any) -> AutoRebaseResult:
         """Decide whether to rebase the current branch using LLM judgment.
 
         Builds a manifest of branch state and asks the LLM whether a rebase
@@ -1639,14 +1644,14 @@ class Tract:
 
         return _auto_rebase(self, **llm_kwargs)
 
-    async def aauto_rebase(self, **llm_kwargs: Any) -> Any:
+    async def aauto_rebase(self, **llm_kwargs: Any) -> AutoRebaseResult:
         """Async version of :meth:`auto_rebase`."""
         self._check_open()
         from tract.autonomous import aauto_rebase as _aauto_rebase
 
         return await _aauto_rebase(self, **llm_kwargs)
 
-    def auto_branch(self, *, context: str = "", **llm_kwargs: Any) -> Any:
+    def auto_branch(self, *, context: str = "", **llm_kwargs: Any) -> AutoBranchResult:
         """Decide whether to create a new branch using LLM judgment.
 
         Builds a manifest of current state and asks the LLM whether a new
@@ -1666,7 +1671,7 @@ class Tract:
 
         return _auto_branch(self, context=context, **llm_kwargs)
 
-    async def aauto_branch(self, *, context: str = "", **llm_kwargs: Any) -> Any:
+    async def aauto_branch(self, *, context: str = "", **llm_kwargs: Any) -> AutoBranchResult:
         """Async version of :meth:`auto_branch`."""
         self._check_open()
         from tract.autonomous import aauto_branch as _aauto_branch
@@ -1679,7 +1684,7 @@ class Tract:
             from tract.routing import RoutingTable
             self._routing_table = RoutingTable()
 
-    def _apply_route(self, route: object) -> bool:
+    def _apply_route(self, route: Route) -> bool:
         """Apply a route (switch branch, apply stage, etc.).
 
         Returns True if successfully applied, False otherwise.

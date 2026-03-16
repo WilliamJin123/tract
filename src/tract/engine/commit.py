@@ -131,15 +131,17 @@ class CommitEngine:
         text = extract_text_from_content(content)
         token_count = self._token_counter.count_text(text)
 
-        # 4. Store blob (content-addressable dedup)
+        # 4. Capture a single timestamp for both blob and commit
         now = datetime.now(timezone.utc)
+
+        # 5. Store blob (content-addressable dedup)
         blob = self._build_blob_row(content_dict, token_count, now)
         self._blob_repo.save_if_absent(blob)
 
-        # 5. Get current HEAD
+        # 6. Get current HEAD
         parent_hash = self._ref_repo.get_head(self._tract_id)
 
-        # 6. Check token budget
+        # 7. Check token budget
         if self._token_budget and self._token_budget.max_tokens is not None:
             total_tokens = token_count
             if parent_hash is not None:
@@ -158,11 +160,10 @@ class CommitEngine:
                     if self._token_budget.callback is not None:
                         self._token_budget.callback(total_tokens, self._token_budget.max_tokens)
 
-        # 7. Generate timestamp
-        timestamp = datetime.now(timezone.utc)
-        timestamp_iso = timestamp.isoformat()
+        # 8. Generate timestamp ISO and commit hash
+        timestamp_iso = now.isoformat()
 
-        # 8. Compute commit hash
+        # 9. Compute commit hash
         operation_value = operation.value if isinstance(operation, CommitOperation) else operation
         c_commit_hash = compute_commit_hash(
             content_hash=c_hash,
@@ -173,7 +174,7 @@ class CommitEngine:
             edit_target=edit_target,
         )
 
-        # 9. Validate edit constraints
+        # 10. Validate edit constraints
         if operation == CommitOperation.EDIT:
             if edit_target is None:
                 raise EditTargetError("EDIT operation requires edit_target to be set")
@@ -187,10 +188,10 @@ class CommitEngine:
                     f"Cannot edit an EDIT commit: {edit_target}"
                 )
 
-        # 10. Normalize tags
+        # 11. Normalize tags
         effective_tags = list(tags) if tags else []
 
-        # 11. Create CommitRow and save
+        # 12. Create CommitRow and save
         commit_row = CommitRow(
             commit_hash=c_commit_hash,
             tract_id=self._tract_id,
@@ -204,14 +205,14 @@ class CommitEngine:
             metadata_json=metadata,
             generation_config_json=generation_config,
             tags_json=effective_tags if effective_tags else None,
-            created_at=timestamp,
+            created_at=now,
         )
         self._commit_repo.save(commit_row)
 
-        # 12. Update HEAD
+        # 13. Update HEAD
         self._ref_repo.update_head(self._tract_id, c_commit_hash)
 
-        # 13. Auto-create priority annotation if content type has non-NORMAL default
+        # 14. Auto-create priority annotation if content type has non-NORMAL default
         default_priority = DEFAULT_TYPE_PRIORITIES.get(content_type, Priority.NORMAL)
         if default_priority != Priority.NORMAL:
             annotation = AnnotationRow(
@@ -219,11 +220,11 @@ class CommitEngine:
                 target_hash=c_commit_hash,
                 priority=default_priority,
                 reason=f"Default priority for {content_type}",
-                created_at=timestamp,
+                created_at=now,
             )
             self._annotation_repo.save(annotation)
 
-        # 14. Return CommitInfo
+        # 15. Return CommitInfo
         return CommitInfo(
             commit_hash=c_commit_hash,
             tract_id=self._tract_id,
@@ -237,7 +238,7 @@ class CommitEngine:
             metadata=metadata,
             generation_config=generation_config,
             tags=effective_tags,
-            created_at=timestamp,
+            created_at=now,
         )
 
     def create_merge_commit(
@@ -289,18 +290,19 @@ class CommitEngine:
         text = extract_text_from_content(content)
         token_count = self._token_counter.count_text(text)
 
-        # 4. Store blob
+        # 4. Capture a single timestamp for both blob and commit
         now = datetime.now(timezone.utc)
+
+        # 5. Store blob
         blob = self._build_blob_row(content_dict, token_count, now)
         self._blob_repo.save_if_absent(blob)
 
-        # 5. Parent hashes
+        # 6. Parent hashes
         first_parent = parent_hashes[0] if parent_hashes else None
         extra_parents = parent_hashes[1:] if len(parent_hashes) > 1 else None
 
-        # 6. Generate timestamp and commit hash
-        timestamp = datetime.now(timezone.utc)
-        timestamp_iso = timestamp.isoformat()
+        # 7. Generate timestamp ISO and commit hash
+        timestamp_iso = now.isoformat()
 
         c_commit_hash = compute_commit_hash(
             content_hash=c_hash,
@@ -311,10 +313,10 @@ class CommitEngine:
             extra_parents=extra_parents,
         )
 
-        # 7. Normalize tags
+        # 8. Normalize tags
         effective_tags = list(tags) if tags else []
 
-        # 8. Create and save CommitRow
+        # 9. Create and save CommitRow
         commit_row = CommitRow(
             commit_hash=c_commit_hash,
             tract_id=self._tract_id,
@@ -328,17 +330,17 @@ class CommitEngine:
             metadata_json=metadata,
             generation_config_json=generation_config,
             tags_json=effective_tags if effective_tags else None,
-            created_at=timestamp,
+            created_at=now,
         )
         self._commit_repo.save(commit_row)
 
-        # 9. Record all parents in commit_parents table
+        # 10. Record all parents in commit_parents table
         self._parent_repo.add_parents(c_commit_hash, parent_hashes)
 
-        # 10. Update HEAD
+        # 11. Update HEAD
         self._ref_repo.update_head(self._tract_id, c_commit_hash)
 
-        # 11. Return CommitInfo
+        # 12. Return CommitInfo
         return CommitInfo(
             commit_hash=c_commit_hash,
             tract_id=self._tract_id,
@@ -352,7 +354,7 @@ class CommitEngine:
             metadata=metadata,
             generation_config=generation_config,
             tags=effective_tags,
-            created_at=timestamp,
+            created_at=now,
         )
 
     def get_commit(self, commit_hash: str) -> CommitInfo | None:
@@ -434,20 +436,9 @@ class CommitEngine:
             created_at=now,
         )
 
-    def _row_to_info(self, row: CommitRow) -> CommitInfo:
+    @staticmethod
+    def _row_to_info(row: CommitRow) -> CommitInfo:
         """Convert a CommitRow ORM object to a CommitInfo Pydantic model."""
-        return CommitInfo(
-            commit_hash=row.commit_hash,
-            tract_id=row.tract_id,
-            parent_hash=row.parent_hash,
-            content_hash=row.content_hash,
-            content_type=row.content_type,
-            operation=row.operation,
-            edit_target=row.edit_target,
-            message=row.message,
-            token_count=row.token_count,
-            metadata=row.metadata_json,
-            generation_config=row.generation_config_json,
-            tags=list(row.tags_json) if row.tags_json else [],
-            created_at=row.created_at,
-        )
+        from tract.operations import row_to_info
+
+        return row_to_info(row)
