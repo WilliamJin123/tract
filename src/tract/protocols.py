@@ -178,7 +178,7 @@ class CompiledContext:
         """
         return self.to_dicts()
 
-    def to_anthropic(self) -> dict[str, object]:
+    def to_anthropic(self, *, cache_control: bool = False) -> dict[str, object]:
         """Convert messages to native Anthropic API format.
 
         Anthropic does not support ``role: "system"`` in the messages
@@ -187,6 +187,16 @@ class CompiledContext:
         content blocks.  Tool result messages produce ``tool_result``
         content blocks inside user messages.  Consecutive same-role
         messages are merged (Anthropic requires strict alternation).
+
+        Args:
+            cache_control: If True, add ``cache_control`` breakpoints for
+                Anthropic's prompt caching (90% cost reduction on cached
+                prefixes).  System messages get ephemeral cache control.
+                The last PINNED/IMPORTANT message (or the midpoint message
+                if no priorities exist) gets a cache_control marker,
+                placing the stable/volatile boundary for maximum reuse.
+                At most 2 breakpoints are added (system + one message),
+                well under Anthropic's 4-breakpoint limit.
 
         Returns:
             Dict with ``"system"`` (str or None) and ``"messages"``
@@ -255,8 +265,23 @@ class CompiledContext:
             else:
                 merged.append(dict(msg))
 
+        system_text = "\n\n".join(system_parts) if system_parts else None
+
+        if cache_control:
+            _apply_anthropic_cache_control(system_text, merged, self.priorities)
+            # When cache_control is enabled the system value may have been
+            # converted from a plain string to a block list.
+            if system_text is not None:
+                system_text = [
+                    {
+                        "type": "text",
+                        "text": system_text,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+
         return {
-            "system": "\n\n".join(system_parts) if system_parts else None,
+            "system": system_text,
             "messages": merged,
         }
 
@@ -274,7 +299,7 @@ class CompiledContext:
             params["tools"] = list(self.tools)
         return params
 
-    def to_anthropic_params(self) -> dict[str, object]:
+    def to_anthropic_params(self, *, cache_control: bool = False) -> dict[str, object]:
         """Full Anthropic API params dict with system, messages, and tools.
 
         Returns a dict with ``"system"``, ``"messages"``, and optionally
@@ -282,10 +307,15 @@ class CompiledContext:
         Tool definitions are converted from OpenAI format to Anthropic format
         (``input_schema`` instead of ``parameters``).
 
+        Args:
+            cache_control: If True, add ``cache_control`` breakpoints for
+                Anthropic's prompt caching.  Passed through to
+                :meth:`to_anthropic`.
+
         Returns:
             Dict with system, messages, and tools (if any).
         """
-        result = self.to_anthropic()
+        result = self.to_anthropic(cache_control=cache_control)
         if self.tools:
             anthropic_tools = []
             for tool in self.tools:
@@ -354,6 +384,78 @@ class CompiledContext:
         from tract.formatting import pprint_compiled_context
 
         pprint_compiled_context(self, max_chars=max_chars, style=style)
+
+
+# ---------------------------------------------------------------------------
+# Anthropic prompt-caching helper
+# ---------------------------------------------------------------------------
+
+_CACHE_MARKER = {"type": "ephemeral"}
+
+_STABLE_PRIORITIES = frozenset({"pinned", "important"})
+
+
+def _apply_anthropic_cache_control(
+    system_text: str | None,
+    merged: list[dict],
+    priorities: list[str],
+) -> None:
+    """Mutate *merged* in-place to add ``cache_control`` at the stable/volatile boundary.
+
+    The system prompt is handled by the caller (converted to a block list).
+    This function adds **one** ``cache_control`` marker to the message that
+    sits at the boundary between stable (cacheable) and volatile content.
+
+    Strategy:
+    * If *priorities* contains PINNED or IMPORTANT entries, the boundary is
+      the **last** message whose priority is PINNED or IMPORTANT.
+    * Otherwise the boundary is the midpoint (``len(merged) // 2``), capped
+      at index 0 minimum.
+    * If there are no messages, nothing is modified.
+
+    The marker is placed on the **last content block** of the chosen message
+    (Anthropic requires ``cache_control`` on a content block, not the
+    message envelope).  If the message content is a plain string it is
+    converted to a single-element block list first.
+    """
+    if not merged:
+        return
+
+    # Determine boundary index.
+    # priorities[i] corresponds to the i-th *commit*, not the i-th merged
+    # message.  After system extraction + merging, the mapping isn't 1:1.
+    # We use a conservative heuristic: scan priorities for the last
+    # PINNED/IMPORTANT entry and use that index clamped to the merged range.
+    boundary_idx: int | None = None
+    if priorities:
+        for i in range(len(priorities) - 1, -1, -1):
+            if priorities[i] in _STABLE_PRIORITIES:
+                boundary_idx = min(i, len(merged) - 1)
+                break
+
+    if boundary_idx is None:
+        # Fallback: midpoint of merged messages (at least index 0).
+        boundary_idx = max(len(merged) // 2 - 1, 0)
+
+    _add_cache_control_to_message(merged, boundary_idx)
+
+
+def _add_cache_control_to_message(messages: list[dict], idx: int) -> None:
+    """Add ``cache_control`` to the last block of ``messages[idx]``."""
+    msg = messages[idx]
+    content = msg["content"]
+
+    if isinstance(content, str):
+        # Convert plain string to block list with cache_control.
+        msg["content"] = [
+            {"type": "text", "text": content, "cache_control": _CACHE_MARKER}
+        ]
+    elif isinstance(content, list) and content:
+        # Add cache_control to the last block.
+        last_block = dict(content[-1])
+        last_block["cache_control"] = _CACHE_MARKER
+        content[-1] = last_block
+    # else: empty list — nothing to annotate.
 
 
 @dataclass(frozen=True)

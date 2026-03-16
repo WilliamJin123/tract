@@ -877,6 +877,7 @@ class Tract:
         "compact_tools": (dict,),
         "compile_strategy": (str,),
         "compile_strategy_k": (int,),
+        "compile_recent_ratio": (float, int),
         "handoff_summary_k": (int,),
     }
 
@@ -3834,6 +3835,7 @@ class Tract:
         check_safety: bool = ...,
         strategy: str = ...,
         strategy_k: int = ...,
+        recent_ratio: float | None = ...,
     ) -> CompiledContext: ...
 
     @overload
@@ -3848,6 +3850,7 @@ class Tract:
         check_safety: bool = ...,
         strategy: str = ...,
         strategy_k: int = ...,
+        recent_ratio: float | None = ...,
     ) -> tuple[CompiledContext, list[ReorderWarning]]: ...
 
     def compile(
@@ -3861,6 +3864,7 @@ class Tract:
         check_safety: bool = True,
         strategy: str = "full",
         strategy_k: int = 5,
+        recent_ratio: float | None = None,
     ) -> CompiledContext | tuple[CompiledContext, list[ReorderWarning]]:
         """Compile the current context into LLM-ready messages.
 
@@ -3883,6 +3887,10 @@ class Tract:
                 messages only.
             strategy_k: Number of recent commits to keep at full detail
                 when using the ``"adaptive"`` strategy. Default 5.
+            recent_ratio: If set, compute ``strategy_k`` as a ratio of the
+                total effective commits. Must be between 0.0 and 1.0.
+                Overrides ``strategy_k`` when both are provided. Only used
+                when ``strategy`` is ``"adaptive"``.
 
         Returns:
             :class:`CompiledContext` when ``order`` is None (default).
@@ -3900,7 +3908,7 @@ class Tract:
         self._run_middleware("pre_compile")
 
         # Strategy kwargs to forward to the compiler
-        _strategy_kw = dict(strategy=strategy, strategy_k=strategy_k)
+        _strategy_kw = dict(strategy=strategy, strategy_k=strategy_k, recent_ratio=recent_ratio)
 
         # If order provided, bypass cache entirely and do a full compile + reorder
         if order is not None:
@@ -3924,6 +3932,7 @@ class Tract:
             or at_commit is not None
             or include_edit_annotations
             or include_reasoning
+            or recent_ratio is not None
         )
         if _bypass_cache:
             result = self._compiler.compile(

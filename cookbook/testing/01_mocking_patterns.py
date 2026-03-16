@@ -6,18 +6,23 @@ Tract's composable, git-like API makes testing dramatically easier than
 testing with raw LLM calls or framework-heavy approaches. The key insight:
 most tract operations (commit, compile, branch, merge, compress, middleware)
 are pure DAG operations that need no LLM at all. Only chat/generate/run
-need a mock client, and the LLMClient protocol is trivial to implement.
+need a mock client, and tract ships first-party test clients so you don't
+even need to write your own.
 
 Patterns shown:
-  1. MockLLMClient           -- protocol-conformant mock for testing
+  1. First-party MockLLMClient   -- cycling mock from tract.llm.testing
   2. Testing a Complete Workflow  -- multi-stage workflow without LLM
-  3. Testing Tool Execution  -- mock tools + mock LLM
-  4. Testing Branching & Merge   -- branch/merge assertions
-  5. Testing Middleware Behavior  -- verify middleware fires and blocks
-  6. Snapshot Testing        -- compiled context regression testing
-  7. Pytest Fixtures         -- reusable test infrastructure
+  3. Testing Chat with Mock LLM  -- mock tools + mock LLM
+  4. Testing Tool Execution      -- ToolCallMockLLMClient (custom pattern)
+  5. Testing Branching & Merge   -- branch/merge assertions
+  6. Testing Middleware Behavior  -- verify middleware fires and blocks
+  7. Snapshot Testing             -- compiled context regression testing
+  8. Pytest Fixtures              -- reusable test infrastructure
+  9. ReplayLLMClient             -- sequential playback, exhaustion check
+  10. FunctionLLMClient          -- custom logic, conditional responses
 
-Demonstrates: LLMClient protocol, Tract.open(), compile(), branch(),
+Demonstrates: LLMClient protocol, MockLLMClient, ReplayLLMClient,
+              FunctionLLMClient, Tract.open(), compile(), branch(),
               merge(), compress(), use(), chat(), run(), tool_handlers,
               BlockedError, MiddlewareContext
 
@@ -36,70 +41,26 @@ from tract import (
     CompiledContext,
     LLMClient,
     MiddlewareContext,
+    MockLLMClient,
+    ReplayLLMClient,
+    FunctionLLMClient,
     Priority,
     Tract,
 )
 
 
 # =====================================================================
-# 1. MockLLMClient -- Protocol-Conformant Mock
+# 1. First-Party MockLLMClient
 # =====================================================================
 #
-# The LLMClient protocol requires just two methods: chat() and close().
-# This mock returns pre-configured responses in order, and records every
-# call for later assertions. No monkeypatching, no unittest.mock magic.
-#
-# Why this works: tract's LLMClient is a Protocol (structural typing),
-# so any class with the right method signatures satisfies it. You don't
-# need to inherit from anything.
-
-
-class MockLLMClient:
-    """A mock LLM client for testing tract-based applications.
-
-    Returns responses from a pre-configured list, cycling back to the
-    start when exhausted. Records all calls for assertion.
-    """
-
-    def __init__(self, responses: list[str], model: str = "mock-model"):
-        self.responses = list(responses)
-        self.calls: list[dict] = []  # Track all calls for assertions
-        self._index = 0
-        self._model = model
-        self.closed = False
-
-    def chat(self, messages: list[dict], **kwargs: Any) -> dict:
-        """Return the next pre-configured response in OpenAI format."""
-        self.calls.append({"messages": messages, **kwargs})
-        response = self.responses[self._index % len(self.responses)]
-        self._index += 1
-        return {
-            "choices": [{"message": {"role": "assistant", "content": response}}],
-            "usage": {
-                "prompt_tokens": 10,
-                "completion_tokens": 5,
-                "total_tokens": 15,
-            },
-            "model": kwargs.get("model", self._model),
-        }
-
-    def close(self) -> None:
-        """Mark the client as closed for cleanup assertions."""
-        self.closed = True
-
-    # Optional: extract_content and extract_usage match the LLMClient
-    # protocol defaults, so you don't need to implement them. But they're
-    # useful if your code calls them directly.
-
-    def extract_content(self, response: dict) -> str:
-        return response["choices"][0]["message"]["content"]
-
-    def extract_usage(self, response: dict) -> dict | None:
-        return response.get("usage")
+# Tract ships MockLLMClient in tract.llm.testing (re-exported from the
+# top-level tract package). It satisfies the LLMClient protocol, cycles
+# through canned responses, and records every call. No need to write
+# your own mock for the common case.
 
 
 def test_mock_satisfies_protocol():
-    """Verify our mock actually satisfies the LLMClient protocol."""
+    """Verify the first-party MockLLMClient satisfies LLMClient."""
 
     # Runtime check using the @runtime_checkable Protocol
     mock = MockLLMClient(["Hello!"])
@@ -108,9 +69,10 @@ def test_mock_satisfies_protocol():
     # Verify it produces valid OpenAI-format responses
     response = mock.chat([{"role": "user", "content": "Hi"}])
     assert response["choices"][0]["message"]["content"] == "Hello!"
-    assert response["usage"]["total_tokens"] == 15
+    assert response["usage"]["total_tokens"] == 0
 
     # Verify call tracking
+    assert mock.call_count == 1
     assert len(mock.calls) == 1
     assert mock.calls[0]["messages"][0]["content"] == "Hi"
 
@@ -120,9 +82,9 @@ def test_mock_satisfies_protocol():
     assert mock2.chat([])["choices"][0]["message"]["content"] == "Second"
     assert mock2.chat([])["choices"][0]["message"]["content"] == "First"  # cycles
 
-    print("1. MockLLMClient satisfies LLMClient protocol")
+    print("1. First-party MockLLMClient satisfies LLMClient protocol")
     print(f"   isinstance check: {isinstance(mock, LLMClient)}")
-    print(f"   call tracking: {len(mock.calls)} call(s) recorded")
+    print(f"   call tracking: {mock.call_count} call(s) recorded")
     print(f"   cycling: 3 calls on 2 responses works correctly")
 
 
@@ -212,7 +174,7 @@ def test_complete_workflow_without_llm():
 
 
 def test_chat_with_mock_llm():
-    """Test chat() flow with a mock LLM client."""
+    """Test chat() flow with the first-party MockLLMClient."""
 
     mock = MockLLMClient([
         "Based on the data, revenue grew 15% QoQ.",
@@ -233,7 +195,7 @@ def test_chat_with_mock_llm():
         assert "top 3 drivers" in response2.text
 
         # Verify the mock was called correctly
-        assert len(mock.calls) == 2
+        assert mock.call_count == 2
 
         # Verify the second call included conversation history
         # (tract compiles context before each LLM call)
@@ -254,7 +216,7 @@ def test_chat_with_mock_llm():
         assert "top 3 drivers" in full_text
 
     print("3. Chat with mock LLM tested successfully")
-    print(f"   Mock calls: {len(mock.calls)}")
+    print(f"   Mock calls: {mock.call_count}")
     print(f"   Commits: {len(log)}")
     print(f"   Response 1: {(response1.text or '(no response)')[:50]}...")
     print(f"   Response 2: {(response2.text or '(no response)')[:50]}...")
@@ -270,6 +232,10 @@ def test_chat_with_mock_llm():
 #
 # Key trick: the mock LLM returns OpenAI-format tool_calls on the first
 # response, then a plain text response to end the loop.
+#
+# ToolCallMockLLMClient is a specialized hand-rolled pattern for tool-
+# calling scenarios. For simpler chat-only tests, use the first-party
+# MockLLMClient, ReplayLLMClient, or FunctionLLMClient instead.
 
 
 class ToolCallMockLLMClient:
@@ -863,7 +829,133 @@ def test_fixture_coding_tract(coding_tract: Tract) -> None:
 
 
 # =====================================================================
-# 9. Testing Annotations and Priority
+# 9. ReplayLLMClient -- Sequential Playback
+# =====================================================================
+#
+# ReplayLLMClient plays responses in order without cycling. When the
+# response list is exhausted it raises IndexError, making it easy to
+# assert your code makes exactly the expected number of LLM calls.
+# Responses can be plain strings OR full OpenAI-format dicts.
+
+
+def test_replay_client_sequential():
+    """ReplayLLMClient plays responses in order, then raises on exhaustion."""
+
+    replay = ReplayLLMClient([
+        "Step 1: Gather requirements.",
+        "Step 2: Design the architecture.",
+    ])
+
+    assert isinstance(replay, LLMClient)
+
+    with Tract.open(llm_client=replay) as t:
+        t.system("You are a project planner.")
+
+        r1 = t.chat("What should we do first?")
+        assert r1.text == "Step 1: Gather requirements."
+
+        r2 = t.chat("And then?")
+        assert r2.text == "Step 2: Design the architecture."
+
+        # Third call should raise -- responses are exhausted
+        with pytest.raises(IndexError, match="ReplayLLMClient exhausted"):
+            t.chat("What next?")
+
+    assert replay.call_count == 3  # all 3 attempts recorded
+    print("9. ReplayLLMClient: sequential playback + exhaustion")
+    print(f"   Responses played: 2")
+    print(f"   Exhaustion error raised on call 3")
+
+
+def test_replay_client_dict_responses():
+    """ReplayLLMClient accepts full OpenAI-format dicts."""
+
+    custom_response = {
+        "choices": [{"message": {"role": "assistant", "content": "Custom format!"}}],
+        "usage": {"prompt_tokens": 42, "completion_tokens": 7, "total_tokens": 49},
+        "model": "custom-model",
+    }
+
+    replay = ReplayLLMClient([custom_response])
+
+    with Tract.open(llm_client=replay) as t:
+        t.system("Test.")
+        r = t.chat("Hi")
+        assert r.text == "Custom format!"
+        # Usage from the custom dict should flow through
+        assert r.usage is not None
+
+    print("   Dict responses work correctly")
+
+
+# =====================================================================
+# 10. FunctionLLMClient -- Custom Logic
+# =====================================================================
+#
+# FunctionLLMClient calls a user-provided function for maximum
+# flexibility. The function receives (messages, kwargs) and returns
+# either a string (auto-wrapped) or a full dict. Perfect for testing
+# gates, maintainers, compression, or any path needing conditional
+# LLM responses.
+
+
+def test_function_client_basic():
+    """FunctionLLMClient delegates to a user-supplied callable."""
+
+    call_count = 0
+
+    def my_responder(messages: list[dict], kwargs: dict) -> str:
+        nonlocal call_count
+        call_count += 1
+        # Return different responses based on message content
+        last_user = next(
+            (m["content"] for m in reversed(messages) if m["role"] == "user"),
+            "",
+        )
+        if "weather" in last_user.lower():
+            return "It will be sunny tomorrow."
+        return f"Generic response #{call_count}"
+
+    fn_client = FunctionLLMClient(my_responder)
+    assert isinstance(fn_client, LLMClient)
+
+    with Tract.open(llm_client=fn_client) as t:
+        t.system("You are a helpful assistant.")
+
+        r1 = t.chat("What is the weather forecast?")
+        assert r1.text == "It will be sunny tomorrow."
+
+        r2 = t.chat("Tell me something else.")
+        assert r2.text == "Generic response #2"
+
+    assert fn_client.call_count == 2
+    print("10a. FunctionLLMClient: conditional responses based on input")
+    print(f"    Call count: {fn_client.call_count}")
+
+
+def test_function_client_dict_return():
+    """FunctionLLMClient can return full dicts for custom usage stats."""
+
+    def custom_fn(messages: list[dict], kwargs: dict) -> dict:
+        return {
+            "choices": [{"message": {"role": "assistant", "content": "With custom usage"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "model": "custom-v2",
+        }
+
+    fn_client = FunctionLLMClient(custom_fn)
+
+    with Tract.open(llm_client=fn_client) as t:
+        t.system("Test.")
+        r = t.chat("Hi")
+        assert r.text == "With custom usage"
+        assert r.usage is not None
+
+    print("10b. FunctionLLMClient: full dict return with custom usage")
+
+
+# =====================================================================
+# 11. Testing Annotations and Priority
 # =====================================================================
 #
 # Verify that priority annotations affect compilation correctly.
@@ -894,13 +986,13 @@ def test_annotations_affect_compilation():
         assert "noise" not in full_text, "SKIP commits should be excluded"
         assert "critical" in full_text, "PINNED commits should be included"
 
-    print("9. Annotations affect compilation correctly")
+    print("11. Annotations affect compilation correctly")
     print(f"   SKIP excluded: {'noise' not in full_text}")
     print(f"   PINNED included: {'critical' in full_text}")
 
 
 # =====================================================================
-# 10. Testing the Full Pattern: Application-Level Test
+# 12. Testing the Full Pattern: Application-Level Test
 # =====================================================================
 #
 # This brings everything together: mock LLM, fixtures, assertions on
@@ -966,10 +1058,10 @@ def test_full_application_pattern():
         assert len(post_commits) >= 6  # system + user/assistant pairs
 
         # Verify mock was called exactly 3 times
-        assert len(mock.calls) == 3
+        assert mock.call_count == 3
 
-    print("10. Full application pattern tested successfully")
-    print(f"    Mock LLM calls: {len(mock.calls)}")
+    print("12. Full application pattern tested successfully")
+    print(f"    Mock LLM calls: {mock.call_count}")
     print(f"    Audit entries: {len(audit_log)}")
     ctx.pprint(style="compact")
     print(f"    Branches used: research, analysis, main")
@@ -1017,6 +1109,18 @@ def main() -> None:
     test_snapshot_detects_regression()
     print()
 
+    test_replay_client_sequential()
+    print()
+
+    test_replay_client_dict_responses()
+    print()
+
+    test_function_client_basic()
+    print()
+
+    test_function_client_dict_return()
+    print()
+
     test_annotations_affect_compilation()
     print()
 
@@ -1031,16 +1135,18 @@ def main() -> None:
     print("=" * 60)
     print()
     print("  Pattern                    What You Need")
-    print("  -------------------------  --------------------------------")
+    print("  -------------------------  ----------------------------------------")
     print("  DAG operations             Nothing -- commit/branch/merge are pure")
-    print("  chat() / generate()        MockLLMClient (10 lines of code)")
-    print("  run() with tools           MockLLMClient + tool_handlers dict")
+    print("  chat() / generate()        MockLLMClient (from tract.llm.testing)")
+    print("  Exact call sequences       ReplayLLMClient (raises on exhaustion)")
+    print("  Conditional / custom       FunctionLLMClient (your callable)")
+    print("  run() with tools           ToolCallMockLLMClient + tool_handlers dict")
     print("  Middleware                  Just register and inspect events_log")
     print("  Snapshot / regression       _snapshot_context() + JSON compare")
     print("  Fixtures                   @pytest.fixture with Tract.open()")
     print()
     print("  Key insight: most of tract's API is deterministic DAG operations.")
-    print("  Only LLM calls need mocking, and the protocol is trivial to fake.")
+    print("  Only LLM calls need mocking, and tract ships first-party mocks.")
     print()
     print("Done.")
 

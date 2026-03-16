@@ -727,6 +727,94 @@ def main() -> None:
             else:
                 print(f"    {label:<25} {ctx.token_count:>8}   (baseline)")
 
+    # =================================================================
+    # 6. Adaptive Strategy with recent_ratio
+    # =================================================================
+    # Instead of a fixed strategy_k, use recent_ratio to keep a
+    # percentage of recent commits at full detail. This scales
+    # automatically as the conversation grows.
+    #
+    # Use ratio when: context length varies and you want a consistent
+    #   proportion of full-detail commits (e.g., "always keep the last 70%").
+    # Use fixed k when: you want an exact number of recent commits at
+    #   full detail regardless of conversation length.
+
+    print(f"\n{'=' * 60}")
+    print("6. Adaptive Strategy with recent_ratio")
+    print("=" * 60)
+
+    with Tract.open() as t:
+        t.system("You are a senior data analyst.")
+
+        # Build a conversation with 8 Q&A turns (16 dialogue commits + 1 system = 17)
+        for i in range(8):
+            q = i + 1
+            t.user(
+                _research_report(q),
+                message=f"Q{q} research report: ${2.1 + q * 0.8:.1f}M revenue, "
+                        f"{50 + q * 12}K MAU",
+            )
+            t.assistant(
+                _analysis_response(q),
+                message=f"Q{q} analysis: revenue {'above' if q > 3 else 'on'} plan, "
+                        f"growth healthy, competitive response needed",
+            )
+
+        total_commits = len(t.log())
+        print(f"\n  Built conversation: {total_commits} commits")
+
+        # --- recent_ratio=0.7: keep last 70% of commits at full detail ---
+        ctx_ratio_70 = t.compile(strategy="adaptive", recent_ratio=0.7)
+        print(f"\n  Strategy: adaptive (recent_ratio=0.7, ~70% full detail)")
+        ctx_ratio_70.pprint(style="compact")
+
+        # --- Compare with fixed strategy_k ---
+        # With 17 effective commits, ratio=0.7 -> k = max(1, int(17*0.7)) = 11
+        # A fixed k=5 keeps only the last 5 at full detail
+        ctx_fixed_k5 = t.compile(strategy="adaptive", strategy_k=5)
+        print(f"\n  Strategy: adaptive (fixed strategy_k=5)")
+        ctx_fixed_k5.pprint(style="compact")
+
+        # --- recent_ratio=1.0: all commits at full detail ---
+        ctx_ratio_100 = t.compile(strategy="adaptive", recent_ratio=1.0)
+        ctx_full = t.compile(strategy="full")
+        print(f"\n  Strategy: adaptive (recent_ratio=1.0) vs full")
+        print(f"    ratio=1.0 tokens: {ctx_ratio_100.token_count}")
+        print(f"    full tokens:      {ctx_full.token_count}")
+
+        # --- recent_ratio=0.0: summarize everything (at least 1 stays full) ---
+        ctx_ratio_0 = t.compile(strategy="adaptive", recent_ratio=0.0)
+        ctx_k1 = t.compile(strategy="adaptive", strategy_k=1)
+        print(f"\n  Strategy: adaptive (recent_ratio=0.0) vs strategy_k=1")
+        print(f"    ratio=0.0 tokens: {ctx_ratio_0.token_count}")
+        print(f"    k=1 tokens:       {ctx_k1.token_count}")
+
+        # --- recent_ratio overrides strategy_k when both are set ---
+        ctx_both = t.compile(strategy="adaptive", strategy_k=2, recent_ratio=0.7)
+        print(f"\n  Both set: strategy_k=2, recent_ratio=0.7")
+        print(f"    Tokens (recent_ratio wins): {ctx_both.token_count}")
+        print(f"    Same as ratio=0.7 alone:    {ctx_ratio_70.token_count}")
+
+        # Comparison table
+        baseline = ctx_full.token_count
+        print(f"\n  {'Strategy':<35} {'Tokens':>8} {'Savings':>10}")
+        print(f"  {'-' * 55}")
+        for label, ctx in [
+            ("full (baseline)", ctx_full),
+            ("adaptive (recent_ratio=1.0)", ctx_ratio_100),
+            ("adaptive (recent_ratio=0.7)", ctx_ratio_70),
+            ("adaptive (fixed k=5)", ctx_fixed_k5),
+            ("adaptive (recent_ratio=0.0)", ctx_ratio_0),
+        ]:
+            savings = baseline - ctx.token_count
+            pct = (savings / baseline * 100) if baseline else 0
+            sign = f"-{pct:.0f}%" if savings > 0 else "---"
+            print(f"  {label:<35} {ctx.token_count:>8} {sign:>10}")
+
+        print(f"\n  Takeaway: recent_ratio scales with conversation length.")
+        print(f"  Use it when you want a consistent proportion of full-detail")
+        print(f"  commits rather than a fixed count.")
+
     print(f"\n{'=' * 60}")
     print("Done.")
     print("=" * 60)

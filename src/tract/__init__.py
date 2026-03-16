@@ -107,6 +107,12 @@ from tract.profiles import (
 from tract.llm.protocols import LLMClient, AgentLoop
 from tract.llm.protocols import AsyncLLMClient, acall_llm
 
+# LLM fallback client (no external deps — always available)
+from tract.llm.fallback import FallbackClient
+
+# LLM test utilities (no external deps — always available)
+from tract.llm.testing import MockLLMClient, ReplayLLMClient, FunctionLLMClient
+
 # Runner components (require optional dependencies: pip install tract-ai[runner])
 try:
     from tract.llm.client import OpenAIClient
@@ -315,6 +321,12 @@ __all__ = [
     "AgentLoop",
     "AsyncLLMClient",
     "acall_llm",
+    # LLM fallback client
+    "FallbackClient",
+    # LLM test utilities
+    "MockLLMClient",
+    "ReplayLLMClient",
+    "FunctionLLMClient",
     # LLM clients
     "OpenAIClient",
     "AnthropicClient",

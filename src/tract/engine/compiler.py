@@ -131,6 +131,7 @@ class DefaultContextCompiler:
         include_reasoning: bool = False,
         strategy: str = "full",
         strategy_k: int = 5,
+        recent_ratio: float | None = None,
     ) -> CompiledContext:
         """Compile commits into structured messages for LLM consumption.
 
@@ -151,15 +152,28 @@ class DefaultContextCompiler:
                 messages only.
             strategy_k: Number of recent commits to keep at full detail
                 when using the ``"adaptive"`` strategy. Default 5.
+            recent_ratio: If set, compute ``strategy_k`` as a ratio of the
+                total effective commits instead of using a fixed count.
+                Must be between 0.0 and 1.0 inclusive. For example,
+                ``recent_ratio=0.7`` keeps the last 70% of commits at full
+                detail and summarizes the first 30%. Overrides
+                ``strategy_k`` when both are provided. Only used when
+                ``strategy`` is ``"adaptive"``.
 
         Returns:
             CompiledContext with messages, token count, and metadata.
 
         Raises:
             ValueError: If both at_time and at_commit are provided.
+            ValueError: If recent_ratio is not between 0.0 and 1.0.
         """
         if at_time is not None and at_commit is not None:
             raise ValueError("Cannot specify both at_time and at_commit; use one or the other.")
+
+        if recent_ratio is not None and not (0.0 <= recent_ratio <= 1.0):
+            raise ValueError(
+                f"recent_ratio must be between 0.0 and 1.0, got {recent_ratio}"
+            )
 
         _valid_strategies = ("full", "messages", "adaptive")
         if strategy not in _valid_strategies:
@@ -203,10 +217,15 @@ class DefaultContextCompiler:
                 config = LLMConfig.from_dict(c.generation_config_json) if c.generation_config_json else None
             generation_configs.append(config)
 
+        # Compute effective strategy_k from recent_ratio when applicable
+        effective_strategy_k = strategy_k
+        if recent_ratio is not None and strategy == "adaptive":
+            effective_strategy_k = max(1, int(len(effective_commits) * recent_ratio))
+
         # Step 5-6: Map to messages
         messages = self._build_messages(
             effective_commits, edit_map, include_edit_annotations,
-            strategy=strategy, strategy_k=strategy_k,
+            strategy=strategy, strategy_k=effective_strategy_k,
             parsed_blob_cache=parsed_blob_cache,
         )
 

@@ -24,8 +24,10 @@ from tract.llm.errors import (
     LLMResponseError,
     LLMToolUseError,
 )
+from tract.llm.fallback import FallbackClient
 from tract.llm.protocols import LLMClient, Resolution, ResolverCallable
 from tract.llm.resolver import OpenAIResolver
+from tract.llm.testing import MockLLMClient, ReplayLLMClient, FunctionLLMClient
 
 __all__ = [
     "OpenAIClient",
@@ -48,4 +50,10 @@ __all__ = [
     "ThinkingDelta",
     "UsageEvent",
     "MessageDone",
+    # Fallback client
+    "FallbackClient",
+    # Test utilities
+    "MockLLMClient",
+    "ReplayLLMClient",
+    "FunctionLLMClient",
 ]
