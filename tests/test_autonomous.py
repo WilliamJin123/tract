@@ -1,6 +1,6 @@
 """Tests for autonomous tract operations.
 
-Tests auto_split, auto_rebase, auto_branch, MiddlewareManager, and
+Tests auto_split, auto_rebase, auto_branch, and
 Tract API integration using mock LLM clients.
 """
 
@@ -15,7 +15,6 @@ from tract import (
     AutoBranchResult,
     AutoRebaseResult,
     AutoSplitResult,
-    MiddlewareManager,
     Priority,
     Tract,
 )
@@ -355,180 +354,6 @@ class TestAutoBranch:
 
 
 # ===========================================================================
-# MiddlewareManager tests
-# ===========================================================================
-
-class TestMiddlewareManager:
-    """Tests for MiddlewareManager."""
-
-    def test_rule_evaluation_with_heuristic(self):
-        """MiddlewareManager evaluates conditions heuristically without LLM."""
-        from tract.middleware import MiddlewareContext
-        from tract.models.commit import CommitInfo
-
-        manager = MiddlewareManager(
-            name="test-manager",
-            rules=[
-                {
-                    "event": "post_commit",
-                    "condition": "more than 3 commits",
-                    "action": "add_middleware",
-                    "handler_event": "pre_compile",
-                    "handler_type": "gate",
-                    "criterion": "Context is relevant",
-                },
-            ],
-        )
-
-        # No LLM client -- will use heuristics
-        t = Tract.open()
-        _seed_commits(t, 5)
-
-        # Build a MiddlewareContext
-        ctx = MiddlewareContext(
-            event="post_commit",
-            commit=None,
-            tract=t,
-            branch="main",
-            head=t.head or "",
-        )
-
-        # Evaluate heuristically
-        evaluations = manager._heuristic_evaluate(t, ctx)
-        assert evaluations[0] is True  # 5 > 3
-
-        t.close()
-
-    def test_rule_evaluation_below_threshold(self):
-        """MiddlewareManager heuristic returns False when under threshold."""
-        from tract.middleware import MiddlewareContext
-
-        manager = MiddlewareManager(
-            name="test-manager",
-            rules=[
-                {
-                    "event": "post_commit",
-                    "condition": "more than 10 commits",
-                    "action": "add_middleware",
-                    "handler_event": "pre_compile",
-                    "handler_type": "gate",
-                    "criterion": "Context is relevant",
-                },
-            ],
-        )
-
-        t = Tract.open()
-        _seed_commits(t, 3)
-
-        ctx = MiddlewareContext(
-            event="post_commit",
-            commit=None,
-            tract=t,
-            branch="main",
-            head=t.head or "",
-        )
-
-        evaluations = manager._heuristic_evaluate(t, ctx)
-        assert evaluations[0] is False  # 3 <= 10
-
-        t.close()
-
-    def test_to_spec_from_spec_roundtrip(self):
-        """MiddlewareManager serializes and deserializes correctly."""
-        rules = [
-            {
-                "event": "post_commit",
-                "condition": "more than 20 commits",
-                "action": "add_middleware",
-                "handler_event": "pre_compile",
-                "handler_type": "gate",
-                "criterion": "Context is focused",
-            },
-            {
-                "event": "post_commit",
-                "condition": "always",
-                "action": "add_middleware",
-                "handler_event": "post_commit",
-                "handler_type": "maintainer",
-                "instructions": "Keep context clean",
-                "actions": ["annotate", "compress"],
-            },
-        ]
-
-        manager = MiddlewareManager(
-            name="test-manager",
-            rules=rules,
-            model="gpt-4",
-            temperature=0.3,
-            max_tokens=500,
-        )
-
-        spec = manager.to_spec()
-        restored = MiddlewareManager.from_spec(spec)
-
-        assert restored.name == manager.name
-        assert restored.rules == manager.rules
-        assert restored.model == manager.model
-        assert restored.temperature == manager.temperature
-        assert restored.max_tokens == manager.max_tokens
-
-    def test_to_spec_preserves_managed_handlers(self):
-        """to_spec includes managed handler IDs."""
-        manager = MiddlewareManager(
-            name="test",
-            rules=[{"condition": "always", "action": "add_middleware"}],
-        )
-        manager._managed_handlers = {"key1": "handler_abc", "key2": "handler_def"}
-
-        spec = manager.to_spec()
-        assert spec["managed_handlers"] == {"key1": "handler_abc", "key2": "handler_def"}
-
-        restored = MiddlewareManager.from_spec(spec)
-        assert restored._managed_handlers == {"key1": "handler_abc", "key2": "handler_def"}
-
-    def test_llm_evaluation(self):
-        """MiddlewareManager uses LLM to evaluate conditions."""
-        from tract.middleware import MiddlewareContext
-
-        eval_response = json.dumps({
-            "evaluations": [
-                {"rule_index": 0, "should_fire": True, "reasoning": "Condition met"},
-            ]
-        })
-        mock = MockLLMClient(eval_response)
-
-        manager = MiddlewareManager(
-            name="test",
-            rules=[
-                {
-                    "event": "post_commit",
-                    "condition": "context is becoming unfocused",
-                    "action": "add_middleware",
-                    "handler_event": "pre_compile",
-                    "handler_type": "gate",
-                    "criterion": "Context is focused",
-                },
-            ],
-        )
-
-        t = Tract.open()
-        t.configure_llm(mock)
-        _seed_commits(t, 3)
-
-        ctx = MiddlewareContext(
-            event="post_commit",
-            commit=None,
-            tract=t,
-            branch="main",
-            head=t.head or "",
-        )
-
-        evaluations = manager._llm_evaluate(t, mock, ctx)
-        assert evaluations.get(0) is True
-        t.close()
-
-
-# ===========================================================================
 # Parse helpers tests
 # ===========================================================================
 
@@ -689,75 +514,6 @@ class TestTractIntegration:
         assert t.current_branch == "feature/test-branch"
         t.close()
 
-    def test_t_manage_middleware(self):
-        """t.manage_middleware() creates and registers a MiddlewareManager."""
-        t = Tract.open()
-        _seed_commits(t, 3)
-
-        handler_id = t.manage_middleware(
-            "test-auto-manager",
-            rules=[
-                {
-                    "event": "post_commit",
-                    "condition": "more than 100 commits",
-                    "action": "add_middleware",
-                    "handler_event": "pre_compile",
-                    "handler_type": "gate",
-                    "criterion": "Context is relevant",
-                },
-            ],
-        )
-
-        assert isinstance(handler_id, str)
-        assert len(handler_id) > 0
-
-        # Can remove it
-        t.remove_middleware(handler_id)
-
-        # Removing again should raise
-        with pytest.raises(ValueError):
-            t.remove_middleware(handler_id)
-
-        t.close()
-
-    def test_manage_middleware_fires_on_commit(self):
-        """MiddlewareManager is triggered by post_commit."""
-        # Use a mock that returns should NOT fire (below threshold)
-        eval_response = json.dumps({
-            "evaluations": [
-                {"rule_index": 0, "should_fire": False, "reasoning": "Not enough commits"},
-            ]
-        })
-        mock = MockLLMClient(eval_response)
-        t = Tract.open()
-        t.configure_llm(mock)
-        _seed_commits(t, 2)
-
-        handler_id = t.manage_middleware(
-            "test-manager",
-            rules=[
-                {
-                    "event": "post_commit",
-                    "condition": "more than 100 commits",
-                    "action": "add_middleware",
-                    "handler_event": "pre_compile",
-                    "handler_type": "gate",
-                    "criterion": "Context is relevant",
-                },
-            ],
-        )
-
-        # Make a commit -- this triggers post_commit middleware including our manager
-        t.commit(
-            {"content_type": "dialogue", "role": "user", "text": "Trigger"},
-            message="trigger commit",
-        )
-
-        # The manager was called (mock was called at least once by the manager)
-        # Since condition was "more than 100 commits" and we have ~3, heuristic would say False
-        # either way, no crash means it works
-        t.remove_middleware(handler_id)
-        t.close()
 
 
 # ===========================================================================

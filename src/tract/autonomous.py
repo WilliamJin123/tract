@@ -1,11 +1,10 @@
-"""Autonomous tract operations: auto-split, auto-rebase, auto-branch, middleware management.
+"""Autonomous tract operations: auto-split, auto-rebase, auto-branch.
 
 Provides LLM-driven functions for autonomous context management:
 
 * **auto_split** -- LLM splits a large commit into granular pieces.
 * **auto_rebase** -- LLM decides whether to rebase and onto which branch.
 * **auto_branch** -- LLM decides whether to create a new branch and names it.
-* **MiddlewareManager** -- self-managing middleware that adds/removes handlers based on rules.
 
 All follow the fail-open pattern from gate.py/maintain.py: on LLM errors,
 operations return safe defaults (no action taken).
@@ -28,24 +27,20 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import uuid
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from tract._helpers import async_safe_llm_call as _async_safe_llm_call
 from tract._helpers import safe_llm_call as _safe_llm_call
 from tract._helpers import strip_fences as _strip_fences
 
 if TYPE_CHECKING:
-    from tract.middleware import MiddlewareContext
     from tract.tract import Tract
 
 __all__: list[str] = [
     "AutoSplitResult",
     "AutoRebaseResult",
     "AutoBranchResult",
-    "MiddlewareManager",
     "auto_split",
     "aauto_split",
     "auto_rebase",
@@ -166,22 +161,6 @@ Or if no new branch is needed:
 Branch names must follow git naming rules (no spaces, no special characters). \
 Use descriptive, kebab-case names.
 """
-
-_MIDDLEWARE_EVAL_SYSTEM_PROMPT = """\
-You are a context management agent evaluating middleware rules.
-
-You will receive a set of rules and the current context state. For each rule, \
-decide whether its condition is met.
-
-Respond with JSON:
-{
-  "evaluations": [
-    {"rule_index": 0, "should_fire": true, "reasoning": "Condition met because..."},
-    {"rule_index": 1, "should_fire": false, "reasoning": "Condition not met because..."}
-  ]
-}
-"""
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -895,258 +874,3 @@ def _parse_branch_response(text: str) -> tuple[bool, str | None, str] | None:
     except (json.JSONDecodeError, TypeError, ValueError):
         pass
     return None
-
-
-# ---------------------------------------------------------------------------
-# MiddlewareManager -- self-managing middleware
-# ---------------------------------------------------------------------------
-
-@dataclass
-class MiddlewareManager:
-    """Self-managing middleware that adds/removes handlers based on rules.
-
-    Registered as a middleware handler itself (typically on ``post_commit``).
-    When triggered, evaluates its rules against the current context and
-    manages (adds/removes) other middleware handlers accordingly.
-
-    Rules are declarative dicts::
-
-        {
-            "event": "post_commit",          # when this manager fires
-            "condition": "more than 20 commits",  # natural-language condition
-            "action": "add_middleware",       # or "remove_middleware"
-            "handler_event": "pre_compile",  # event for the managed handler
-            "handler_type": "gate",          # "gate" or "maintainer"
-            "criterion": "Context is focused and relevant",  # for gates
-        }
-
-    The manager can use LLM evaluation to determine whether conditions
-    are met, or fall back to simple heuristics.
-
-    Attributes:
-        name: Human-readable identifier for this manager.
-        rules: List of rule dicts.
-        model: Model override for LLM evaluation.
-        temperature: Temperature for LLM calls.
-        max_tokens: Max tokens for LLM calls.
-    """
-
-    name: str
-    rules: list[dict[str, Any]]
-    model: str | None = None
-    temperature: float = 0.2
-    max_tokens: int | None = None
-
-    # Tracks handler IDs of managed middleware
-    _managed_handlers: dict[str, str] = field(default_factory=dict, init=False, repr=False)
-
-    def __call__(self, ctx: MiddlewareContext) -> None:
-        """Evaluate rules and manage middleware handlers."""
-        tract = ctx.tract
-
-        # Try LLM evaluation first
-        client = _resolve_client(tract)
-        if client is not None:
-            evaluations = self._llm_evaluate(tract, client, ctx)
-        else:
-            evaluations = self._heuristic_evaluate(tract, ctx)
-
-        # Execute actions for fired rules
-        for idx, should_fire in evaluations.items():
-            if not should_fire:
-                continue
-            if idx >= len(self.rules):
-                continue
-            rule = self.rules[idx]
-            try:
-                self._execute_rule(tract, rule)
-            except Exception as exc:
-                logger.warning(
-                    "MiddlewareManager '%s' rule %d failed: %s",
-                    self.name, idx, exc, exc_info=True,
-                )
-
-    def _llm_evaluate(
-        self,
-        tract: Tract,
-        client: Any,
-        ctx: MiddlewareContext,
-    ) -> dict[int, bool]:
-        """Use LLM to evaluate rule conditions. Returns {rule_index: should_fire}."""
-        # Build context summary
-        entries = tract.log(limit=30)
-        commit_count = len(entries)
-        branch = tract.current_branch or "(detached)"
-
-        context_lines = [
-            f"Branch: {branch}",
-            f"Total commits shown: {commit_count}",
-            f"Event: {ctx.event}",
-        ]
-        if entries:
-            context_lines.append("Recent commits:")
-            for e in entries[:5]:
-                context_lines.append(
-                    f"  [{e.commit_hash[:8]}] {e.content_type} | \"{e.message or '(no msg)'}\""
-                )
-
-        rules_desc = []
-        for idx, rule in enumerate(self.rules):
-            rules_desc.append(
-                f"Rule {idx}: condition=\"{rule.get('condition', '(no condition)')}\""
-            )
-
-        messages = [
-            {"role": "system", "content": _MIDDLEWARE_EVAL_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    "=== CONTEXT ===\n"
-                    + "\n".join(context_lines)
-                    + "\n\n=== RULES ===\n"
-                    + "\n".join(rules_desc)
-                ),
-            },
-        ]
-
-        llm_kwargs = _build_llm_kwargs(self.model, self.temperature, self.max_tokens)
-        result = _safe_llm_call(client, messages, llm_kwargs)
-        if result is None:
-            return self._heuristic_evaluate(tract, ctx)
-
-        raw_text, _ = result
-        return self._parse_evaluations(raw_text)
-
-    def _heuristic_evaluate(
-        self,
-        tract: Tract,
-        ctx: MiddlewareContext,
-    ) -> dict[int, bool]:
-        """Simple heuristic evaluation when no LLM is available."""
-        results: dict[int, bool] = {}
-        entries = tract.log(limit=100)
-        commit_count = len(entries)
-
-        for idx, rule in enumerate(self.rules):
-            condition = str(rule.get("condition", "")).lower()
-            # Simple keyword-based heuristics
-            if "more than" in condition and "commit" in condition:
-                # Extract number
-                numbers = re.findall(r"\d+", condition)
-                if numbers:
-                    threshold = int(numbers[0])
-                    results[idx] = commit_count > threshold
-                else:
-                    results[idx] = False
-            elif "always" in condition:
-                results[idx] = True
-            else:
-                # Default: don't fire
-                results[idx] = False
-
-        return results
-
-    def _parse_evaluations(self, text: str) -> dict[int, bool]:
-        """Parse LLM evaluation response."""
-        cleaned = _strip_fences(text)
-        try:
-            data = json.loads(cleaned)
-            if isinstance(data, dict):
-                evaluations = data.get("evaluations", [])
-                if isinstance(evaluations, list):
-                    results: dict[int, bool] = {}
-                    for ev in evaluations:
-                        if isinstance(ev, dict):
-                            idx = ev.get("rule_index", -1)
-                            should_fire = bool(ev.get("should_fire", False))
-                            if isinstance(idx, int) and idx >= 0:
-                                results[idx] = should_fire
-                    return results
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
-        return {}
-
-    def _execute_rule(self, tract: Tract, rule: dict[str, Any]) -> None:
-        """Execute a single rule's action."""
-        action = rule.get("action", "")
-        handler_event = rule.get("handler_event", "pre_compile")
-        handler_type = rule.get("handler_type", "gate")
-        rule_key = f"{handler_event}:{handler_type}:{rule.get('criterion', rule.get('instructions', ''))[:30]}"
-
-        if action == "add_middleware":
-            # Don't add duplicate managed handlers
-            if rule_key in self._managed_handlers:
-                return
-            handler_id = self._create_handler(tract, rule)
-            if handler_id:
-                self._managed_handlers[rule_key] = handler_id
-
-        elif action == "remove_middleware":
-            # Remove managed handler if it exists
-            if rule_key in self._managed_handlers:
-                handler_id = self._managed_handlers.pop(rule_key)
-                try:
-                    tract.remove_middleware(handler_id)
-                except ValueError:
-                    pass  # already removed
-
-    def _create_handler(self, tract: Tract, rule: dict[str, Any]) -> str | None:
-        """Create and register a middleware handler from a rule."""
-        handler_event = rule.get("handler_event", "pre_compile")
-        handler_type = rule.get("handler_type", "gate")
-
-        if handler_type == "gate":
-            criterion = rule.get("criterion", "Context is relevant and focused")
-            handler_id = tract.gate(
-                name=f"managed-{self.name}-{uuid.uuid4().hex[:6]}",
-                event=handler_event,
-                check=criterion,
-                model=self.model,
-            )
-            return handler_id
-
-        elif handler_type == "maintainer":
-            instructions = rule.get("instructions", "Maintain context quality")
-            actions = rule.get("actions", ["annotate", "compress"])
-            handler_id = tract.maintain(
-                name=f"managed-{self.name}-{uuid.uuid4().hex[:6]}",
-                event=handler_event,
-                instructions=instructions,
-                actions=actions,
-                model=self.model,
-            )
-            return handler_id
-
-        return None
-
-    def to_spec(self) -> dict[str, Any]:
-        """Serialize manager configuration to a dict for persistence.
-
-        Returns:
-            Dict with all declarative manager configuration.
-        """
-        return {
-            "name": self.name,
-            "rules": [dict(r) for r in self.rules],
-            "model": self.model,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "managed_handlers": dict(self._managed_handlers),
-        }
-
-    @classmethod
-    def from_spec(cls, data: dict[str, Any]) -> MiddlewareManager:
-        """Reconstruct a MiddlewareManager from a persisted spec dict.
-
-        Managed handler IDs are restored but may reference stale handlers
-        if the tract was closed and reopened.
-        """
-        manager = cls(
-            name=data["name"],
-            rules=data.get("rules", []),
-            model=data.get("model"),
-            temperature=data.get("temperature", 0.2),
-            max_tokens=data.get("max_tokens"),
-        )
-        manager._managed_handlers = dict(data.get("managed_handlers", {}))
-        return manager

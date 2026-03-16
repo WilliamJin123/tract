@@ -96,10 +96,10 @@ from tract.maintain import SemanticMaintainer, MaintainResult
 from tract.intelligence import CherryPickResult, DedupResult
 
 # Autonomous operations
-from tract.autonomous import AutoSplitResult, AutoRebaseResult, AutoBranchResult, MiddlewareManager
+from tract.autonomous import AutoSplitResult, AutoRebaseResult, AutoBranchResult
 
 # Routing
-from tract.routing import Route, RoutingTable, SemanticRouter, RoutingResult, AutoConfig, ConfigSuggestion
+from tract.routing import Route, RoutingTable, SemanticRouter, RoutingResult
 
 # Directive templates
 from tract.templates import DirectiveTemplate, list_templates, get_template, register_template
@@ -274,14 +274,11 @@ __all__ = [
     "AutoSplitResult",
     "AutoRebaseResult",
     "AutoBranchResult",
-    "MiddlewareManager",
     # Routing
     "Route",
     "RoutingTable",
     "SemanticRouter",
     "RoutingResult",
-    "AutoConfig",
-    "ConfigSuggestion",
     # Directive templates
     "DirectiveTemplate",
     "list_templates",

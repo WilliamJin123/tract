@@ -1486,65 +1486,6 @@ class Tract:
 
         return result
 
-    def auto_configure(
-        self,
-        objective: str,
-        config_keys: list[str] | None = None,
-    ) -> list:
-        """Run LLM-driven configuration optimization.
-
-        Analyzes the current context and suggests config adjustments
-        aligned with the stated objective.
-
-        Args:
-            objective: Natural-language description of the optimization goal.
-            config_keys: Config keys the LLM may evaluate. If ``None``,
-                defaults to common config keys.
-
-        Returns:
-            List of :class:`~tract.routing.ConfigSuggestion` objects.
-
-        Example::
-
-            suggestions = t.auto_configure(
-                "Optimize for fast, focused code generation",
-                config_keys=["temperature", "compile_strategy"],
-            )
-            for s in suggestions:
-                print(f"{s.key}: {s.current_value} -> {s.suggested_value}")
-        """
-        self._check_open()
-        from tract.routing import AutoConfig
-
-        if config_keys is None:
-            config_keys = ["temperature", "compile_strategy", "stage"]
-
-        ac = AutoConfig(
-            name="auto_configure",
-            objective=objective,
-            config_keys=config_keys,
-        )
-        return ac.evaluate(self)
-
-    async def aauto_configure(
-        self,
-        objective: str,
-        config_keys: list[str] | None = None,
-    ) -> list:
-        """Async version of :meth:`auto_configure`."""
-        self._check_open()
-        from tract.routing import AutoConfig
-
-        if config_keys is None:
-            config_keys = ["temperature", "compile_strategy", "stage"]
-
-        ac = AutoConfig(
-            name="aauto_configure",
-            objective=objective,
-            config_keys=config_keys,
-        )
-        return await ac.aevaluate(self)
-
     # ------------------------------------------------------------------
     # Context intelligence (cherry-pick & deduplication)
     # ------------------------------------------------------------------
@@ -1731,54 +1672,6 @@ class Tract:
         from tract.autonomous import aauto_branch as _aauto_branch
 
         return await _aauto_branch(self, context=context, **llm_kwargs)
-
-    def manage_middleware(
-        self,
-        name: str,
-        rules: list[dict],
-        **llm_kwargs: Any,
-    ) -> str:
-        """Create a self-managing middleware handler.
-
-        Creates a :class:`~tract.autonomous.MiddlewareManager` and registers
-        it on ``post_commit``. The manager evaluates its rules after each commit
-        and adds/removes other middleware handlers accordingly.
-
-        Args:
-            name: Human-readable name for the manager.
-            rules: List of rule dicts with keys like ``event``, ``condition``,
-                ``action``, ``handler_event``, ``handler_type``, ``criterion``.
-            **llm_kwargs: Forwarded to the manager (model, temperature, max_tokens).
-
-        Returns:
-            Handler ID for the registered manager.
-
-        Example::
-
-            handler_id = t.manage_middleware(
-                "auto-gate",
-                rules=[{
-                    "event": "post_commit",
-                    "condition": "more than 20 commits",
-                    "action": "add_middleware",
-                    "handler_event": "pre_compile",
-                    "handler_type": "gate",
-                    "criterion": "Context is focused and relevant",
-                }],
-            )
-        """
-        self._check_open()
-        from tract.autonomous import MiddlewareManager
-
-        manager = MiddlewareManager(
-            name=name,
-            rules=rules,
-            model=llm_kwargs.get("model"),
-            temperature=llm_kwargs.get("temperature", 0.2),
-            max_tokens=llm_kwargs.get("max_tokens"),
-        )
-        handler_id = self.add_middleware("post_commit", manager)
-        return handler_id
 
     def _ensure_routing_table(self) -> None:
         """Lazily initialize the default routing table."""
