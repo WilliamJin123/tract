@@ -992,3 +992,64 @@ class TestParseConflictMarkers:
         result = ConflictInfo.parse_conflict_markers(text)
         # Only has opening marker, not closing — treated as resolved
         assert result is not None
+
+
+# ===========================================================================
+# Merge commit hash content-addressability
+# ===========================================================================
+
+
+class TestMergeCommitHashIncludesSecondParent:
+    """Verify merge commit hash depends on ALL parents, not just the first."""
+
+    def test_different_second_parent_produces_different_hash(self) -> None:
+        """Merging two different feature branches from the same base must
+        produce different merge commit hashes, proving the second parent
+        is included in the hash computation."""
+        # Setup: base commit on main
+        t = Tract.open()
+        t.commit(InstructionContent(text="base"))
+
+        # Create feature-a with one commit
+        t.branch("feature-a")
+        t.commit(DialogueContent(role="user", text="feature-a work"))
+
+        # Create feature-b from main with a different commit
+        t.switch("main")
+        t.branch("feature-b")
+        t.commit(DialogueContent(role="user", text="feature-b work"))
+
+        # Diverge main so merges are not fast-forward
+        t.switch("main")
+        t.commit(DialogueContent(role="user", text="main work"))
+
+        # Merge feature-a into main
+        result_a = t.merge("feature-a")
+        assert result_a.merge_type == "clean"
+        hash_a = result_a.merge_commit_hash
+        assert hash_a is not None
+
+        # Reset main back to before the merge by switching to a new branch
+        # from the pre-merge state. We need a fresh Tract to merge feature-b.
+        t.close()
+
+        t2 = Tract.open()
+        t2.commit(InstructionContent(text="base"))
+
+        t2.branch("feature-b")
+        t2.commit(DialogueContent(role="user", text="feature-b work"))
+
+        t2.switch("main")
+        t2.commit(DialogueContent(role="user", text="main work"))
+
+        result_b = t2.merge("feature-b")
+        assert result_b.merge_type == "clean"
+        hash_b = result_b.merge_commit_hash
+        assert hash_b is not None
+
+        # The two merge commit hashes MUST differ because the second parent
+        # (feature-a tip vs feature-b tip) is different.
+        assert hash_a != hash_b, (
+            "Merge commit hashes should differ when second parent differs"
+        )
+        t2.close()

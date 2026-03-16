@@ -6998,7 +6998,6 @@ class Tract:
         default_msg = f"Merge branch '{result.source_branch}' into {result.target_branch}"
         merge_info = create_merge_commit(
             commit_engine=self._commit_engine,
-            parent_repo=self._parent_repo,
             content=merge_content,
             parent_hashes=parent_hashes,
             message=message or default_msg,

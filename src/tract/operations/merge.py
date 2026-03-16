@@ -386,7 +386,6 @@ def merge_branches(
         )
         merge_info = create_merge_commit(
             commit_engine=commit_engine,
-            parent_repo=parent_repo,
             content=merge_content,
             parent_hashes=[current_hash, source_hash],
             message=f"Merge branch '{source_branch}' into {current_branch}",
@@ -457,7 +456,6 @@ def merge_branches(
 
 def create_merge_commit(
     commit_engine: CommitEngine,
-    parent_repo: CommitParentRepository,
     content: BaseModel,
     parent_hashes: list[str],
     *,
@@ -467,12 +465,12 @@ def create_merge_commit(
 ) -> CommitInfo:
     """Create a merge commit with multiple parents.
 
-    Uses the commit engine for the actual commit creation, then records
-    all parent hashes in the commit_parents table.
+    Delegates to ``CommitEngine.create_merge_commit()`` which includes all
+    parent hashes in the commit hash computation and records them in the
+    commit_parents table.
 
     Args:
         commit_engine: Commit engine for creating the commit.
-        parent_repo: Parent repository for recording multiple parents.
         content: Content model for the merge commit.
         parent_hashes: List of parent hashes [current_branch_tip, source_tip].
         message: Optional commit message.
@@ -482,17 +480,10 @@ def create_merge_commit(
     Returns:
         CommitInfo for the new merge commit.
     """
-    # Create the commit using the engine
-    # The engine will use HEAD as parent_hash and update HEAD
-    info = commit_engine.create_commit(
+    return commit_engine.create_merge_commit(
         content=content,
-        operation=CommitOperation.APPEND,
+        parent_hashes=parent_hashes,
         message=message,
         metadata=metadata,
         generation_config=generation_config,
     )
-
-    # Record all parents in the commit_parents table
-    parent_repo.add_parents(info.commit_hash, parent_hashes)
-
-    return info
