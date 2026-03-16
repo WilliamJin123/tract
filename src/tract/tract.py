@@ -86,6 +86,7 @@ if TYPE_CHECKING:
     from tract.toolkit.profiles import ProfileName
     from tract.protocols import ToolTurn
     from tract.models.config import ToolSummarizationConfig
+    from tract.managers import LLMManager, CompressionManager, PersistenceManager
 
 logger = logging.getLogger(__name__)
 
@@ -430,6 +431,393 @@ class Tract:
         # Routing table (lazy init via _ensure_routing_table)
         self._routing_table: RoutingTable | None = None
 
+        # Deferred managers (created in open() / from_components())
+        self._llm_mgr: LLMManager | None = None  # type: ignore[assignment]
+        self._compression_mgr: CompressionManager | None = None  # type: ignore[assignment]
+        self._persistence_mgr: PersistenceManager | None = None  # type: ignore[assignment]
+
+        # Initialize sub-object managers
+        self._create_managers()
+
+    # ------------------------------------------------------------------
+    # Sub-object manager creation
+    # ------------------------------------------------------------------
+
+    def _create_managers(self) -> None:
+        """Initialize all sub-object managers with dependency injection."""
+        from tract.managers.state import LLMState
+        from tract.managers import (
+            TagManager, BranchManager, AnnotationManager, MiddlewareManager,
+            ToolManager, ConfigManager, SearchManager, TemplateManager,
+            SpawnManager, RoutingManager, IntelligenceManager, ToolkitManager,
+        )
+
+        # Shared LLM state
+        self._llm_state = LLMState(
+            llm_client=self._llm_client,
+            default_config=self._default_config,
+            operation_configs=self._operation_configs,
+            operation_prompts=self._operation_prompts,
+            operation_clients=self._operation_clients,
+            retry_config=self._retry_config,
+            default_resolver=self._default_resolver,
+            commit_reasoning=self._commit_reasoning,
+            auto_message_enabled=self._auto_message_enabled,
+            tool_summarization_config=self._tool_summarization_config,
+            owns_llm_client=self._owns_llm_client,
+        )
+
+        # Leaf managers (no outgoing dependencies)
+        self._tags_mgr = TagManager(
+            tract_id=self._tract_id,
+            tag_annotation_repo=self._tag_annotation_repo,
+            tag_registry_repo=self._tag_registry_repo,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            annotation_repo=self._annotation_repo,
+            parent_repo=self._parent_repo,
+            strict_tags=self._strict_tags,
+            check_open=self._check_open,
+            commit_session=self._commit_session,
+            get_ancestors=self._get_merge_aware_ancestors,
+            row_to_info=self._commit_engine._row_to_info,
+            get_head=lambda: self.head,
+        )
+
+        self._branches_mgr = BranchManager(
+            tract_id=self._tract_id,
+            ref_repo=self._ref_repo,
+            commit_repo=self._commit_repo,
+            parent_repo=self._parent_repo,
+            cache=self._cache,
+            check_open=self._check_open,
+            commit_session=self._commit_session,
+            get_config_index=lambda: self._config_index,
+        )
+
+        self._annotations_mgr = AnnotationManager(
+            tract_id=self._tract_id,
+            annotation_repo=self._annotation_repo,
+            commit_repo=self._commit_repo,
+            commit_engine=self._commit_engine,
+            cache=self._cache,
+            check_open=self._check_open,
+            commit_session=self._commit_session,
+            get_head=lambda: self.head,
+            log_fn=lambda **kw: self.log(**kw),
+        )
+
+        self._middleware_mgr = MiddlewareManager(
+            check_open=self._check_open,
+            persist_behavioral_spec=lambda *a, **kw: self.persist_behavioral_spec(*a, **kw),
+            remove_behavioral_spec=lambda *a, **kw: self.remove_behavioral_spec(*a, **kw),
+            get_current_branch=lambda: self.current_branch,
+            get_head=lambda: self.head,
+            tract_ref=lambda: self,
+        )
+
+        self._tools_mgr = ToolManager(
+            tract_id=self._tract_id,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            ref_repo=self._ref_repo,
+            parent_repo=self._parent_repo,
+            annotation_repo=self._annotation_repo,
+            tool_schema_repo=self._tool_schema_repo,
+            check_open=self._check_open,
+            commit_session=self._commit_session,
+            get_head=lambda: self.head,
+            log_fn=lambda **kw: self.log(**kw),
+            annotate_fn=lambda *a, **kw: self.annotate(*a, **kw),
+            row_to_info=self._commit_engine._row_to_info,
+        )
+
+        # Config manager (writes LLMState)
+        self._config_mgr = ConfigManager(
+            tract_id=self._tract_id,
+            commit_engine=self._commit_engine,
+            ref_repo=self._ref_repo,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            event_repo=self._event_repo,
+            persistence_repo=self._persistence_repo,
+            config=self._config,
+            llm_state=self._llm_state,
+            parent_repo=self._parent_repo,
+            check_open=self._check_open,
+            commit_session=self._commit_session,
+            commit_fn=lambda *a, **kw: self.commit(*a, **kw),
+            get_head=lambda: self.head,
+        )
+
+        # Search manager (read-only + callbacks)
+        self._search_mgr = SearchManager(
+            tract_id=self._tract_id,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            ref_repo=self._ref_repo,
+            annotation_repo=self._annotation_repo,
+            parent_repo=self._parent_repo,
+            event_repo=self._event_repo,
+            commit_engine=self._commit_engine,
+            token_counter=self._token_counter,
+            compiler=self._compiler,
+            config=self._config,
+            custom_type_registry=self._custom_type_registry,
+            check_open=self._check_open,
+            enrich=lambda entries: self._enrich_with_priorities(entries),
+            get_head=lambda: self.head,
+            get_ancestors=self._get_merge_aware_ancestors,
+            row_to_info=self._commit_engine._row_to_info,
+            compile_fn=lambda **kw: self.compile(**kw),
+            compile_at_fn=lambda h: self._compile_at(h),
+            resolve_commit_fn=lambda r: self.resolve_commit(r),
+            get_config_fn=lambda k, **kw: self.get_config(k, **kw),
+            commit_fn=lambda *a, **kw: self.commit(*a, **kw),
+            tag_annotation_repo=self._tag_annotation_repo,
+        )
+
+        # Template manager
+        self._templates_mgr = TemplateManager(
+            check_open=self._check_open,
+            directive_fn=lambda *a, **kw: self.directive(*a, **kw),
+            configure_fn=lambda **kw: self.configure(**kw),
+        )
+
+        # Spawn manager
+        self._spawn_mgr = SpawnManager(
+            tract_id=self._tract_id,
+            spawn_repo=self._spawn_repo,
+            check_open=self._check_open,
+            session_owner=self._session_owner,
+        )
+
+        # Routing manager
+        self._routing_mgr = RoutingManager(
+            tract_id=self._tract_id,
+            ref_repo=self._ref_repo,
+            commit_repo=self._commit_repo,
+            check_open=self._check_open,
+            commit_session=self._commit_session,
+            list_branches_fn=lambda: self.list_branches(),
+            checkout_fn=lambda t: self.checkout(t),
+            branch_fn=lambda n: self.branch(n),
+            apply_stage_fn=lambda s: self.apply_stage(s),
+            load_profile_fn=lambda n: self.load_profile(n),
+        )
+
+        # Intelligence manager
+        self._intelligence_mgr = IntelligenceManager(
+            tract_id=self._tract_id,
+            check_open=self._check_open,
+            tract_ref=self,
+        )
+
+        # Toolkit manager (needs back-ref to Tract)
+        self._toolkit_mgr = ToolkitManager(
+            tract_ref=self,
+            check_open=self._check_open,
+        )
+
+    def _create_deferred_managers(self) -> None:
+        """Create managers that need fully-configured LLM state."""
+        from tract.managers import LLMManager, CompressionManager, PersistenceManager
+
+        # Sync LLM state from Tract attributes (which may have been modified by open())
+        if hasattr(self, '_llm_state'):
+            self._llm_state.llm_client = self._llm_client
+            self._llm_state.default_config = self._default_config
+            self._llm_state.operation_configs = self._operation_configs
+            self._llm_state.operation_prompts = self._operation_prompts
+            self._llm_state.operation_clients = self._operation_clients
+            self._llm_state.retry_config = self._retry_config
+            self._llm_state.default_resolver = self._default_resolver
+            self._llm_state.commit_reasoning = self._commit_reasoning
+            self._llm_state.auto_message_enabled = self._auto_message_enabled
+            self._llm_state.tool_summarization_config = self._tool_summarization_config
+            self._llm_state.owns_llm_client = self._owns_llm_client
+
+        self._llm_mgr = LLMManager(
+            tract_id=self._tract_id,
+            ref_repo=self._ref_repo,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            annotation_repo=self._annotation_repo,
+            parent_repo=self._parent_repo,
+            compile_record_repo=self._compile_record_repo,
+            config=self._config,
+            token_counter=self._token_counter,
+            llm_state=self._llm_state,
+            check_open=self._check_open,
+            commit_fn=lambda *a, **kw: self.commit(*a, **kw),
+            system_fn=lambda *a, **kw: self.system(*a, **kw),
+            user_fn=lambda *a, **kw: self.user(*a, **kw),
+            assistant_fn=lambda *a, **kw: self.assistant(*a, **kw),
+            reasoning_fn=lambda *a, **kw: self.reasoning(*a, **kw),
+            tool_result_fn=lambda *a, **kw: self.tool_result(*a, **kw),
+            compile_fn=lambda **kw: self.compile(**kw),
+            annotate_fn=lambda *a, **kw: self.annotate(*a, **kw),
+            run_middleware=lambda *a, **kw: self._run_middleware(*a, **kw),
+            record_usage=lambda *a, **kw: self.record_usage(*a, **kw),
+            get_tools=lambda: self.get_tools(),
+            commit_session=self._commit_session,
+            resolve_llm_config=lambda *a, **kw: self._resolve_llm_config(*a, **kw),
+            resolve_llm_client=lambda *a, **kw: self._resolve_llm_client(*a, **kw),
+            has_llm_client=lambda *a, **kw: self._has_llm_client(*a, **kw),
+            resolve_commit_fn=lambda r: self.resolve_commit(r),
+            get_head=lambda: self.head,
+            as_tools_fn=lambda **kw: self.as_tools(**kw),
+            save_compile_record_fn=lambda *a, **kw: self._save_compile_record(*a, **kw),
+            get_in_batch=lambda: self._in_batch,
+            get_tool_profile=lambda: self._tool_profile,
+            get_custom_tools=lambda: self._custom_tools,
+            get_tract=lambda: self,
+        )
+
+        self._compression_mgr = CompressionManager(
+            tract_id=self._tract_id,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            ref_repo=self._ref_repo,
+            annotation_repo=self._annotation_repo,
+            parent_repo=self._parent_repo,
+            event_repo=self._event_repo,
+            compile_record_repo=self._compile_record_repo,
+            token_counter=self._token_counter,
+            commit_engine=self._commit_engine,
+            compiler=self._compiler,
+            config=self._config,
+            cache=self._cache,
+            llm_state=self._llm_state,
+            check_open=self._check_open,
+            commit_fn=lambda *a, **kw: self.commit(*a, **kw),
+            compile_fn=lambda **kw: self.compile(**kw),
+            run_middleware=lambda *a, **kw: self._run_middleware(*a, **kw),
+            commit_session=self._commit_session,
+            resolve_llm_config=lambda *a, **kw: self._resolve_llm_config(*a, **kw),
+            resolve_llm_client=lambda *a, **kw: self._resolve_llm_client(*a, **kw),
+            has_llm_client=lambda *a, **kw: self._has_llm_client(*a, **kw),
+            annotate_fn=lambda *a, **kw: self.annotate(*a, **kw),
+            get_head=lambda: self.head,
+            get_ancestors=self._get_merge_aware_ancestors,
+            row_to_info=self._commit_engine._row_to_info,
+            get_session=lambda: self._session,
+            get_custom_type_registry=lambda: self._custom_type_registry,
+            extract_content_fn=lambda *a, **kw: self._extract_content(*a, **kw),
+            normalize_usage_dict_fn=lambda *a, **kw: self._normalize_usage_dict(*a, **kw),
+            save_compile_record_fn=lambda *a, **kw: self._save_compile_record(*a, **kw),
+            tool_result_fn=lambda *a, **kw: self.tool_result(*a, **kw),
+            get_content_fn=lambda *a, **kw: self.get_content(*a, **kw),
+            find_tool_turns_fn=lambda **kw: self.find_tool_turns(**kw),
+        )
+
+        self._persistence_mgr = PersistenceManager(
+            tract_id=self._tract_id,
+            commit_repo=self._commit_repo,
+            blob_repo=self._blob_repo,
+            ref_repo=self._ref_repo,
+            annotation_repo=self._annotation_repo,
+            parent_repo=self._parent_repo,
+            event_repo=self._event_repo,
+            compile_record_repo=self._compile_record_repo,
+            persistence_repo=self._persistence_repo,
+            behavioral_spec_repo=self._behavioral_spec_repo,
+            config=self._config,
+            custom_type_registry=self._custom_type_registry,
+            db_path=self._db_path,
+            check_open=self._check_open,
+            commit_fn=lambda *a, **kw: self.commit(*a, **kw),
+            log_fn=lambda **kw: self.log(**kw),
+            branch_fn=lambda *a, **kw: self.branch(*a, **kw),
+            switch_fn=lambda *a, **kw: self.switch(*a, **kw),
+            reset_fn=lambda *a, **kw: self.reset(*a, **kw),
+            register_tag_fn=lambda *a, **kw: self.register_tag(*a, **kw),
+            annotate_fn=lambda *a, **kw: self.annotate(*a, **kw),
+            list_branches_fn=lambda: self.list_branches(),
+            commit_session=self._commit_session,
+            get_head=lambda: self.head,
+            row_to_info=self._commit_engine._row_to_info,
+        )
+
+    # ------------------------------------------------------------------
+    # Sub-object accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def tags(self):
+        """Tag management sub-object."""
+        return self._tags_mgr
+
+    @property
+    def branches(self):
+        """Branch management sub-object."""
+        return self._branches_mgr
+
+    @property
+    def annotations(self):
+        """Annotation management sub-object."""
+        return self._annotations_mgr
+
+    @property
+    def middleware(self):
+        """Middleware management sub-object."""
+        return self._middleware_mgr
+
+    @property
+    def tools(self):
+        """Tool tracking sub-object."""
+        return self._tools_mgr
+
+    @property
+    def config_mgr(self):
+        """Configuration management sub-object."""
+        return self._config_mgr
+
+    @property
+    def search(self):
+        """Search and query sub-object."""
+        return self._search_mgr
+
+    @property
+    def templates(self):
+        """Template and profile sub-object."""
+        return self._templates_mgr
+
+    @property
+    def spawn(self):
+        """Spawn relationship sub-object."""
+        return self._spawn_mgr
+
+    @property
+    def routing(self):
+        """Routing sub-object."""
+        return self._routing_mgr
+
+    @property
+    def intelligence(self):
+        """Intelligence operations sub-object."""
+        return self._intelligence_mgr
+
+    @property
+    def llm(self):
+        """LLM operations sub-object."""
+        return self._llm_mgr
+
+    @property
+    def compression(self):
+        """Compression sub-object."""
+        return self._compression_mgr
+
+    @property
+    def persistence(self):
+        """Persistence sub-object."""
+        return self._persistence_mgr
+
+    @property
+    def toolkit(self):
+        """Toolkit sub-object."""
+        return self._toolkit_mgr
+
     def _check_open(self) -> None:
         """Raise :class:`ClosedError` if closed, or :class:`ThreadSafetyError` if wrong thread."""
         if self._closed:
@@ -771,6 +1159,9 @@ class Tract:
             if auto.is_dir():
                 tract._prompt_dir = auto
 
+        # Create deferred managers that need full LLM state
+        tract._create_deferred_managers()
+
         return tract
 
     @classmethod
@@ -835,6 +1226,8 @@ class Tract:
         if llm_client is not None:
             tract.configure_llm(llm_client)
             tract._owns_llm_client = False
+        # Create deferred managers that need full LLM state
+        tract._create_deferred_managers()
         return tract
 
     # ------------------------------------------------------------------
