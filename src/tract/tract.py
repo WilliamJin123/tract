@@ -121,11 +121,23 @@ def _resolve_text(
         raise ValueError(f"Either {label} or path= is required.")
     if path is not None:
         p = _Path(path)
-        # Resolve relative paths against prompt_dir when available
-        if not p.is_absolute() and prompt_dir is not None:
-            candidate = _Path(prompt_dir) / p
-            if candidate.is_file():
-                return candidate.read_text(encoding="utf-8")
+        # Treat Unix-rooted paths (e.g. /etc/passwd) as absolute on all
+        # platforms — Path.is_absolute() on Windows requires a drive letter.
+        is_abs = p.is_absolute() or str(path).startswith("/")
+        if not is_abs and prompt_dir is not None:
+            # Relative path with prompt_dir: sandbox to prompt_dir
+            base = _Path(prompt_dir).resolve()
+            resolved = (base / p).resolve()
+            # Security: prevent traversal outside prompt_dir
+            if not resolved.is_relative_to(base):
+                raise ValueError(
+                    f"Path traversal detected: {path!r} escapes the prompt "
+                    f"directory {prompt_dir!r}."
+                )
+            if not resolved.is_file():
+                raise ValueError(f"File not found: {resolved}")
+            return resolved.read_text(encoding="utf-8")
+        # Absolute path or no prompt_dir: use path directly
         if not p.is_file():
             raise ValueError(f"File not found: {p}")
         return p.read_text(encoding="utf-8")
@@ -8479,6 +8491,13 @@ class Tract:
             SyntaxError: If code has syntax errors (validated before writing).
             RuntimeError: If database is in-memory.
         """
+        # Security: reject path separators and traversal in workflow name
+        if "/" in name or "\\" in name or ".." in name:
+            raise ValueError(
+                f"Invalid workflow name {name!r}: must not contain "
+                "'/', '\\', or '..'."
+            )
+
         # Validate syntax
         compile(code, f"{name}.py", "exec")
 
