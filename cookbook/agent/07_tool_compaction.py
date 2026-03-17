@@ -290,7 +290,7 @@ if __name__ == "__main__":
 
 
 # --- See also ---
-# Tool tracking reference:  reference/07_tool_tracking.py
-# Tangent isolation:        agent/06_tangent_isolation.py
-# Autonomous behaviors:     config_and_middleware/08_autonomous_behaviors.py
+# Tool tracking reference:  reference/06_tool_tracking.py
+# Tangent isolation:        agent/01_implicit_discovery.py
+# Autonomous behaviors:     config_and_middleware/06_autonomous_behaviors.py
 # Budget management:        optimization/01_budget_management.py

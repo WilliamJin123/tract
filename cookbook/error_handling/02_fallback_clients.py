@@ -274,6 +274,4 @@ if __name__ == "__main__":
 
 
 # --- See also ---
-# Recovery strategies:     error_handling/01_recovery_strategies.py
-# Graceful degradation:    error_handling/02_graceful_degradation.py
-# LLM client reference:    reference/ (TBD)
+# Recovery and resilience: error_handling/01_recovery_and_resilience.py

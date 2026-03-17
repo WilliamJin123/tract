@@ -337,5 +337,5 @@ if __name__ == "__main__":
 # --- See also ---
 # Profiles reference:      profiles.py source
 # Directive templates:      templates.py source
-# Staged workflow (LLM):    agent/05_staged_workflow.py
-# Config basics:            config_and_middleware/01_config_and_strategy.py
+# Staged workflow (LLM):    agent/01_implicit_discovery.py
+# Config basics:            config_and_middleware/01_config_and_precedence.py

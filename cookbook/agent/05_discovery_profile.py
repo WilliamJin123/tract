@@ -219,6 +219,6 @@ if __name__ == "__main__":
 
 
 # --- See also ---
-# Presentation layer:     agent/14_presentation_layer.py
+# Presentation layer:     agent/06_presentation_layer.py
 # Compact profile:        (uses 7 domain-grouped tools instead of 3 meta-tools)
 # Tool profiles overview: getting_started/03_custom_tools.py

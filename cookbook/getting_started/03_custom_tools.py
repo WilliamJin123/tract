@@ -1,42 +1,53 @@
 """Custom Tools: Adding domain-specific tools to the agent loop
 
-t.llm.run() gives the agent tract's built-in context tools by default. This
-example shows how to add your own tools alongside them -- the agent gets
-both tract tools (commit, log, status...) and your custom functions.
+Two approaches for giving the agent your own tools alongside tract built-ins:
 
-Two techniques:
-  1. tool_names -- select which built-in tract tools the agent gets
-  2. tool_handlers + custom tool dicts -- add domain-specific functions
+  1. @t.toolkit.tool decorator  -- recommended; infers schema from type hints
+  2. Manual tool dicts           -- full control over the OpenAI function schema
 
-Demonstrates: tool_names, tool_handlers, custom tool dicts, t.llm.run()
-
+Demonstrates: @t.toolkit.tool, manual tool dicts, tool_handlers, t.llm.run()
 Requires: LLM API key (uses Groq provider)
 """
 
+import contextlib
+import io
 import sys
 from pathlib import Path
 
 from tract import Tract
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _logging import StepLogger
 from _providers import groq as llm
 
 MODEL_ID = llm.small
 
 
-# --- Custom tools: plain functions the agent can call ---
+# ---------------------------------------------------------------------------
+# Tool functions (shared by both approaches)
+# ---------------------------------------------------------------------------
 
 def calculator(expression: str) -> str:
-    """Evaluate a math expression safely."""
+    """Evaluate a mathematical expression. Supports +, -, *, /, parentheses."""
     allowed = set("0123456789+-*/.() ")
     if not all(c in allowed for c in expression):
         return "Error: only numeric expressions allowed"
     try:
-        result = eval(expression)  # noqa: S307
-        return f"{expression} = {result}"
+        return f"{expression} = {eval(expression)}"  # noqa: S307
     except Exception as e:
         return f"Error: {e}"
+
+
+def python_repl(code: str) -> str:
+    """Execute a Python snippet and return its stdout. Use print() for output."""
+    buf = io.StringIO()
+    namespace: dict = {}
+    try:
+        with contextlib.redirect_stdout(buf):
+            exec(code, {"__builtins__": __builtins__}, namespace)  # noqa: S102
+        output = buf.getvalue()
+        return output if output else "(executed, no output)"
+    except Exception as e:
+        return f"Error: {type(e).__name__}: {e}"
 
 
 def lookup_constant(name: str) -> str:
@@ -51,13 +62,66 @@ def lookup_constant(name: str) -> str:
     return constants.get(name.lower(), f"Unknown constant: {name}")
 
 
-# OpenAI function-calling format for custom tools
-CUSTOM_TOOLS = [
+# ===================================================================
+# Approach 1: @t.toolkit.tool decorator (recommended)
+# ===================================================================
+
+def demo_decorator() -> None:
+    """Register tools via the decorator -- schema is inferred from type hints."""
+    if not llm.api_key:
+        print("SKIPPED (no API key -- set GROQ_API_KEY)")
+        return
+
+    with Tract.open(
+        api_key=llm.api_key,
+        base_url=llm.base_url,
+        model=MODEL_ID,
+    ) as t:
+
+        # Register existing functions (no parentheses needed)
+        t.toolkit.tool(calculator)
+        t.toolkit.tool(python_repl)
+
+        # Or with overrides
+        t.toolkit.tool(lookup_constant, name="constants", description="Look up math/physics constants")
+
+        # Inspect registered tools
+        print("=== Decorator-registered tools ===\n")
+        for name, td in t.toolkit.custom_tools.items():
+            print(f"  {name:15s}  {td.description[:60]}")
+
+        # Custom tools merge into as_tools() automatically
+        t.system(
+            "You are a math assistant. Use the calculator for arithmetic, "
+            "constants for lookups, and python_repl for complex calculations."
+        )
+
+        print("\n=== Running agent ===\n")
+
+        result = t.llm.run(
+            "What is the circumference of a circle with radius 10? "
+            "Look up pi with the constants tool, then calculate 2 * pi * 10.",
+            max_steps=8,
+            profile="full",
+            tool_names=["commit", "status", "calculator", "python_repl", "constants"],
+        )
+
+        result.pprint(style="chat")
+        print(f"\n  Status: {result.status}  |  Steps: {result.steps}  |  Tool calls: {result.tool_calls}")
+
+
+# ===================================================================
+# Approach 2: Manual Tool Schemas
+# ===================================================================
+
+# OpenAI function-calling dicts -- useful when you need exact control
+# over parameter descriptions, enums, or complex nested schemas.
+MANUAL_TOOL_DEFS = [
     {
         "type": "function",
         "function": {
             "name": "calculator",
-            "description": "Evaluate a mathematical expression. Supports +, -, *, /, parentheses.",
+            "description": "Evaluate a mathematical expression.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -83,14 +147,14 @@ CUSTOM_TOOLS = [
     },
 ]
 
-# Handlers: map tool names to the Python functions that execute them
-CUSTOM_HANDLERS = {
+MANUAL_HANDLERS = {
     "calculator": calculator,
     "lookup_constant": lookup_constant,
 }
 
 
-def main() -> None:
+def demo_manual() -> None:
+    """Register tools via explicit dicts + handler map."""
     if not llm.api_key:
         print("SKIPPED (no API key -- set GROQ_API_KEY)")
         return
@@ -102,46 +166,38 @@ def main() -> None:
         auto_message=True,
     ) as t:
 
-        # --- 1. Select a slim subset of built-in tract tools ---
-
+        # Get a subset of tract built-ins, then append manual tool defs
         tract_tools = t.toolkit.as_tools(
             profile="full",
-            tool_names=["commit", "status", "log", "compile"],
+            tool_names=["commit", "status", "log"],
             format="openai",
         )
-        print(f"Tract tools ({len(tract_tools)}): "
-              f"{[td['function']['name'] for td in tract_tools]}")
-        print(f"Custom tools ({len(CUSTOM_TOOLS)}): "
-              f"{[td['function']['name'] for td in CUSTOM_TOOLS]}")
+        all_tools = tract_tools + MANUAL_TOOL_DEFS
 
-        # --- 2. Combine tract tools + custom tool schemas ---
+        print(f"Tract tools:  {[td['function']['name'] for td in tract_tools]}")
+        print(f"Custom tools: {[td['function']['name'] for td in MANUAL_TOOL_DEFS]}")
 
-        all_tools = tract_tools + CUSTOM_TOOLS
-
-        t.system(
-            "You are a math assistant. You have tools for calculations "
-            "(calculator, lookup_constant) and for managing your context "
-            "history (commit, status, log, compile). Use the calculator "
-            "for any arithmetic."
-        )
-
-        # --- 3. Run with combined tools + handlers ---
-
-        log = StepLogger()
-
+        t.system("You are a math assistant with calculator and constant-lookup tools.")
         result = t.llm.run(
-            "What is the circumference of a circle with radius 10? "
-            "Look up pi, then calculate 2 * pi * 10.",
+            "What is 2 * pi * 10? Look up pi first, then calculate.",
             max_steps=8,
             tools=all_tools,
-            tool_handlers=CUSTOM_HANDLERS,
-            on_step=log.on_step,
-            on_tool_result=log.on_tool_result,
+            tool_handlers=MANUAL_HANDLERS,
         )
 
         result.pprint(style="chat")
+        print(f"\n  Status: {result.status}  |  Steps: {result.steps}  |  Tool calls: {result.tool_calls}")
 
-        print(f"\nFinal answer:\n  {result.final_response}")
+
+def main() -> None:
+    print("=" * 60)
+    print("PART 1: @t.toolkit.tool decorator (recommended)")
+    print("=" * 60, "\n")
+    demo_decorator()
+    print("\n\n" + "=" * 60)
+    print("PART 2: Manual tool schemas + tool_handlers")
+    print("=" * 60, "\n")
+    demo_manual()
 
 
 if __name__ == "__main__":
@@ -151,4 +207,4 @@ if __name__ == "__main__":
 # --- See also ---
 # Quick start:           getting_started/01_quick_start.py
 # Config & directives:   getting_started/02_config_and_directives.py
-# Agent patterns:        agent/
+# Streaming:             getting_started/04_streaming.py

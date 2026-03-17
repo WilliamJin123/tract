@@ -230,6 +230,6 @@ if __name__ == "__main__":
 
 
 # --- See also ---
-# Discovery profile:     agent/13_discovery_profile.py
+# Discovery profile:     agent/05_discovery_profile.py
 # Tool executor basics:  getting_started/03_custom_tools.py
-# Tangent isolation:     agent/06_tangent_isolation.py
+# Implicit discovery:    agent/01_implicit_discovery.py

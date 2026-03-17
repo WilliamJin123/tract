@@ -156,5 +156,5 @@ if __name__ == "__main__":
 
 # --- See also ---
 # Config and directives:  getting_started/02_config_and_directives.py
-# Self-routing workflow:   workflows/09_self_routing.py
-# Customer support:        workflows/03_customer_support.py
+# Self-routing workflow:   workflows/07_self_routing.py
+# Customer support:        workflows/02_customer_support.py

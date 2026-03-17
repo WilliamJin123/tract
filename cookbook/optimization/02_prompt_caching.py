@@ -282,4 +282,4 @@ if __name__ == "__main__":
 
 # --- See also ---
 # Budget management:     optimization/01_budget_management.py
-# Production monitoring: optimization/02_production_monitoring.py
+# Production monitoring: config_and_middleware/05_observability.py

@@ -223,5 +223,5 @@ if __name__ == "__main__":
 # --- See also ---
 # Explicit transitions:       workflows/01_coding_assistant.py
 # Middleware basics:           config_and_middleware/02_event_automation.py
-# Autonomous behaviors:       config_and_middleware/08_autonomous_behaviors.py
-# Profile-staged workflows:   agent/11_profile_staged_agent.py
+# Autonomous behaviors:       config_and_middleware/06_autonomous_behaviors.py
+# Profile-staged workflows:   agent/04_profile_stages.py

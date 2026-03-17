@@ -523,6 +523,4 @@ if __name__ == "__main__":
 
 # --- See also ---
 # Basic coding workflow:  workflows/01_coding_assistant.py
-# Quality gates:          agent/07_quality_gates.py
-# Self-correction:        agent/03_self_correction.py
-# Staged workflows:       agent/05_staged_workflow.py
+# Implicit discovery:     agent/01_implicit_discovery.py

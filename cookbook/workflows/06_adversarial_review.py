@@ -317,5 +317,4 @@ if __name__ == "__main__":
 
 # --- See also ---
 # Coding workflow:       workflows/01_coding_assistant.py
-# Self-routing:          workflows/09_self_routing.py
-# Full showcase:         workflows/07_full_showcase.py
+# Self-routing:          workflows/07_self_routing.py

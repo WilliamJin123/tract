@@ -182,5 +182,5 @@ if __name__ == "__main__":
 
 # --- See also ---
 # Coding workflow:       workflows/01_coding_assistant.py
-# Self-routing:          workflows/09_self_routing.py
-# Branch patterns:       agent/06_tangent_isolation.py
+# Self-routing:          workflows/07_self_routing.py
+# Branch patterns:       agent/01_implicit_discovery.py

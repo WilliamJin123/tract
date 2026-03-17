@@ -4,8 +4,8 @@ Demonstrates how to structure multi-tract sessions using Session primitives:
 spawn (create child tracts), collapse (summarize child back into parent),
 and hierarchical coordination. All content is manually seeded -- no LLM
 calls are made. These patterns show the *plumbing* for multi-agent
-workflows; pair with real LLM calls (see agent/10_collaborative_research.py
-or workflows/08_adversarial_review.py) for genuine agent behavior.
+workflows; pair with real LLM calls (see agent/02_multi_agent.py
+or workflows/06_adversarial_review.py) for genuine agent behavior.
 
 All examples run locally -- no API keys needed.
 

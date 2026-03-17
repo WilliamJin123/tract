@@ -185,4 +185,4 @@ if __name__ == "__main__":
 # --- See also ---
 # Quick start:       getting_started/01_quick_start.py
 # Custom tools:      getting_started/03_custom_tools.py
-# Config patterns:   config_and_middleware/01_config_and_strategy.py
+# Config patterns:   config_and_middleware/01_config_and_precedence.py

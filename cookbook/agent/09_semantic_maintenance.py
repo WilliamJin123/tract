@@ -196,5 +196,5 @@ if __name__ == "__main__":
     main()
 
 # --- See also ---
-# Semantic quality gates:    agent/16_semantic_gates.py
+# Semantic quality gates:    agent/08_semantic_gates.py
 # Event-driven middleware:   config_and_middleware/02_event_automation.py
