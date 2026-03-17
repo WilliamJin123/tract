@@ -68,14 +68,12 @@ def lookup_constant(name: str) -> str:
 
 def demo_decorator() -> None:
     """Register tools via the decorator -- schema is inferred from type hints."""
-    if not llm.api_key:
-        print("SKIPPED (no API key -- set GROQ_API_KEY)")
+    if not llm.available:
+        print("SKIPPED (no LLM provider)")
         return
 
     with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
+        **llm.tract_kwargs(MODEL_ID),
     ) as t:
 
         # Register existing functions (no parentheses needed)
@@ -155,14 +153,12 @@ MANUAL_HANDLERS = {
 
 def demo_manual() -> None:
     """Register tools via explicit dicts + handler map."""
-    if not llm.api_key:
-        print("SKIPPED (no API key -- set GROQ_API_KEY)")
+    if not llm.available:
+        print("SKIPPED (no LLM provider)")
         return
 
     with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
+        **llm.tract_kwargs(MODEL_ID),
         auto_message=True,
     ) as t:
 

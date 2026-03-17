@@ -75,7 +75,7 @@ def main() -> None:
 
         # Show what compilation looks like after the edit
         print(f"\n  Compiled context:")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="chat")
 
     # =================================================================
     # 2. Drop failed tool turns
@@ -122,7 +122,7 @@ def main() -> None:
         print(f"  Dropped {drop.turns_dropped} failed turn(s) ({drop.commits_skipped} commits)")
 
         print(f"\n  Compiled context (failed turns removed):")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="chat")
 
     # =================================================================
     # 3. Batch compaction with compress_tool_calls()
@@ -132,13 +132,11 @@ def main() -> None:
 
     print("\n=== 3. Batch Tool Compaction (LLM) ===\n")
 
-    if not llm.api_key:
-        print("  SKIPPED (no API key -- set CEREBRAS_API_KEY)")
+    if not llm.available:
+        print("  SKIPPED (no LLM provider)")
     else:
         with Tract.open(
-            api_key=llm.api_key,
-            base_url=llm.base_url,
-            model=MODEL_ID,
+            **llm.tract_kwargs(MODEL_ID),
         ) as t:
             t.system("You are a code review agent.")
             t.user("Review the authentication module.")
@@ -213,7 +211,7 @@ def main() -> None:
 
             # Show what the compacted context looks like
             print(f"\n  Compiled context after compaction:")
-            t.compile().pprint(style="compact")
+            t.compile().pprint(style="chat")
 
     # =================================================================
     # 4. Auto-compact middleware pattern

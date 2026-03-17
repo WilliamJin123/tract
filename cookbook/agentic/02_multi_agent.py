@@ -130,11 +130,7 @@ ANALYSTS = [
 
 def _configure_child(child: "Tract", *, temperature: float = 0.5) -> None:
     """Wire up LLM client on a spawned child tract."""
-    client = OpenAIClient(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        default_model=MODEL_ID,
-    )
+    client = llm.client(model=MODEL_ID)
     child.config.configure_llm(client)
     child._llm_state.owns_llm_client = True
     child._llm_state.default_config = LLMConfig(model=MODEL_ID, temperature=temperature)
@@ -147,8 +143,8 @@ def _configure_child(child: "Tract", *, temperature: float = 0.5) -> None:
 # =====================================================================
 
 def main() -> None:
-    if not llm.api_key:
-        print("SKIPPED (no API key -- set GROQ_API_KEY)")
+    if not llm.available:
+        print("SKIPPED (no LLM provider)")
         return
 
     print("=" * 70)
@@ -175,11 +171,7 @@ def main() -> None:
     )
 
     # Configure coordinator LLM
-    coord_client = OpenAIClient(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        default_model=MODEL_ID,
-    )
+    coord_client = llm.client(model=MODEL_ID)
     coordinator.config.configure_llm(coord_client)
     coordinator._llm_state.owns_llm_client = True
     coordinator._llm_state.default_config = LLMConfig(model=MODEL_ID, temperature=0.3)
@@ -211,7 +203,7 @@ def main() -> None:
 
     print(f"  Coordinator tract created")
     print(f"  Registered 10 research tags")
-    coordinator.compile().pprint(style="compact")
+    coordinator.compile().pprint(style="chat")
 
     # =================================================================
     # 2. Spawn specialist agents
@@ -399,7 +391,7 @@ def main() -> None:
 
     # Show compiled context
     print(f"\n  Final compiled context:")
-    coordinator.compile().pprint(style="compact")
+    coordinator.compile().pprint(style="chat")
 
     # =================================================================
     # Why this pattern is superior

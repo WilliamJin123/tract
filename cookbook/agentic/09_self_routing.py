@@ -132,8 +132,8 @@ def build_router(stages: dict, *, min_signals: int = 1) -> tuple:
 
 
 def main() -> None:
-    if not llm.api_key:
-        print("SKIPPED (no API key -- set CEREBRAS_API_KEY)")
+    if not llm.available:
+        print("SKIPPED (no LLM provider)")
         return
 
     print("=" * 60)
@@ -146,9 +146,7 @@ def main() -> None:
     print()
 
     with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
+        **llm.tract_kwargs(MODEL_ID),
         auto_message=llm.small,
     ) as t:
 
@@ -213,7 +211,7 @@ def main() -> None:
         pprint_log(t.search.log()[-10:])
 
         print(f"\n  Compiled context:")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="chat")
 
 
 if __name__ == "__main__":

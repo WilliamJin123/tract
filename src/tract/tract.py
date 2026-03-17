@@ -1060,6 +1060,10 @@ class Tract:
                 "Use default_config=LLMConfig(model=...) for full control."
             )
 
+        # Normalize empty api_key to None
+        if api_key is not None and not api_key.strip():
+            api_key = None
+
         # Validate: api_key= and llm_client= are mutually exclusive
         if api_key is not None and llm_client is not None:
             raise ValueError(
@@ -1068,17 +1072,22 @@ class Tract:
                 "llm_client= for a custom client."
             )
 
-        # Auto-configure LLM if api_key or claude_code provider
-        if provider == "claude_code" and api_key is None:
-            from tract.llm.claude_code import create_claude_code_client
+        # Auto-configure LLM via Claude Code CLI (no API key needed)
+        if provider == "claude_code" or (
+            api_key is None and llm_client is None and provider is None
+            and model is not None
+            and any(alias in model for alias in ("sonnet", "opus", "haiku", "claude"))
+        ):
+            if api_key is None and llm_client is None:
+                from tract.llm.claude_code import ClaudeCodeClient
 
-            client = create_claude_code_client(
-                model=model or "claude-sonnet-4-6",
-            )
-            tract.config.configure_llm(client)
-            tract._llm_state.owns_llm_client = True
-            if model is not None:
-                tract._llm_state.default_config = LLMConfig(model=model)
+                client = ClaudeCodeClient(
+                    model=model or "sonnet",
+                )
+                tract.config.configure_llm(client)
+                tract._llm_state.owns_llm_client = True
+                if model is not None:
+                    tract._llm_state.default_config = LLMConfig(model=model)
 
         elif api_key is not None:
             detected = provider or _detect_provider(base_url, model)

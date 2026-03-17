@@ -52,7 +52,7 @@ def _branch_report(t: Tract) -> None:
     for branch in branches:
         t.branches.switch(branch.name)
         print(f"\n  [{branch.name}]:")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="chat")
     t.branches.switch(original)
 
 
@@ -81,8 +81,8 @@ def scenario_branch_discovery() -> None:
     )
 
     with Tract.open(
-        api_key=llm.api_key, base_url=llm.base_url,
-        model=MODEL_ID, auto_message=llm.small,
+        **llm.tract_kwargs(MODEL_ID),
+        auto_message=llm.small,
         tool_profile=BRANCH_PROFILE,
     ) as t:
         t.system(
@@ -141,8 +141,8 @@ def scenario_stage_navigation() -> None:
     )
 
     with Tract.open(
-        api_key=llm.api_key, base_url=llm.base_url,
-        model=MODEL_ID, auto_message=llm.small,
+        **llm.tract_kwargs(MODEL_ID),
+        auto_message=llm.small,
         tool_profile=STAGE_PROFILE,
     ) as t:
         t.system(
@@ -219,8 +219,8 @@ def scenario_quality_gate() -> None:
     )
 
     with Tract.open(
-        api_key=llm.api_key, base_url=llm.base_url,
-        model=MODEL_ID, auto_message=llm.small,
+        **llm.tract_kwargs(MODEL_ID),
+        auto_message=llm.small,
         tool_profile=GATE_PROFILE,
     ) as t:
         t.system(
@@ -282,7 +282,7 @@ def scenario_quality_gate() -> None:
         status = t.search.status()
         print(f"  Commits: {status.commit_count}, Tokens: {status.token_count}")
         print("\n  Context:")
-        t.compile().pprint(style="compact")
+        t.compile().pprint(style="chat")
         print(f"\n  Reached implementation: {t.current_branch == 'implementation'}")
 
 
@@ -291,8 +291,8 @@ def scenario_quality_gate() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    if not llm.api_key:
-        print("SKIPPED (no API key)")
+    if not llm.available:
+        print("SKIPPED (no LLM provider)")
         return
 
     print("=" * 70)

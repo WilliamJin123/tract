@@ -47,14 +47,12 @@ def print_conversation(t: Tract, label: str) -> None:
 
 
 def main() -> None:
-    if not llm.api_key:
-        print("SKIPPED (no API key -- set CEREBRAS_API_KEY)")
+    if not llm.available:
+        print("SKIPPED (no LLM provider)")
         return
 
     with Tract.open(
-        api_key=llm.api_key,
-        base_url=llm.base_url,
-        model=MODEL_ID,
+        **llm.tract_kwargs(MODEL_ID),
     ) as t:
 
         # =============================================================
