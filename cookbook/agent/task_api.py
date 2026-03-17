@@ -1,6 +1,6 @@
 """Task Management REST API implementation."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 from uuid import uuid4
@@ -60,7 +60,7 @@ app = FastAPI(title="Task Management API", version="1.0.0")
 def create_task(task: TaskCreate) -> Task:
     """Create a new task."""
     task_id = str(uuid4())
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     task_data = {
         "id": task_id,
@@ -136,7 +136,7 @@ def update_task(task_id: str, update: TaskUpdate) -> Task:
     elif update.assignee is None and "assignee" in update.model_dump():
         task_data["assignee"] = None
 
-    task_data["updated_at"] = datetime.utcnow()
+    task_data["updated_at"] = datetime.now(timezone.utc)
     return Task(**task_data)
 
 

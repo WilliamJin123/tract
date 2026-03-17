@@ -112,7 +112,8 @@ class TestListTasks:
         task1 = client.post("/tasks", json={"title": "Task 1"}).json()
         task2 = client.post("/tasks", json={"title": "Task 2"}).json()
 
-        # Mark task1 as done
+        # Mark task1 as done (must go todo → in_progress → done)
+        client.patch(f"/tasks/{task1['id']}", json={"status": "in_progress"})
         client.patch(f"/tasks/{task1['id']}", json={"status": "done"})
 
         # List only done tasks
