@@ -22,6 +22,8 @@ from tract.llm.anthropic_client import (
     UsageEvent,
     MessageDone,
 )
+from tract.llm.cache import CachingLLMClient
+from tract.llm.claude_code import load_claude_code_credentials, create_claude_code_client
 from tract.llm.protocols import LLMClient, AgentLoop, Resolution, ResolverCallable
 from tract.llm.resolver import OpenAIResolver
 from tract.llm.errors import (
@@ -47,6 +49,9 @@ __all__ = [
     # LLM
     "OpenAIClient",
     "AnthropicClient",
+    "CachingLLMClient",
+    "load_claude_code_credentials",
+    "create_claude_code_client",
     "LLMClient",
     "AgentLoop",
     "Resolution",

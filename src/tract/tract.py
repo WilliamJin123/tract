@@ -191,7 +191,7 @@ def _fallback_message(content_type: str, text: str) -> str:
 
 def _detect_provider(
     base_url: str | None, model: str | None,
-) -> Literal["openai", "anthropic"]:
+) -> Literal["openai", "anthropic", "claude_code"]:
     """Auto-detect LLM provider from base_url or model name."""
     if base_url and "anthropic" in base_url.lower():
         return "anthropic"
@@ -837,7 +837,7 @@ class Tract:
         tokenizer_encoding: str | None = None,
         commit_reasoning: bool = True,
         auto_message: bool | str | LLMConfig = False,
-        provider: Literal["openai", "anthropic"] | None = None,
+        provider: Literal["openai", "anthropic", "claude_code"] | None = None,
         tool_profile: str | ToolProfile | None = None,
         tool_result_format: Literal["minimal", "json", "verbose"] | None = None,
         retry: RetryConfig | None = None,
@@ -1068,8 +1068,19 @@ class Tract:
                 "llm_client= for a custom client."
             )
 
-        # Auto-configure LLM if api_key provided
-        if api_key is not None:
+        # Auto-configure LLM if api_key or claude_code provider
+        if provider == "claude_code" and api_key is None:
+            from tract.llm.claude_code import create_claude_code_client
+
+            client = create_claude_code_client(
+                model=model or "claude-sonnet-4-6",
+            )
+            tract.config.configure_llm(client)
+            tract._llm_state.owns_llm_client = True
+            if model is not None:
+                tract._llm_state.default_config = LLMConfig(model=model)
+
+        elif api_key is not None:
             detected = provider or _detect_provider(base_url, model)
             if detected == "anthropic":
                 from tract.llm.anthropic_client import AnthropicClient

@@ -24,6 +24,8 @@ from tract.llm.errors import (
     LLMResponseError,
     LLMToolUseError,
 )
+from tract.llm.cache import CachingLLMClient
+from tract.llm.claude_code import load_claude_code_credentials, create_claude_code_client
 from tract.llm.fallback import FallbackClient
 from tract.llm.protocols import LLMClient, Resolution, ResolverCallable
 from tract.llm.resolver import OpenAIResolver
@@ -52,6 +54,11 @@ __all__ = [
     "MessageDone",
     # Fallback client
     "FallbackClient",
+    # Cache
+    "CachingLLMClient",
+    # Claude Code credentials
+    "load_claude_code_credentials",
+    "create_claude_code_client",
     # Test utilities
     "MockLLMClient",
     "ReplayLLMClient",
