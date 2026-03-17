@@ -771,6 +771,100 @@ class TestImports:
 
 
 # -----------------------------------------------------------------------
+# Prompt caching (_apply_prompt_cache)
+# -----------------------------------------------------------------------
+
+
+class TestPromptCache:
+    """AnthropicClient._apply_prompt_cache adds cache_control breakpoints."""
+
+    def test_system_string_gets_marker(self):
+        kwargs = {"system": "You are helpful.", "messages": []}
+        AnthropicClient._apply_prompt_cache(kwargs)
+        system = kwargs["system"]
+        assert isinstance(system, list)
+        assert system[0]["cache_control"] == {"type": "ephemeral"}
+        assert system[0]["text"] == "You are helpful."
+
+    def test_system_block_list_gets_marker(self):
+        kwargs = {
+            "system": [{"type": "text", "text": "Part 1"}, {"type": "text", "text": "Part 2"}],
+            "messages": [],
+        }
+        AnthropicClient._apply_prompt_cache(kwargs)
+        # Last block gets the marker
+        assert "cache_control" not in kwargs["system"][0]
+        assert kwargs["system"][1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_no_system_no_crash(self):
+        kwargs = {"messages": [{"role": "user", "content": "Hi"}]}
+        AnthropicClient._apply_prompt_cache(kwargs)  # should not raise
+
+    def test_conversation_prefix_breakpoint(self):
+        """Second-to-last message (the stable prefix) gets a marker."""
+        kwargs = {
+            "messages": [
+                {"role": "user", "content": "msg1"},
+                {"role": "assistant", "content": "resp1"},
+                {"role": "user", "content": "msg2"},  # last = volatile
+            ],
+        }
+        AnthropicClient._apply_prompt_cache(kwargs)
+        # messages[-2] = assistant "resp1" should get marker
+        target = kwargs["messages"][1]
+        assert isinstance(target["content"], list)
+        assert target["content"][-1]["cache_control"] == {"type": "ephemeral"}
+        # Last message should NOT have marker
+        assert isinstance(kwargs["messages"][2]["content"], str)
+
+    def test_single_message_no_prefix_marker(self):
+        """With only one message, no prefix marker (need >= 2)."""
+        kwargs = {"messages": [{"role": "user", "content": "only"}]}
+        AnthropicClient._apply_prompt_cache(kwargs)
+        # Content should stay as string (no marker needed)
+        assert kwargs["messages"][0]["content"] == "only"
+
+    def test_block_list_content_gets_marker_on_last_block(self):
+        kwargs = {
+            "messages": [
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "thinking"},
+                    {"type": "tool_use", "id": "t1", "name": "search", "input": {}},
+                ]},
+                {"role": "user", "content": "thanks"},
+            ],
+        }
+        AnthropicClient._apply_prompt_cache(kwargs)
+        blocks = kwargs["messages"][0]["content"]
+        assert "cache_control" not in blocks[0]
+        assert blocks[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_tools_get_marker(self):
+        kwargs = {
+            "messages": [],
+            "tools": [
+                {"name": "search", "input_schema": {}},
+                {"name": "calculate", "input_schema": {}},
+            ],
+        }
+        AnthropicClient._apply_prompt_cache(kwargs)
+        # Last tool gets marker
+        assert "cache_control" not in kwargs["tools"][0]
+        assert kwargs["tools"][1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_prompt_cache_default_true(self):
+        """prompt_cache defaults to True on new clients."""
+        client = AnthropicClient(api_key="sk-test")
+        assert client._prompt_cache is True
+        client.close()
+
+    def test_prompt_cache_disabled(self):
+        client = AnthropicClient(api_key="sk-test", prompt_cache=False)
+        assert client._prompt_cache is False
+        client.close()
+
+
+# -----------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------
 

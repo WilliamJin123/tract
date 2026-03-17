@@ -50,6 +50,7 @@ class AnthropicClient:
         timeout: float = 120.0,
         max_retries: int = 3,
         default_max_tokens: int = _DEFAULT_MAX_TOKENS,
+        prompt_cache: bool = True,
     ) -> None:
         resolved_key = api_key or os.environ.get("TRACT_ANTHROPIC_API_KEY", "")
         if not resolved_key:
@@ -63,6 +64,7 @@ class AnthropicClient:
         self._default_max_tokens = default_max_tokens
         self._max_retries = max_retries
         self._timeout = timeout
+        self._prompt_cache = prompt_cache
 
         sdk_kwargs: dict[str, Any] = {
             "api_key": resolved_key,
@@ -420,9 +422,69 @@ class AnthropicClient:
         if tool_choice is not None:
             create_kwargs["tool_choice"] = self._translate_tool_choice(tool_choice)
 
-        # Pass through remaining kwargs (cache_control, metadata, etc.)
+        # Prompt caching: add cache_control breakpoints to system + messages.
+        # Per-call kwarg overrides the instance default.
+        prompt_cache = kwargs.pop("prompt_cache", self._prompt_cache)
+        if prompt_cache:
+            self._apply_prompt_cache(create_kwargs)
+
+        # Pass through remaining kwargs (metadata, etc.)
         create_kwargs.update(kwargs)
         return create_kwargs
+
+    # ------------------------------------------------------------------
+    # Internal: prompt caching
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _apply_prompt_cache(create_kwargs: dict[str, Any]) -> None:
+        """Add ``cache_control`` breakpoints to the request for Anthropic prompt caching.
+
+        Places up to 2 breakpoints (Anthropic's limit for most models):
+        1. On the system prompt (always stable, always worth caching).
+        2. On the last message before the final user turn (the stable
+           prefix of the conversation).
+
+        This reduces input token costs by ~90% on cache hits for the
+        cached prefix.
+        """
+        _MARKER = {"type": "ephemeral"}
+
+        # 1. System prompt breakpoint
+        system = create_kwargs.get("system")
+        if system is not None:
+            if isinstance(system, str):
+                create_kwargs["system"] = [
+                    {"type": "text", "text": system, "cache_control": _MARKER}
+                ]
+            elif isinstance(system, list) and system:
+                # Already block format — tag the last block
+                last = dict(system[-1])
+                last["cache_control"] = _MARKER
+                system[-1] = last
+
+        # 2. Conversation prefix breakpoint: tag the second-to-last message.
+        #    The last message is typically the new user turn (volatile).
+        #    Everything before it is the stable prefix worth caching.
+        messages = create_kwargs.get("messages", [])
+        if len(messages) >= 2:
+            target = messages[-2]
+            content = target.get("content")
+            if isinstance(content, str):
+                target["content"] = [
+                    {"type": "text", "text": content, "cache_control": _MARKER}
+                ]
+            elif isinstance(content, list) and content:
+                last_block = dict(content[-1])
+                last_block["cache_control"] = _MARKER
+                content[-1] = last_block
+
+        # Also tag tools if present (tool definitions are stable across calls)
+        tools = create_kwargs.get("tools")
+        if tools and isinstance(tools, list) and tools:
+            last_tool = dict(tools[-1])
+            last_tool["cache_control"] = _MARKER
+            tools[-1] = last_tool
 
     # ------------------------------------------------------------------
     # Internal: message translation (OpenAI → Anthropic)
