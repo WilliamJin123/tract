@@ -145,7 +145,10 @@ class AnthropicClient:
             for tc in tcs:
                 args = tc.get("function", {}).get("arguments", {})
                 if isinstance(args, str):
-                    args = json.loads(args)
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {"_raw": args}
                 result.append({
                     "id": tc.get("id", ""),
                     "name": tc.get("function", {}).get("name", ""),
@@ -259,12 +262,9 @@ class AnthropicClient:
         """Close the underlying client."""
         self._client.close()
         if self._async_client is not None:
-            # Can't await in sync context, but httpx.AsyncClient.aclose()
-            # also has a sync close() fallback
-            try:
-                self._async_client.close()
-            except Exception:
-                pass
+            # Can't await in sync context; drop the reference so GC can
+            # reclaim the connection pool (same pattern as OpenAIClient).
+            self._async_client = None
 
     def __enter__(self) -> AnthropicClient:
         return self

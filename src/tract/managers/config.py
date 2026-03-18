@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Valid operation names for configure_operations / configure_clients
 # ---------------------------------------------------------------------------
-_VALID_OPERATION_NAMES: frozenset[str] = frozenset({"chat", "merge", "compress", "message"})
+_VALID_OPERATION_NAMES: frozenset[str] = frozenset({"chat", "merge", "compress", "message", "gate", "maintain"})
 _VALID_PROMPT_NAMES: frozenset[str] = frozenset({
     "compress", "merge", "message", "commit_message",
     "gate", "maintain", "maintain_peek", "cherry_pick", "dedup",
@@ -315,7 +315,8 @@ class ConfigManager:
         Args:
             _clients: OperationClients instance with typed fields.
             **operation_clients: Operation name -> client mappings.
-                Valid names: ``"chat"``, ``"merge"``, ``"compress"``.
+                Valid names: ``"chat"``, ``"merge"``, ``"compress"``,
+                ``"gate"``, ``"maintain"``.
 
         Raises:
             TypeError: If both positional and keyword arguments provided.
@@ -366,8 +367,11 @@ class ConfigManager:
         Args:
             _prompts: OperationPrompts instance with typed fields.
             **prompt_overrides: Operation name -> prompt string mappings.
-                Valid names: ``"compress"``, ``"merge"``,
-                ``"message"``, ``"commit_message"``.
+                Valid names: ``"compress"``, ``"merge"``, ``"message"``,
+                ``"commit_message"``, ``"gate"``, ``"maintain"``,
+                ``"maintain_peek"``, ``"cherry_pick"``, ``"dedup"``,
+                ``"split"``, ``"rebase"``, ``"branch"``, ``"route"``,
+                ``"tool_compact"``, ``"peek"``.
 
         Raises:
             TypeError: If both positional and keyword arguments provided.

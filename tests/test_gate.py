@@ -237,7 +237,7 @@ class TestLLMClientResolution:
             gate(ctx)
 
         assert gate.last_result is not None
-        assert gate.last_result.passed is True  # fail-open
+        assert gate.last_result.passed is False  # error, not a pass
         assert gate.last_result.tokens_used == 0
         assert "No LLM client" in gate.last_result.reason
 

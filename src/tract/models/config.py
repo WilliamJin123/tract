@@ -232,6 +232,8 @@ class OperationClients:
     merge: LLMClient | None = None
     compress: LLMClient | None = None
     message: LLMClient | None = None
+    gate: LLMClient | None = None
+    maintain: LLMClient | None = None
 
 
 @dataclass(frozen=True)

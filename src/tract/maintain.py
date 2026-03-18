@@ -302,8 +302,8 @@ class SemanticMaintainer:
                 maintainer_name=self.name,
                 actions_requested=0, actions_executed=0, actions_failed=0,
                 tokens_used=0,
-                reasoning="No LLM client configured; cannot run maintainer.",
-                errors=(),
+                reasoning="No LLM client configured; maintainer cannot evaluate.",
+                errors=("No LLM client configured",),
                 consulted_hashes=(),
             )
             raise RuntimeError(

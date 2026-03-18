@@ -190,6 +190,10 @@ def _classify_by_priority(
 ) -> tuple[list[CommitRow], list[CommitRow], list[CommitRow], list[CommitRow]]:
     """Classify commits by their priority annotation.
 
+    When no annotation exists, falls back to DEFAULT_TYPE_PRIORITIES
+    (same logic the compiler uses). This ensures instruction commits
+    are treated as PINNED even if their auto-annotation is missing.
+
     Args:
         range_commits: Commits to classify.
         annotation_repo: For looking up priorities.
@@ -198,6 +202,8 @@ def _classify_by_priority(
     Returns:
         (pinned_commits, important_commits, normal_commits, skip_commits)
     """
+    from tract.models.annotations import DEFAULT_TYPE_PRIORITIES
+
     preserve_set = set(preserve) if preserve else set()
     target_hashes = [r.commit_hash for r in range_commits]
     latest_annotations = annotation_repo.batch_get_latest(target_hashes)
@@ -217,14 +223,17 @@ def _classify_by_priority(
 
         annotation = latest_annotations.get(h)
         if annotation is not None:
-            if annotation.priority == Priority.PINNED:
-                pinned.append(row)
-            elif annotation.priority == Priority.IMPORTANT:
-                important.append(row)
-            elif annotation.priority == Priority.SKIP:
-                skip.append(row)
-            else:
-                normal.append(row)
+            priority = annotation.priority
+        else:
+            # No annotation: fall back to content-type default (mirrors compiler logic)
+            priority = DEFAULT_TYPE_PRIORITIES.get(row.content_type, Priority.NORMAL)
+
+        if priority == Priority.PINNED:
+            pinned.append(row)
+        elif priority == Priority.IMPORTANT:
+            important.append(row)
+        elif priority == Priority.SKIP:
+            skip.append(row)
         else:
             normal.append(row)
 

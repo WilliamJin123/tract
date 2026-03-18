@@ -92,11 +92,14 @@ from tract.gate import SemanticGate, GateResult
 # Semantic maintainers
 from tract.maintain import SemanticMaintainer, MaintainResult
 
+# Context view (unified context specification for LLM-powered operations)
+from tract.context_view import ContextView, BuiltContext, build_context, resolve_auto_peek, estimate_tokens
+
 # Context intelligence
-from tract.intelligence import CherryPickResult, DedupResult, cherry_pick, deduplicate
+from tract.intelligence import CherryPickResult, DedupResult, cherry_pick, acherry_pick, deduplicate, adeduplicate
 
 # Autonomous operations
-from tract.autonomous import AutoSplitResult, AutoRebaseResult, AutoBranchResult, auto_split, auto_rebase, auto_branch
+from tract.autonomous import AutoSplitResult, AutoRebaseResult, AutoBranchResult, auto_split, aauto_split, auto_rebase, aauto_rebase, auto_branch, aauto_branch
 
 # Routing
 from tract.routing import Route, RoutingTable, SemanticRouter, RoutingResult
@@ -115,6 +118,16 @@ from tract.profiles import (
 # LLM protocol (always available — these are just Protocol definitions)
 from tract.llm.protocols import LLMClient, AgentLoop
 from tract.llm.protocols import AsyncLLMClient, acall_llm
+
+# LLM error types (no external deps — always available)
+from tract.llm.errors import (
+    LLMClientError,
+    LLMConfigError,
+    LLMRateLimitError,
+    LLMAuthError,
+    LLMResponseError,
+    LLMToolUseError,
+)
 
 # LLM fallback client (no external deps — always available)
 from tract.llm.fallback import FallbackClient
@@ -267,18 +280,29 @@ __all__ = [
     "MaintainResult",
     "MiddlewareContext",
     "MiddlewareEvent",
+    # Context view
+    "ContextView",
+    "BuiltContext",
+    "build_context",
+    "resolve_auto_peek",
+    "estimate_tokens",
     # Context intelligence
     "CherryPickResult",
     "DedupResult",
     "cherry_pick",
+    "acherry_pick",
     "deduplicate",
+    "adeduplicate",
     # Autonomous operations
     "AutoSplitResult",
     "AutoRebaseResult",
     "AutoBranchResult",
     "auto_split",
+    "aauto_split",
     "auto_rebase",
+    "aauto_rebase",
     "auto_branch",
+    "aauto_branch",
     # Routing
     "Route",
     "RoutingTable",
@@ -347,6 +371,13 @@ __all__ = [
     "AgentLoop",
     "AsyncLLMClient",
     "acall_llm",
+    # LLM error types
+    "LLMClientError",
+    "LLMConfigError",
+    "LLMRateLimitError",
+    "LLMAuthError",
+    "LLMResponseError",
+    "LLMToolUseError",
     # LLM fallback client
     "FallbackClient",
     # LLM test utilities

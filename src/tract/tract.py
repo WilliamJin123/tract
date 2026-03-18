@@ -153,8 +153,14 @@ CompileStrategy = Literal["full", "messages", "adaptive"]
 # ---------------------------------------------------------------------------
 # Valid operation names for configure_operations / configure_clients
 # ---------------------------------------------------------------------------
+# NOTE: Canonical validation constants live in managers/config.py.
+# These module-level aliases are kept for backward compatibility only.
 _VALID_OPERATION_NAMES: frozenset[str] = frozenset({"chat", "merge", "compress", "message"})
-_VALID_PROMPT_NAMES: frozenset[str] = frozenset({"compress", "merge", "message", "commit_message"})
+_VALID_PROMPT_NAMES: frozenset[str] = frozenset({
+    "compress", "merge", "message", "commit_message",
+    "gate", "maintain", "maintain_peek", "cherry_pick", "dedup",
+    "split", "rebase", "branch", "route", "tool_compact", "peek",
+})
 
 
 # ------------------------------------------------------------------

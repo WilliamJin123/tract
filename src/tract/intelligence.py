@@ -153,7 +153,7 @@ def _build_intelligence_manifest(
         ctype = entry.content_type
         tokens = entry.token_count
         tags_str = ",".join(entry.tags) if entry.tags else ""
-        priority = entry.effective_priority or "NORMAL"
+        priority = entry.effective_priority or "normal"
         msg = entry.message if entry.message else "(no message)"
         if len(msg) > 60:
             msg = msg[:57] + "..."

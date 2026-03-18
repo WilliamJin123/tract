@@ -117,6 +117,7 @@ class CacheManager:
                 Message(
                     role=m.role, content=m.content, name=m.name, token_count=tc,
                     tool_calls=m.tool_calls, tool_call_id=m.tool_call_id,
+                    content_type=m.content_type,
                 )
                 for m, tc in zip(snapshot.messages, snapshot.message_token_counts)
             ]
@@ -228,7 +229,7 @@ class CacheManager:
                 CompileSnapshot(
                     head_hash=commit_info.commit_hash,
                     messages=parent_snapshot.messages,
-                    commit_count=parent_snapshot.commit_count + 1,
+                    commit_count=parent_snapshot.commit_count,
                     token_count=parent_snapshot.token_count,
                     token_source=parent_snapshot.token_source,
                     generation_configs=parent_snapshot.generation_configs,

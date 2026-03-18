@@ -911,9 +911,23 @@ class Session:
             return
         self._closed = True
 
-        # Close all tract sessions
+        # Close all tracts (handles LLM client cleanup + session close)
         for tid, tract in self._tracts.items():
             try:
+                # Close LLM client if the tract owns one
+                s = getattr(tract, '_llm_state', None)
+                owns = s.owns_llm_client if s else tract._owns_llm_client
+                client = s.llm_client if s else tract._llm_client
+                if owns and client is not None:
+                    try:
+                        client.close()
+                    except Exception as e:
+                        logger.debug("Failed to close LLM client for tract %s: %s", tid, e, exc_info=True)
+                    # Prevent double-close if tract.close() is called later
+                    if s:
+                        s.owns_llm_client = False
+                    else:
+                        tract._owns_llm_client = False
                 tract._session.close()
             except Exception as e:
                 logger.debug("Failed to close session for tract %s: %s", tid, e, exc_info=True)

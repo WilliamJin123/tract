@@ -76,7 +76,7 @@ def build_manifest(tract: Tract, max_log_entries: int = 30) -> str:
             ctype = entry.content_type
             tokens = entry.token_count
             tags_str = ",".join(entry.tags) if entry.tags else ""
-            priority = entry.effective_priority or "NORMAL"
+            priority = entry.effective_priority or "normal"
             msg = entry.message if entry.message else "(no message)"
             if len(msg) > 60:
                 msg = msg[:57] + "..."
@@ -271,8 +271,8 @@ class SemanticGate:
         except RuntimeError as exc:
             self.last_result = GateResult(
                 gate_name=self.name,
-                passed=True,
-                reason="No LLM client configured; fail-open default.",
+                passed=False,
+                reason="No LLM client configured; gate cannot evaluate.",
                 tokens_used=0,
                 consulted_hashes=(),
             )

@@ -425,7 +425,7 @@ def _build_commit_entries(entries: list[CommitInfo]) -> list[dict[str, Any]]:
             "content_type": e.content_type,
             "token_count": e.token_count,
             "tags": list(e.tags) if e.tags else [],
-            "priority": e.effective_priority or "NORMAL",
+            "priority": e.effective_priority or "normal",
         }
         for e in entries
     ]
@@ -477,7 +477,7 @@ def _format_commits(
         ctype = entry.content_type
         tokens = entry.token_count
         tags_str = ",".join(entry.tags) if entry.tags else ""
-        priority = entry.effective_priority or "NORMAL"
+        priority = entry.effective_priority or "normal"
         msg = entry.message or "(no message)"
         if len(msg) > view.message_chars:
             msg = msg[: view.message_chars - 3] + "..."
