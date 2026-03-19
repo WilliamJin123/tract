@@ -346,25 +346,30 @@ class TestBuildManifest:
 
 class TestBuildMessages:
     def test_message_structure(self):
+        """LLM receives messages containing instructions, allowed actions, and event."""
+        client = FakeLLMClient(_action_response("nothing to do"))
+        tract_mock = _make_tract_mock(client=client)
+        ctx = _make_ctx(tract_mock)
+
         m = SemanticMaintainer(
             name="msg-test",
             instructions="Clean up old tool_io",
             actions=["annotate", "gc"],
         )
-        manifest = "=== CONTEXT MANIFEST ===\nBranch: main"
-        ctx = _make_ctx(_make_tract_mock())
-        messages = m._build_messages(manifest, ctx)
+        m(ctx)
 
+        # Judgment constructs system + user messages for the LLM
+        messages = client.last_messages
+        assert messages is not None
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
-        assert messages[0]["content"] == _MAINTAINER_SYSTEM_PROMPT
+        assert "maintenance agent" in messages[0]["content"].lower()
         assert messages[1]["role"] == "user"
         assert "Clean up old tool_io" in messages[1]["content"]
         assert "MAINTENANCE INSTRUCTIONS" in messages[1]["content"]
         assert "ALLOWED ACTIONS" in messages[1]["content"]
         assert "annotate" in messages[1]["content"]
         assert "gc" in messages[1]["content"]
-        assert "CONTEXT MANIFEST" in messages[1]["content"]
         assert "post_commit" in messages[1]["content"]
 
 

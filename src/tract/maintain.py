@@ -35,10 +35,17 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
-from tract._helpers import safe_llm_call as _safe_llm_call
+from pydantic import BaseModel
+
 from tract._helpers import strip_fences
 from tract.exceptions import BlockedError
 from tract.gate import build_manifest as _build_manifest
+from tract.judgment import (
+    Judgment,
+    JudgmentResult,
+    MaintenanceAction,
+    MaintenancePlan,
+)
 
 if TYPE_CHECKING:
     from tract.context_view import ContextView
@@ -96,6 +103,24 @@ Respond with ONE of:
 
 Maximum commits you may peek at: {max_peeks}
 """
+
+
+# ---------------------------------------------------------------------------
+# PeekOrActions -- response model for the peek selection pass
+# ---------------------------------------------------------------------------
+class PeekOrActions(BaseModel):
+    """Response model for the peek selection pass.
+
+    The LLM can return either:
+    - A peek request: ``peek`` list is non-empty
+    - Direct actions: ``actions`` list is non-empty (skipping peek)
+    """
+
+    model_config = {"extra": "allow"}
+
+    peek: list[str] = []
+    reasoning: str = ""
+    actions: list[MaintenanceAction] = []
 
 
 def build_manifest(tract: Tract, max_log_entries: int = 30) -> str:
@@ -173,7 +198,7 @@ class SemanticMaintainer:
         max_log_entries: Maximum number of commits to include in the
             manifest (newest first).
         max_peeks: Maximum commits the LLM may inspect for full content.
-            0 (default) disables peeking — single LLM call only.
+            0 (default) disables peeking -- single LLM call only.
     """
 
     name: str
@@ -293,7 +318,8 @@ class SemanticMaintainer:
                 )
                 return
 
-        # 2. Resolve LLM client
+        # 2. Resolve LLM client (early check -- Judgment resolves again
+        #    internally, but we need to fail with a clear error message)
         tract = ctx.tract
         try:
             client = tract.config._resolve_llm_client("maintain")
@@ -312,44 +338,52 @@ class SemanticMaintainer:
                 f"Tract.open()."
             ) from exc
 
-        # 3. Build manifest via ContextView
-        from tract.context_view import ContextView, build_context
+        # 3. Build context view for Judgment
+        from tract.context_view import ContextView
 
         view = self.context or ContextView()
-        built = build_context(view, tract, default_scope=self.max_log_entries)
-        manifest = built.text
-        consulted_hashes = tuple(e["hash"] for e in built.commit_entries)
-        llm_kwargs: dict[str, Any] = {"temperature": self.temperature}
-        if self.model is not None:
-            llm_kwargs["model"] = self.model
 
         # 3b. Resolve prompt overrides
         maintain_prompt = tract.config.get_prompt("maintain")
         peek_prompt = tract.config.get_prompt("maintain_peek")
 
-        # 4. Run LLM flow (single-pass or two-pass with peeking)
+        # 4. Build instructions string (shared by single and two-pass)
+        allowed_actions_str = ", ".join(sorted(self.actions))
+        base_instructions = (
+            f"=== MAINTENANCE INSTRUCTIONS ===\n"
+            f"{self.instructions}\n"
+            f"\n"
+            f"=== ALLOWED ACTIONS ===\n"
+            f"{allowed_actions_str}\n"
+            f"\n"
+            f"=== EVENT ===\n"
+            f"{ctx.event}"
+        )
+
+        # 5. Run LLM flow (single-pass or two-pass with peeking)
         tokens_used = 0
         peeks_requested = 0
         peeks_performed = 0
+        consulted_hashes: tuple[str, ...] = ()
 
         if self.max_peeks > 0:
             peek_result = self._run_with_peeking(
-                ctx, tract, client, manifest, llm_kwargs,
+                tract, client, view, base_instructions,
                 maintain_prompt=maintain_prompt, peek_prompt=peek_prompt,
             )
             if peek_result is None:
                 return  # fail-open already stored last_result
-            reasoning, action_list, tokens_used, peeks_requested, peeks_performed = peek_result
+            reasoning, action_list, tokens_used, peeks_requested, peeks_performed, consulted_hashes = peek_result
         else:
             single_result = self._run_single_pass(
-                ctx, tract, client, manifest, llm_kwargs,
+                tract, client, view, base_instructions,
                 maintain_prompt=maintain_prompt,
             )
             if single_result is None:
                 return  # fail-open already stored last_result
-            reasoning, action_list, tokens_used = single_result
+            reasoning, action_list, tokens_used, consulted_hashes = single_result
 
-        # 5. Filter out disallowed action types
+        # 6. Filter out disallowed action types
         allowed = set(self.actions)
         filtered_actions = []
         skipped_actions = []
@@ -367,11 +401,11 @@ class SemanticMaintainer:
                 skipped_actions,
             )
 
-        # 6. Sort: execute block actions LAST so maintenance completes first
+        # 7. Sort: execute block actions LAST so maintenance completes first
         block_actions = [a for a in filtered_actions if a.get("type") == "block"]
         non_block_actions = [a for a in filtered_actions if a.get("type") != "block"]
 
-        # 7. Execute non-block actions
+        # 8. Execute non-block actions
         executed = 0
         failed = 0
         errors: list[str] = []
@@ -392,7 +426,7 @@ class SemanticMaintainer:
                     exc_info=True,
                 )
 
-        # 8. Store result (before potential block raise)
+        # 9. Store result (before potential block raise)
         self.last_result = MaintainResult(
             maintainer_name=self.name,
             actions_requested=len(filtered_actions),
@@ -406,7 +440,7 @@ class SemanticMaintainer:
             consulted_hashes=consulted_hashes,
         )
 
-        # 9. Execute block actions (raises BlockedError)
+        # 10. Execute block actions (raises BlockedError)
         if block_actions:
             reasons = [
                 a.get("reason") or "(no reason given)" for a in block_actions
@@ -414,62 +448,144 @@ class SemanticMaintainer:
             raise BlockedError(ctx.event, reasons)
 
     # ------------------------------------------------------------------
-    # Single-pass flow (no peeking)
+    # Single-pass flow (no peeking) -- via Judgment
     # ------------------------------------------------------------------
     def _run_single_pass(
         self,
-        ctx: MiddlewareContext,
         tract: Tract,
         client: Any,
-        manifest: str,
-        llm_kwargs: dict[str, Any],
+        view: ContextView,
+        base_instructions: str,
         maintain_prompt: str | None = None,
-    ) -> tuple[str, list[dict[str, Any]], int] | None:
-        """Single LLM call. Returns (reasoning, actions, tokens) or None on failure."""
-        messages = self._build_messages(manifest, ctx, system_prompt=maintain_prompt)
-        return self._safe_llm_call(client, messages, llm_kwargs)
+    ) -> tuple[str, list[dict[str, Any]], int, tuple[str, ...]] | None:
+        """Single Judgment call.
+
+        Returns (reasoning, action_dicts, tokens, consulted_hashes) or
+        None on failure (fail-open stored on self.last_result).
+        """
+        judgment = Judgment(
+            instructions=base_instructions,
+            response_model=MaintenancePlan,
+            system_prompt=maintain_prompt or _MAINTAINER_SYSTEM_PROMPT,
+            context=view,
+            model=self.model,
+            temperature=self.temperature,
+            fail_open_default=MaintenancePlan(
+                reasoning="LLM call failed; fail-open default.", actions=[],
+            ),
+            operation_name="maintain",
+        )
+
+        result = judgment.evaluate(tract, llm_client=client)
+        consulted_hashes = result.consulted_hashes
+
+        if not result.succeeded:
+            # Judgment failed -- check if fail_open_default was used
+            if result.output is not None:
+                plan: MaintenancePlan = result.output  # type: ignore[assignment]
+                return plan.reasoning, [], 0, consulted_hashes
+            # Total failure
+            self.last_result = MaintainResult(
+                maintainer_name=self.name,
+                actions_requested=0, actions_executed=0, actions_failed=0,
+                tokens_used=0,
+                reasoning="LLM call failed; fail-open default.",
+                errors=(),
+                consulted_hashes=consulted_hashes,
+            )
+            return None
+
+        plan = result.output  # type: ignore[assignment]
+        reasoning = plan.reasoning or "(no reasoning given)"
+        action_dicts = _actions_to_dicts(plan.actions)
+        return reasoning, action_dicts, result.tokens_used, consulted_hashes
 
     # ------------------------------------------------------------------
-    # Two-pass flow with peeking
+    # Two-pass flow with peeking -- via Judgment
     # ------------------------------------------------------------------
     def _run_with_peeking(
         self,
-        ctx: MiddlewareContext,
         tract: Tract,
         client: Any,
-        manifest: str,
-        llm_kwargs: dict[str, Any],
+        view: ContextView,
+        base_instructions: str,
         maintain_prompt: str | None = None,
         peek_prompt: str | None = None,
-    ) -> tuple[str, list[dict[str, Any]], int, int, int] | None:
-        """Two-pass flow: peek selection → enriched action decision.
+    ) -> tuple[str, list[dict[str, Any]], int, int, int, tuple[str, ...]] | None:
+        """Two-pass flow: peek selection -> enriched action decision.
 
-        Returns (reasoning, actions, tokens, peeks_requested, peeks_performed)
-        or None on failure.
+        Returns (reasoning, action_dicts, tokens, peeks_requested,
+        peeks_performed, consulted_hashes) or None on failure.
         """
         # Pass 1: Ask what to peek (or get direct actions)
-        peek_messages = self._build_peek_messages(manifest, ctx, system_prompt=peek_prompt)
-        pass1 = self._safe_llm_call_raw(client, peek_messages, llm_kwargs)
-        if pass1 is None:
+        peek_system = peek_prompt or _PEEK_SYSTEM_PROMPT.replace(
+            "{max_peeks}", str(self.max_peeks)
+        )
+        peek_judgment = Judgment(
+            instructions=base_instructions,
+            response_model=PeekOrActions,
+            system_prompt=peek_system,
+            context=view,
+            model=self.model,
+            temperature=self.temperature,
+            fail_open_default=None,
+            operation_name="maintain",
+        )
+
+        pass1 = peek_judgment.evaluate(tract, llm_client=client)
+        consulted_hashes = pass1.consulted_hashes
+
+        if not pass1.succeeded or pass1.output is None:
+            self.last_result = MaintainResult(
+                maintainer_name=self.name,
+                actions_requested=0, actions_executed=0, actions_failed=0,
+                tokens_used=0,
+                reasoning="LLM call failed; fail-open default.",
+                errors=(),
+                consulted_hashes=consulted_hashes,
+            )
             return None
-        raw_text, pass1_tokens = pass1
 
-        # Parse pass 1 response
-        peek_hashes, direct_result = self._parse_peek_or_actions(raw_text)
+        pass1_tokens = pass1.tokens_used
+        peek_or_actions: PeekOrActions = pass1.output  # type: ignore[assignment]
 
-        if direct_result is not None:
-            # LLM went straight to actions (no peeking needed)
-            reasoning, action_list = direct_result
-            return reasoning, action_list, pass1_tokens, 0, 0
+        # Check if LLM provided direct actions (no peeking needed)
+        if peek_or_actions.actions and not peek_or_actions.peek:
+            reasoning = peek_or_actions.reasoning or "(no reasoning given)"
+            action_dicts = _actions_to_dicts(peek_or_actions.actions)
+            return reasoning, action_dicts, pass1_tokens, 0, 0, consulted_hashes
+
+        # Filter out empty/falsy peek hashes
+        peek_hashes = [str(h) for h in peek_or_actions.peek if h]
 
         if not peek_hashes:
-            # Empty peek list — fall through to normal action call
-            messages = self._build_messages(manifest, ctx, system_prompt=maintain_prompt)
-            result = self._safe_llm_call(client, messages, llm_kwargs)
-            if result is None:
+            # Empty peek list -- fall through to normal action call
+            action_judgment = Judgment(
+                instructions=base_instructions,
+                response_model=MaintenancePlan,
+                system_prompt=maintain_prompt or _MAINTAINER_SYSTEM_PROMPT,
+                context=view,
+                model=self.model,
+                temperature=self.temperature,
+                fail_open_default=None,
+                operation_name="maintain",
+            )
+            pass2 = action_judgment.evaluate(tract, llm_client=client)
+            consulted_hashes = pass2.consulted_hashes
+            if not pass2.succeeded or pass2.output is None:
+                self.last_result = MaintainResult(
+                    maintainer_name=self.name,
+                    actions_requested=0, actions_executed=0, actions_failed=0,
+                    tokens_used=0,
+                    reasoning="LLM call failed; fail-open default.",
+                    errors=(),
+                    consulted_hashes=consulted_hashes,
+                )
                 return None
-            reasoning, action_list, pass2_tokens = result
-            return reasoning, action_list, pass1_tokens + pass2_tokens, 0, 0
+            plan: MaintenancePlan = pass2.output  # type: ignore[assignment]
+            reasoning = plan.reasoning or "(no reasoning given)"
+            action_dicts = _actions_to_dicts(plan.actions)
+            return reasoning, action_dicts, pass1_tokens + pass2.tokens_used, 0, 0, consulted_hashes
 
         # Cap at max_peeks
         requested = len(peek_hashes)
@@ -492,145 +608,51 @@ class SemanticMaintainer:
 
         performed = len(peeked_content)
 
-        # Pass 2: Enriched action call
-        enriched_messages = self._build_enriched_messages(
-            manifest, ctx, peeked_content, system_prompt=maintain_prompt,
-        )
-        result = self._safe_llm_call(client, enriched_messages, llm_kwargs)
-        if result is None:
-            return None
-        reasoning, action_list, pass2_tokens = result
-        return reasoning, action_list, pass1_tokens + pass2_tokens, requested, performed
-
-    # ------------------------------------------------------------------
-    # Safe LLM call helpers (fail-open)
-    # ------------------------------------------------------------------
-    def _safe_llm_call_raw(
-        self, client: Any, messages: list[dict[str, str]], llm_kwargs: dict[str, Any]
-    ) -> tuple[str, int] | None:
-        """Make an LLM call, return (raw_text, tokens_used) or None on failure.
-
-        Delegates to :func:`tract._helpers.safe_llm_call` and stores a
-        fail-open :class:`MaintainResult` on ``self.last_result`` when the
-        helper returns ``None``.
-        """
-        result = _safe_llm_call(
-            client, messages, llm_kwargs,
-            caller=f"Maintainer '{self.name}'",
-        )
-        if result is None:
-            self.last_result = MaintainResult(
-                maintainer_name=self.name,
-                actions_requested=0, actions_executed=0, actions_failed=0,
-                tokens_used=0,
-                reasoning="LLM call failed; fail-open default.",
-                errors=(),
-                consulted_hashes=(),
-            )
-            return None
-        return result
-
-    def _safe_llm_call(
-        self, client: Any, messages: list[dict[str, str]], llm_kwargs: dict[str, Any]
-    ) -> tuple[str, list[dict[str, Any]], int] | None:
-        """Make an LLM call, parse response. Returns (reasoning, actions, tokens) or None."""
-        result = self._safe_llm_call_raw(client, messages, llm_kwargs)
-        if result is None:
-            return None
-        raw_text, tokens_used = result
-        reasoning, action_list = self._parse_response(raw_text)
-        return reasoning, action_list, tokens_used
-
-    # ------------------------------------------------------------------
-    # Message construction
-    # ------------------------------------------------------------------
-    def _build_messages(
-        self, manifest: str, ctx: MiddlewareContext, system_prompt: str | None = None,
-    ) -> list[dict[str, str]]:
-        """Construct the LLM messages for the maintainer (single-pass)."""
-        allowed_actions_str = ", ".join(sorted(self.actions))
-        user_content = (
-            f"=== MAINTENANCE INSTRUCTIONS ===\n"
-            f"{self.instructions}\n"
-            f"\n"
-            f"=== ALLOWED ACTIONS ===\n"
-            f"{allowed_actions_str}\n"
-            f"\n"
-            f"=== EVENT ===\n"
-            f"{ctx.event}\n"
-            f"\n"
-            f"{manifest}"
-        )
-        return [
-            {"role": "system", "content": system_prompt or _MAINTAINER_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
-
-    def _build_peek_messages(
-        self, manifest: str, ctx: MiddlewareContext, system_prompt: str | None = None,
-    ) -> list[dict[str, str]]:
-        """Construct messages for the peek selection pass."""
-        system = system_prompt or _PEEK_SYSTEM_PROMPT.replace(
-            "{max_peeks}", str(self.max_peeks)
-        )
-        allowed_actions_str = ", ".join(sorted(self.actions))
-        user_content = (
-            f"=== MAINTENANCE INSTRUCTIONS ===\n"
-            f"{self.instructions}\n"
-            f"\n"
-            f"=== ALLOWED ACTIONS ===\n"
-            f"{allowed_actions_str}\n"
-            f"\n"
-            f"=== EVENT ===\n"
-            f"{ctx.event}\n"
-            f"\n"
-            f"{manifest}"
-        )
-        return [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ]
-
-    def _build_enriched_messages(
-        self,
-        manifest: str,
-        ctx: MiddlewareContext,
-        peeked_content: dict[str, str],
-        system_prompt: str | None = None,
-    ) -> list[dict[str, str]]:
-        """Construct messages with peeked content for the action pass."""
-        allowed_actions_str = ", ".join(sorted(self.actions))
-
-        # Build the peeked content section
+        # Build enriched instructions with peeked content
         peek_lines = ["=== PEEKED COMMIT CONTENTS ==="]
         for h, content in peeked_content.items():
             peek_lines.append(f"\n--- [{h}] ---")
             peek_lines.append(content)
         peek_section = "\n".join(peek_lines)
 
-        user_content = (
-            f"=== MAINTENANCE INSTRUCTIONS ===\n"
-            f"{self.instructions}\n"
-            f"\n"
-            f"=== ALLOWED ACTIONS ===\n"
-            f"{allowed_actions_str}\n"
-            f"\n"
-            f"=== EVENT ===\n"
-            f"{ctx.event}\n"
-            f"\n"
-            f"{manifest}\n"
+        enriched_instructions = (
+            f"{base_instructions}\n"
             f"\n"
             f"{peek_section}\n"
             f"\n"
             f"Now provide your maintenance actions based on the manifest and peeked content above."
         )
-        return [
-            {"role": "system", "content": system_prompt or _MAINTAINER_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
+
+        # Pass 2: Enriched action call via Judgment
+        enriched_judgment = Judgment(
+            instructions=enriched_instructions,
+            response_model=MaintenancePlan,
+            system_prompt=maintain_prompt or _MAINTAINER_SYSTEM_PROMPT,
+            context=view,
+            model=self.model,
+            temperature=self.temperature,
+            fail_open_default=None,
+            operation_name="maintain",
+        )
+        pass2 = enriched_judgment.evaluate(tract, llm_client=client)
+        consulted_hashes = pass2.consulted_hashes
+        if not pass2.succeeded or pass2.output is None:
+            self.last_result = MaintainResult(
+                maintainer_name=self.name,
+                actions_requested=0, actions_executed=0, actions_failed=0,
+                tokens_used=0,
+                reasoning="LLM call failed; fail-open default.",
+                errors=(),
+                consulted_hashes=consulted_hashes,
+            )
+            return None
+        plan = pass2.output  # type: ignore[assignment]
+        reasoning = plan.reasoning or "(no reasoning given)"
+        action_dicts = _actions_to_dicts(plan.actions)
+        return reasoning, action_dicts, pass1_tokens + pass2.tokens_used, requested, performed, consulted_hashes
 
     # ------------------------------------------------------------------
-    # Response parsing
+    # Response parsing (kept for backward compatibility)
     # ------------------------------------------------------------------
     # Delegate to the shared helper; kept as a static method for
     # backward compatibility (tests call SemanticMaintainer._strip_fences).
@@ -642,6 +664,9 @@ class SemanticMaintainer:
 
         Returns a tuple of (reasoning_string, list_of_action_dicts).
         On parse failure, returns empty actions (fail-open).
+
+        .. note:: This is a legacy method retained for backward compatibility.
+           The main flow now uses Judgment with Pydantic models.
         """
         cleaned = SemanticMaintainer._strip_fences(text)
 
@@ -669,13 +694,16 @@ class SemanticMaintainer:
         """Parse a peek-pass response.
 
         The LLM can return either:
-        - ``{"peek": ["hash1", "hash2"]}`` — wants to peek
-        - ``{"reasoning": "...", "actions": [...]}`` — direct actions
+        - ``{"peek": ["hash1", "hash2"]}`` -- wants to peek
+        - ``{"reasoning": "...", "actions": [...]}`` -- direct actions
 
         Returns:
             (peek_hashes, direct_actions_or_none)
             If peek_hashes is non-empty, direct_actions is None.
             If direct_actions is not None, peek_hashes is empty.
+
+        .. note:: This is a legacy method retained for backward compatibility.
+           The main flow now uses Judgment with PeekOrActions model.
         """
         cleaned = SemanticMaintainer._strip_fences(text)
 
@@ -701,7 +729,7 @@ class SemanticMaintainer:
         except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
-        # Unparseable — return empty peeks, no direct actions
+        # Unparseable -- return empty peeks, no direct actions
         return [], None
 
     # ------------------------------------------------------------------
@@ -844,7 +872,7 @@ class SemanticMaintainer:
 
         full_hash = tract.branches.resolve(target)
 
-        # Auto-register the tag (idempotent — no-ops if already registered).
+        # Auto-register the tag (idempotent -- no-ops if already registered).
         tract.tags.register(tag_name, f"Auto-registered by maintainer '{self.name}'")
         tract.tags.add(full_hash, tag_name)
 
@@ -852,3 +880,24 @@ class SemanticMaintainer:
     def _exec_gc(tract: Tract, action: dict[str, Any]) -> None:
         """Execute a gc action: t.compression.gc()."""
         tract.compression.gc()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _actions_to_dicts(actions: list[MaintenanceAction]) -> list[dict[str, Any]]:
+    """Convert Pydantic MaintenanceAction models to plain dicts.
+
+    The action execution pipeline works with ``dict[str, Any]``.
+    This bridge converts Judgment-parsed Pydantic models back to dicts,
+    preserving extra fields from the LLM response (e.g. ``"from"``,
+    ``"to"`` for compress_range).
+    """
+    result: list[dict[str, Any]] = []
+    for action in actions:
+        d = action.model_dump(exclude_none=True)
+        # Pydantic extra fields (like "from", "to") are included by model_dump
+        # when extra="allow" is set.
+        result.append(d)
+    return result
