@@ -316,6 +316,45 @@ async def _aretry_with_backoff(
     raise last_error  # type: ignore[misc]  # guaranteed non-None after loop
 
 
+class _Runtime:
+    """Runtime sub-object -- LLM operations and tool management.
+
+    Accessed via ``t.runtime``.  Provides LLM chat/generate and tool
+    management in a single namespace, replacing the old ``t.llm`` and
+    ``t.toolkit`` sub-objects.
+    """
+
+    def __init__(self, tract: Tract) -> None:
+        self._tract = tract
+
+    @property
+    def tools(self):
+        """Tool management (profile switching, as_tools, custom tools)."""
+        return self._tract._toolkit_mgr
+
+    def chat(self, *args, **kwargs):
+        """Send a user message and get an LLM response.
+
+        Delegates to :class:`~tract.managers.LLMManager`.
+        """
+        return self._tract._llm_mgr.chat(*args, **kwargs)
+
+    async def achat(self, *args, **kwargs):
+        """Async version of :meth:`chat`."""
+        return await self._tract._llm_mgr.achat(*args, **kwargs)
+
+    def generate(self, *args, **kwargs):
+        """Compile context, call LLM, commit response.
+
+        Delegates to :class:`~tract.managers.LLMManager`.
+        """
+        return self._tract._llm_mgr.generate(*args, **kwargs)
+
+    async def agenerate(self, *args, **kwargs):
+        """Async version of :meth:`generate`."""
+        return await self._tract._llm_mgr.agenerate(*args, **kwargs)
+
+
 class Tract:
     """Primary entry point for Tract -- git-like version control for LLM context.
 
@@ -507,7 +546,7 @@ class Tract:
             check_open=self._check_open,
             commit_session=self._commit_session,
             get_head=lambda: self.head,
-            log_fn=lambda **kw: self.search.log(**kw),
+            log_fn=lambda **kw: self._search_mgr.log(**kw),
         )
 
         self._middleware_mgr = MiddlewareManager(
@@ -736,34 +775,12 @@ class Tract:
             row_to_info=self._commit_engine._row_to_info,
         )
 
+        # Runtime sub-object (wraps LLM + toolkit)
+        self._runtime = _Runtime(self)
+
     # ------------------------------------------------------------------
-    # Sub-object accessors
+    # Sub-object accessors (kept: config, middleware, policies, runtime)
     # ------------------------------------------------------------------
-
-    @property
-    def tags(self):
-        """Tag management sub-object."""
-        return self._tags_mgr
-
-    @property
-    def branches(self):
-        """Branch management sub-object."""
-        return self._branches_mgr
-
-    @property
-    def annotations(self):
-        """Annotation management sub-object."""
-        return self._annotations_mgr
-
-    @property
-    def middleware(self):
-        """Middleware management sub-object."""
-        return self._middleware_mgr
-
-    @property
-    def tools(self):
-        """Tool tracking sub-object."""
-        return self._tools_mgr
 
     @property
     def config(self):
@@ -771,54 +788,566 @@ class Tract:
         return self._config_mgr
 
     @property
-    def search(self):
-        """Search and query sub-object."""
-        return self._search_mgr
-
-    @property
-    def templates(self):
-        """Template and profile sub-object."""
-        return self._templates_mgr
-
-    @property
-    def spawn(self):
-        """Spawn relationship sub-object."""
-        return self._spawn_mgr
-
-    @property
-    def routing(self):
-        """Routing sub-object."""
-        return self._routing_mgr
-
-    @property
-    def intelligence(self):
-        """Intelligence operations sub-object."""
-        return self._intelligence_mgr
-
-    @property
-    def llm(self):
-        """LLM operations sub-object."""
-        return self._llm_mgr
-
-    @property
-    def compression(self):
-        """Compression sub-object."""
-        return self._compression_mgr
-
-    @property
-    def persistence(self):
-        """Persistence sub-object."""
-        return self._persistence_mgr
-
-    @property
-    def toolkit(self):
-        """Toolkit sub-object."""
-        return self._toolkit_mgr
+    def middleware(self):
+        """Middleware management sub-object."""
+        return self._middleware_mgr
 
     @property
     def policies(self):
         """Policy engine for managing context management policies."""
         return self._policy_engine
+
+    @property
+    def runtime(self):
+        """Runtime sub-object -- LLM and tool operations."""
+        return self._runtime
+
+    # ------------------------------------------------------------------
+    # Branch operations
+    # ------------------------------------------------------------------
+
+    def branch(self, name: str, *, source: str | None = None, switch: bool = True) -> str:
+        """Create a new branch.
+
+        Args:
+            name: Branch name.
+            source: Commit hash to branch from.  Defaults to HEAD.
+            switch: If True (default), switch HEAD to the new branch.
+
+        Returns:
+            The commit hash the new branch points to.
+        """
+        self._check_open()
+        return self._branches_mgr.create(name, source=source, switch=switch)
+
+    def checkout(self, target: str) -> str:
+        """Checkout a commit or branch.
+
+        Branch name attaches HEAD; commit hash detaches HEAD (read-only).
+        ``"-"`` returns to previous position via PREV_HEAD.
+
+        Args:
+            target: A branch name, commit hash, hash prefix, or ``"-"``.
+
+        Returns:
+            The resolved commit hash at the new HEAD position.
+        """
+        self._check_open()
+        return self._branches_mgr.checkout(target)
+
+    def switch(self, target: str) -> str:
+        """Switch to a branch (branch-only, unlike checkout).
+
+        Args:
+            target: A branch name.
+
+        Returns:
+            The commit hash at the target branch HEAD.
+
+        Raises:
+            BranchNotFoundError: If target is not a valid branch name.
+        """
+        self._check_open()
+        return self._branches_mgr.switch(target)
+
+    def list_branches(self) -> list[BranchInfo]:
+        """List all branches with current branch indicator.
+
+        Returns:
+            List of :class:`BranchInfo` with ``is_current=True`` for
+            the active branch.
+        """
+        self._check_open()
+        return self._branches_mgr.list()
+
+    def delete_branch(self, name: str, *, force: bool = False) -> None:
+        """Delete a branch.
+
+        Args:
+            name: Branch name to delete.
+            force: If True, delete even if branch has unmerged commits.
+        """
+        self._check_open()
+        return self._branches_mgr.delete(name, force=force)
+
+    def reset(self, target: str, *, mode: str = "soft") -> str:
+        """Reset HEAD to a target commit.
+
+        Args:
+            target: A commit hash, branch name, or hash prefix.
+            mode: ``"soft"`` (default) or ``"hard"``.
+
+        Returns:
+            The resolved target commit hash (new HEAD).
+        """
+        self._check_open()
+        return self._branches_mgr.reset(target, mode=mode)
+
+    def resolve(self, ref_or_prefix: str) -> str:
+        """Resolve a commit reference to a full commit hash.
+
+        Resolution order: full hash, branch name, hash prefix (min 4 chars).
+
+        Args:
+            ref_or_prefix: A commit hash, branch name, or hash prefix.
+
+        Returns:
+            The full commit hash.
+        """
+        self._check_open()
+        return self._branches_mgr.resolve(ref_or_prefix)
+
+    # ------------------------------------------------------------------
+    # Tag operations
+    # ------------------------------------------------------------------
+
+    def register_tag(self, name: str, description: str | None = None) -> None:
+        """Register a new tag name.
+
+        Args:
+            name: Tag name.
+            description: Optional description of the tag.
+        """
+        self._check_open()
+        return self._tags_mgr.register(name, description=description)
+
+    def tag(self, target_hash: str, tag_name: str) -> None:
+        """Add a mutable tag annotation to a commit.
+
+        Args:
+            target_hash: Hash of the commit to tag.
+            tag_name: Tag name to add.
+        """
+        self._check_open()
+        return self._tags_mgr.add(target_hash, tag_name)
+
+    def untag(self, target_hash: str, tag_name: str) -> bool:
+        """Remove a mutable tag annotation from a commit.
+
+        Args:
+            target_hash: Hash of the commit to untag.
+            tag_name: Tag name to remove.
+
+        Returns:
+            True if the tag was removed, False if it didn't exist.
+        """
+        self._check_open()
+        return self._tags_mgr.remove(target_hash, tag_name)
+
+    def list_tags(self) -> list[dict]:
+        """List all registered tags with descriptions and usage counts.
+
+        Returns:
+            List of dicts with ``name``, ``description``, ``auto_created``,
+            and ``count`` keys.
+        """
+        self._check_open()
+        return self._tags_mgr.list()
+
+    def get_tags(self, target_hash: str) -> list[str]:
+        """Get all tags for a commit (immutable + mutable combined).
+
+        Args:
+            target_hash: Hash of the commit.
+
+        Returns:
+            Deduplicated list of tag names.
+        """
+        self._check_open()
+        return self._tags_mgr.get(target_hash)
+
+    # ------------------------------------------------------------------
+    # Annotation operations
+    # ------------------------------------------------------------------
+
+    def annotate(
+        self,
+        target_hash: str,
+        priority: Priority,
+        *,
+        reason: str | None = None,
+        retain: str | None = None,
+        retain_match: list[str] | None = None,
+        retain_match_mode: str = "substring",
+    ) -> PriorityAnnotation:
+        """Set priority annotation on a commit.
+
+        Args:
+            target_hash: Hash of the commit to annotate.
+            priority: Priority level (SKIP, NORMAL, IMPORTANT, PINNED).
+            reason: Optional reason for the annotation.
+            retain: Fuzzy retention instructions (for IMPORTANT).
+            retain_match: Deterministic retention patterns.
+            retain_match_mode: ``"substring"`` (default) or ``"regex"``.
+
+        Returns:
+            :class:`PriorityAnnotation` model.
+        """
+        self._check_open()
+        return self._annotations_mgr.set(
+            target_hash, priority,
+            reason=reason, retain=retain,
+            retain_match=retain_match,
+            retain_match_mode=retain_match_mode,
+        )
+
+    def get_annotation(self, target_hash: str) -> list[PriorityAnnotation]:
+        """Get the full annotation history for a commit.
+
+        Args:
+            target_hash: Hash of the commit.
+
+        Returns:
+            List of :class:`PriorityAnnotation` in chronological order.
+        """
+        self._check_open()
+        return self._annotations_mgr.get(target_hash)
+
+    # ------------------------------------------------------------------
+    # Search / query operations
+    # ------------------------------------------------------------------
+
+    def find(self, **kwargs) -> list[CommitInfo]:
+        """Search commits by content, tags, content type, or metadata.
+
+        Walks ancestry and returns commits matching all provided criteria.
+        Supports: ``content``, ``pattern``, ``tag``, ``content_type``,
+        ``metadata_key``, ``metadata_value``, ``branch``, ``limit``.
+        """
+        self._check_open()
+        return self._search_mgr.find(**kwargs)
+
+    def find_one(self, **kwargs) -> CommitInfo | None:
+        """Search commits and return the first match, or None.
+
+        Accepts the same keyword arguments as :meth:`find`.
+        """
+        self._check_open()
+        return self._search_mgr.find_one(**kwargs)
+
+    def log(self, limit: int = 20, **kwargs) -> list[CommitInfo]:
+        """Walk commit history from HEAD backward.
+
+        Args:
+            limit: Maximum number of commits to return.
+            **kwargs: Additional filters (``op_filter``, ``tags``, ``tag_match``).
+
+        Returns:
+            List of :class:`CommitInfo` in reverse chronological order.
+        """
+        self._check_open()
+        return self._search_mgr.log(limit=limit, **kwargs)
+
+    def status(self) -> StatusInfo:
+        """Get current tract status (token count, commit count, branch, etc.).
+
+        Returns:
+            :class:`StatusInfo` with head, branch, tokens, and recent commits.
+        """
+        self._check_open()
+        return self._search_mgr.status()
+
+    def diff(self, commit_a: str | None = None, commit_b: str | None = None) -> DiffResult:
+        """Compare two commits and return structured diff.
+
+        Args:
+            commit_a: First commit (default: parent of commit_b).
+            commit_b: Second commit (default: HEAD).
+
+        Returns:
+            :class:`DiffResult` with message-level diffs.
+        """
+        self._check_open()
+        return self._search_mgr.diff(commit_a, commit_b)
+
+    def compare(
+        self,
+        branch_a: str | None = None,
+        branch_b: str | None = None,
+        *,
+        commit_a: str | None = None,
+        commit_b: str | None = None,
+    ) -> DiffResult:
+        """Compare compiled contexts between two branches or commits.
+
+        Args:
+            branch_a: First branch (default: current).
+            branch_b: Second branch.
+            commit_a: Explicit first commit (mutually exclusive with branch_a).
+            commit_b: Explicit second commit (mutually exclusive with branch_b).
+
+        Returns:
+            :class:`DiffResult`.
+        """
+        self._check_open()
+        return self._search_mgr.compare(
+            branch_a, branch_b, commit_a=commit_a, commit_b=commit_b,
+        )
+
+    def health(self) -> HealthReport:
+        """Run health checks on this tract's DAG.
+
+        Returns:
+            :class:`HealthReport` with integrity check results.
+        """
+        self._check_open()
+        return self._search_mgr.health()
+
+    def get_content(self, commit_or_hash: CommitInfo | str) -> str | dict | None:
+        """Load the content for a commit.
+
+        Args:
+            commit_or_hash: A :class:`CommitInfo` or a commit hash string.
+
+        Returns:
+            The content text (str), full content dict, or None.
+        """
+        self._check_open()
+        return self._search_mgr.get_content(commit_or_hash)
+
+    def get_commit(self, commit_hash: str) -> CommitInfo | None:
+        """Fetch a commit by its hash.
+
+        Returns:
+            :class:`CommitInfo` if found, None otherwise.
+        """
+        self._check_open()
+        return self._search_mgr.get_commit(commit_hash)
+
+    def get_metadata(self, commit_or_hash: CommitInfo | str) -> dict | None:
+        """Load the metadata dict for a commit.
+
+        Args:
+            commit_or_hash: A :class:`CommitInfo` or a commit hash string.
+
+        Returns:
+            The metadata dict, or None.
+        """
+        self._check_open()
+        return self._search_mgr.get_metadata(commit_or_hash)
+
+    def show(self, commit_or_hash: CommitInfo | str) -> None:
+        """Pretty-print a commit with its full content (like git show).
+
+        Args:
+            commit_or_hash: A :class:`CommitInfo` or a commit hash string.
+        """
+        self._check_open()
+        return self._search_mgr.show(commit_or_hash)
+
+    def edit_history(self, commit_hash: str) -> list[CommitInfo]:
+        """Get the full edit chain for a commit.
+
+        Args:
+            commit_hash: Hash of any version in the edit chain.
+
+        Returns:
+            List of :class:`CommitInfo` in chronological order.
+        """
+        self._check_open()
+        return self._search_mgr.edit_history(commit_hash)
+
+    def restore(self, commit_hash: str, version: int = 0, *, message: str | None = None) -> CommitInfo:
+        """Restore a previous version of a commit by creating a new EDIT.
+
+        Args:
+            commit_hash: Hash of any version in the edit chain.
+            version: Index into edit history (0 = original).
+            message: Optional commit message.
+
+        Returns:
+            :class:`CommitInfo` for the restore EDIT commit.
+        """
+        self._check_open()
+        return self._search_mgr.restore(commit_hash, version, message=message)
+
+    def query_by_config(self, field_or_config=None, operator=None, value=None, **kwargs) -> list[CommitInfo]:
+        """Query commits by generation config values.
+
+        Accepts (field, operator, value), conditions=[...], or an LLMConfig.
+        """
+        self._check_open()
+        return self._search_mgr.query_by_config(field_or_config, operator, value, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Compression operations
+    # ------------------------------------------------------------------
+
+    def compress(self, **kwargs):
+        """Compress commit chains into summaries.
+
+        Supports manual (``content=`` provided) and LLM-powered compression.
+        PINNED commits survive verbatim. SKIP commits are excluded.
+
+        See :class:`~tract.managers.CompressionManager` for full signature.
+        """
+        self._check_open()
+        return self._compression_mgr.compress(**kwargs)
+
+    async def acompress(self, **kwargs):
+        """Async version of :meth:`compress`."""
+        self._check_open()
+        return await self._compression_mgr.acompress(**kwargs)
+
+    def gc(self, *, orphan_retention_days: int = 7, archive_retention_days: int | None = None, branch: str | None = None):
+        """Garbage-collect unreachable commits.
+
+        Args:
+            orphan_retention_days: Retention for orphaned commits (default 7).
+            archive_retention_days: Retention for archived commits.
+            branch: Limit GC to a specific branch.
+
+        Returns:
+            :class:`GCResult` describing what was collected.
+        """
+        self._check_open()
+        return self._compression_mgr.gc(
+            orphan_retention_days=orphan_retention_days,
+            archive_retention_days=archive_retention_days,
+            branch=branch,
+        )
+
+    def record_usage(self, usage, *, head_hash: str | None = None):
+        """Record API-reported token usage, updating cached compilation.
+
+        Args:
+            usage: :class:`TokenUsage` or provider-specific dict.
+            head_hash: Commit hash to associate with (default: current HEAD).
+
+        Returns:
+            Updated :class:`CompiledContext` with calibrated token count.
+        """
+        self._check_open()
+        return self._compression_mgr.record_usage(usage, head_hash=head_hash)
+
+    # ------------------------------------------------------------------
+    # Spawn operations
+    # ------------------------------------------------------------------
+
+    def spawn_parent(self):
+        """Get the spawn info for this tract's parent.
+
+        Returns:
+            SpawnInfo if this tract was spawned, None for root tracts.
+        """
+        self._check_open()
+        return self._spawn_mgr.parent()
+
+    def spawn_children(self):
+        """Get spawn info for all child tracts.
+
+        Returns:
+            List of SpawnInfo for each child, in chronological order.
+        """
+        self._check_open()
+        return self._spawn_mgr.children()
+
+    # ------------------------------------------------------------------
+    # Persistence operations
+    # ------------------------------------------------------------------
+
+    def snapshot(self, label: str = "", *, metadata: dict | None = None) -> str:
+        """Create a named snapshot (restore point) at the current HEAD.
+
+        Args:
+            label: Human-readable snapshot label.
+            metadata: Optional extra metadata.
+
+        Returns:
+            The snapshot tag name.
+        """
+        self._check_open()
+        return self._persistence_mgr.snapshot(label, metadata=metadata)
+
+    def list_snapshots(self) -> list[dict]:
+        """List all snapshots.
+
+        Returns:
+            List of snapshot dicts with ``tag``, ``label``, ``commit_hash``, etc.
+        """
+        self._check_open()
+        return self._persistence_mgr.list_snapshots()
+
+    def export_state(self, *, include_blobs: bool = True) -> dict:
+        """Export tract state as a portable dict.
+
+        Args:
+            include_blobs: If True (default), include blob content.
+
+        Returns:
+            Dict suitable for JSON serialization.
+        """
+        self._check_open()
+        return self._persistence_mgr.export_state(include_blobs=include_blobs)
+
+    def load_state(self, state: dict) -> int:
+        """Import tract state from a previously exported dict.
+
+        Args:
+            state: Dict from :meth:`export_state`.
+
+        Returns:
+            Number of commits imported.
+        """
+        self._check_open()
+        return self._persistence_mgr.load_state(state)
+
+    def compile_records(self, limit: int = 100) -> list:
+        """Get compile records for this tract, newest first.
+
+        Args:
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of compile record objects.
+        """
+        self._check_open()
+        return self._persistence_mgr.compile_records(limit)
+
+    # ------------------------------------------------------------------
+    # Template / profile operations
+    # ------------------------------------------------------------------
+
+    def load_profile(self, name: str) -> None:
+        """Load a workflow profile (config + directives + stages).
+
+        Args:
+            name: Profile name (e.g. ``"coding"``, ``"research"``, ``"ecommerce"``).
+        """
+        self._check_open()
+        return self._templates_mgr.load_profile(name)
+
+    def apply_stage(self, stage: str) -> None:
+        """Apply a workflow stage from the loaded profile.
+
+        Args:
+            stage: Stage name (e.g. ``"design"``, ``"implementation"``).
+        """
+        self._check_open()
+        return self._templates_mgr.apply_stage(stage)
+
+    def apply_template(self, name: str, **params) -> CommitInfo:
+        """Apply a directive template.
+
+        Args:
+            name: Template name (e.g. ``"focus"``, ``"persona"``).
+            **params: Template parameters.
+
+        Returns:
+            :class:`CommitInfo` for the directive commit.
+        """
+        self._check_open()
+        return self._templates_mgr.apply(name, **params)
+
+    # ------------------------------------------------------------------
+    # Routing operations
+    # ------------------------------------------------------------------
+
+    # route() and aroute() are already defined as direct methods below
+
+    # ------------------------------------------------------------------
+    # Internal check
+    # ------------------------------------------------------------------
 
     def _check_open(self) -> None:
         """Raise :class:`ClosedError` if closed, or :class:`ThreadSafetyError` if wrong thread."""
@@ -1435,13 +1964,13 @@ class Tract:
         elif handoff != "none":
             payload = handoff
 
-        existing = {b.name for b in self.branches.list()}
+        existing = {b.name for b in self._branches_mgr.list()}
         if target not in existing:
             from tract.operations.branch import create_branch
 
             create_branch(target, self._tract_id, self._ref_repo, self._commit_repo)
             self._commit_session()
-        self.branches.switch(target)
+        self._branches_mgr.switch(target)
 
         result = None
         if payload:
@@ -2642,7 +3171,7 @@ class Tract:
         from tract.operations.rebase import import_commit as _import_commit
 
         # Resolve commit hash (supports prefixes and branch names)
-        resolved = self.branches.resolve(commit_hash)
+        resolved = self._branches_mgr.resolve(commit_hash)
 
         # Determine resolver (handles "llm" string, None -> default, callables)
         effective_resolver = self._config_mgr._resolve_resolver(resolver, "merge")
