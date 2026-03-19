@@ -4,6 +4,9 @@ Provides pure functions (not classes) for intelligent commit selection
 and duplicate detection. Both follow the same patterns as SemanticGate
 and SemanticMaintainer: manifest-based, fail-open on LLM errors.
 
+Internally delegates to :class:`~tract.judgment.Judgment` for the LLM
+call, JSON parsing, and fail-open handling.
+
 * **cherry_pick** -- LLM selects the most relevant commits for a task/query.
 * **deduplicate** -- LLM identifies groups of duplicate/overlapping commits.
 
@@ -24,12 +27,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
-from tract._helpers import async_safe_llm_call as _async_safe_llm_call
-from tract._helpers import resolve_llm_client as _resolve_llm_client
-from tract._helpers import safe_llm_call as _safe_llm_call
-from tract._helpers import strip_fences as _strip_fences
+from tract.context_view import ContextView
+from tract.judgment import (
+    DedupGroups,
+    Judgment,
+    SelectionResult,
+)
 
 if TYPE_CHECKING:
     from tract.tract import Tract
@@ -77,9 +82,11 @@ class DedupResult:
 # ---------------------------------------------------------------------------
 
 _CHERRY_PICK_SYSTEM_PROMPT = """\
-You are a context relevance evaluator. Your job is to select the most relevant commits for a given task or query.
+You are a context relevance evaluator. Your job is to select the most relevant \
+commits for a given task or query.
 
-You will receive a manifest of commits (with content previews) and a task/query description.
+You will receive a manifest of commits (with content previews) and a task/query \
+description.
 
 Respond with JSON:
 {
@@ -87,12 +94,14 @@ Respond with JSON:
   "selected": ["<hash1>", "<hash2>", ...]
 }
 
-Select up to the specified limit. Only include commits that are clearly relevant to the task.
+Select up to the specified limit. Only include commits that are clearly relevant \
+to the task.
 If no commits are relevant, return an empty selected list with an explanation.
 Use the short hash prefixes shown in the manifest."""
 
 _DEDUP_SYSTEM_PROMPT = """\
-You are a content deduplication analyzer. Your job is to identify groups of commits that contain duplicate or highly overlapping content.
+You are a content deduplication analyzer. Your job is to identify groups of \
+commits that contain duplicate or highly overlapping content.
 
 You will receive a manifest of commits with content previews.
 
@@ -105,7 +114,8 @@ Respond with JSON:
   ]
 }
 
-Each group should contain commits whose content is substantially the same or heavily overlapping.
+Each group should contain commits whose content is substantially the same or \
+heavily overlapping.
 A commit should appear in at most one group.
 If no duplicates are found, return an empty groups list.
 Use the short hash prefixes shown in the manifest."""
@@ -187,7 +197,35 @@ def _build_intelligence_manifest(
 
 
 # ---------------------------------------------------------------------------
-# Response parsing helpers
+# Hash resolution helpers (shared by cherry_pick and deduplicate)
+# ---------------------------------------------------------------------------
+
+def _resolve_hashes(
+    raw_hashes: list[str],
+    commit_entries: list[dict[str, Any]],
+) -> list[str]:
+    """Resolve short hash prefixes to full hashes from the commit entries."""
+    prefix_to_full: dict[str, str] = {}
+    for entry in commit_entries:
+        prefix_to_full[entry["short_hash"]] = entry["hash"]
+        prefix_to_full[entry["hash"]] = entry["hash"]
+
+    resolved: list[str] = []
+    for h in raw_hashes:
+        h_str = str(h).strip()
+        if h_str in prefix_to_full:
+            resolved.append(prefix_to_full[h_str])
+        else:
+            for entry in commit_entries:
+                if (entry["hash"].startswith(h_str)
+                        or entry["short_hash"].startswith(h_str)):
+                    resolved.append(entry["hash"])
+                    break
+    return resolved
+
+
+# ---------------------------------------------------------------------------
+# Response parsing helpers (kept for backward compatibility of test imports)
 # ---------------------------------------------------------------------------
 
 def _parse_cherry_pick_response(
@@ -197,35 +235,21 @@ def _parse_cherry_pick_response(
 
     Resolves short hash prefixes to full hashes from the commit entries.
     """
-    cleaned = _strip_fences(text)
+    from tract._helpers import strip_fences as _strip_fences
 
-    # Build a lookup from short hash prefix to full hash
-    prefix_to_full: dict[str, str] = {}
-    for entry in commit_entries:
-        prefix_to_full[entry["short_hash"]] = entry["hash"]
-        # Also map full hash to itself
-        prefix_to_full[entry["hash"]] = entry["hash"]
+    cleaned = _strip_fences(text)
 
     try:
         data = json.loads(cleaned)
         if isinstance(data, dict):
-            reasoning = str(data.get("reasoning") or "").strip() or "(no reasoning given)"
+            reasoning = (
+                str(data.get("reasoning") or "").strip()
+                or "(no reasoning given)"
+            )
             selected = data.get("selected", [])
             if not isinstance(selected, list):
                 selected = []
-            # Resolve hashes
-            resolved: list[str] = []
-            for h in selected:
-                h_str = str(h).strip()
-                # Try exact match first, then prefix match
-                if h_str in prefix_to_full:
-                    resolved.append(prefix_to_full[h_str])
-                else:
-                    # Try matching as a prefix
-                    for entry in commit_entries:
-                        if entry["hash"].startswith(h_str) or entry["short_hash"].startswith(h_str):
-                            resolved.append(entry["hash"])
-                            break
+            resolved = _resolve_hashes(selected, commit_entries)
             return reasoning, resolved
     except (json.JSONDecodeError, TypeError, ValueError):
         pass
@@ -237,17 +261,17 @@ def _parse_dedup_response(
     text: str, commit_entries: list[dict[str, Any]]
 ) -> tuple[str, list[list[str]]]:
     """Parse an LLM dedup response into (reasoning, groups_of_full_hashes)."""
-    cleaned = _strip_fences(text)
+    from tract._helpers import strip_fences as _strip_fences
 
-    prefix_to_full: dict[str, str] = {}
-    for entry in commit_entries:
-        prefix_to_full[entry["short_hash"]] = entry["hash"]
-        prefix_to_full[entry["hash"]] = entry["hash"]
+    cleaned = _strip_fences(text)
 
     try:
         data = json.loads(cleaned)
         if isinstance(data, dict):
-            reasoning = str(data.get("reasoning") or "").strip() or "(no reasoning given)"
+            reasoning = (
+                str(data.get("reasoning") or "").strip()
+                or "(no reasoning given)"
+            )
             groups = data.get("groups", [])
             if not isinstance(groups, list):
                 groups = []
@@ -255,16 +279,7 @@ def _parse_dedup_response(
             for group in groups:
                 if not isinstance(group, list):
                     continue
-                resolved_group: list[str] = []
-                for h in group:
-                    h_str = str(h).strip()
-                    if h_str in prefix_to_full:
-                        resolved_group.append(prefix_to_full[h_str])
-                    else:
-                        for entry in commit_entries:
-                            if entry["hash"].startswith(h_str) or entry["short_hash"].startswith(h_str):
-                                resolved_group.append(entry["hash"])
-                                break
+                resolved_group = _resolve_hashes(group, commit_entries)
                 if len(resolved_group) >= 2:
                     resolved_groups.append(resolved_group)
             return reasoning, resolved_groups
@@ -275,110 +290,8 @@ def _parse_dedup_response(
 
 
 # ---------------------------------------------------------------------------
-# cherry_pick: prepare / finalize / sync / async
+# cherry_pick: sync / async
 # ---------------------------------------------------------------------------
-
-class _CherryPickCtx(NamedTuple):
-    client: Any
-    messages: list[dict[str, str]]
-    llm_kwargs: dict[str, Any]
-    commit_entries: list[dict[str, Any]]
-    limit: int
-    consulted_hashes: tuple[str, ...]
-
-
-def _cherry_pick_prepare(
-    tract: Tract,
-    query: str,
-    *,
-    limit: int = 10,
-    model: str | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> tuple[_CherryPickCtx | None, CherryPickResult | None]:
-    """Shared pre-LLM logic for cherry_pick."""
-    client = _resolve_llm_client(tract, "intelligence", "chat")
-    if client is None:
-        entries = tract.search.log(limit=50)
-        all_hashes = tuple(e.commit_hash for e in entries)
-        return None, CherryPickResult(
-            selected_hashes=all_hashes,
-            total_candidates=len(all_hashes),
-            tokens_used=0,
-            reasoning="No LLM client configured; returning all commits (fail-open).",
-            consulted_hashes=(),
-        )
-
-    manifest, commit_entries = _build_intelligence_manifest(
-        tract, include_content_preview=True, preview_length=200,
-    )
-
-    if not commit_entries:
-        return None, CherryPickResult(
-            selected_hashes=(),
-            total_candidates=0,
-            tokens_used=0,
-            reasoning="No commits to evaluate.",
-            consulted_hashes=(),
-        )
-
-    consulted_hashes = tuple(e["hash"] for e in commit_entries)
-
-    user_content = (
-        f"=== TASK/QUERY ===\n"
-        f"{query}\n"
-        f"\n"
-        f"=== SELECTION LIMIT ===\n"
-        f"Select up to {limit} most relevant commits.\n"
-        f"\n"
-        f"{manifest}"
-    )
-    prompt_override = tract.config.get_prompt("cherry_pick")
-    messages = [
-        {"role": "system", "content": prompt_override or _CHERRY_PICK_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
-
-    llm_kwargs: dict[str, Any] = {}
-    if model is not None:
-        llm_kwargs["model"] = model
-    if temperature is not None:
-        llm_kwargs["temperature"] = temperature
-    else:
-        llm_kwargs["temperature"] = 0.1
-    if max_tokens is not None:
-        llm_kwargs["max_tokens"] = max_tokens
-
-    return _CherryPickCtx(client, messages, llm_kwargs, commit_entries, limit, consulted_hashes), None
-
-
-def _cherry_pick_finalize(
-    ctx: _CherryPickCtx,
-    result: tuple[str, int] | None,
-) -> CherryPickResult:
-    """Shared post-LLM logic for cherry_pick."""
-    if result is None:
-        all_hashes = tuple(e["hash"] for e in ctx.commit_entries)
-        return CherryPickResult(
-            selected_hashes=all_hashes,
-            total_candidates=len(ctx.commit_entries),
-            tokens_used=0,
-            reasoning="LLM call failed; returning all commits (fail-open).",
-            consulted_hashes=ctx.consulted_hashes,
-        )
-
-    raw_text, tokens_used = result
-    reasoning, selected_hashes = _parse_cherry_pick_response(raw_text, ctx.commit_entries)
-    selected_hashes = selected_hashes[:ctx.limit]
-
-    return CherryPickResult(
-        selected_hashes=tuple(selected_hashes),
-        total_candidates=len(ctx.commit_entries),
-        tokens_used=tokens_used,
-        reasoning=reasoning,
-        consulted_hashes=ctx.consulted_hashes,
-    )
-
 
 def cherry_pick(
     tract: Tract,
@@ -407,15 +320,10 @@ def cherry_pick(
     Returns:
         :class:`CherryPickResult` with selected commit hashes.
     """
-    ctx, early = _cherry_pick_prepare(
+    return _cherry_pick_core(
         tract, query, limit=limit, model=model,
         temperature=temperature, max_tokens=max_tokens,
     )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = _safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _cherry_pick_finalize(ctx, result)
 
 
 async def acherry_pick(
@@ -428,126 +336,172 @@ async def acherry_pick(
     max_tokens: int | None = None,
 ) -> CherryPickResult:
     """Async version of :func:`cherry_pick`."""
-    ctx, early = _cherry_pick_prepare(
+    return await _acherry_pick_core(
         tract, query, limit=limit, model=model,
         temperature=temperature, max_tokens=max_tokens,
     )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = await _async_safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _cherry_pick_finalize(ctx, result)
 
 
-# ---------------------------------------------------------------------------
-# deduplicate: prepare / finalize / sync / async
-# ---------------------------------------------------------------------------
-
-class _DedupCtx(NamedTuple):
-    client: Any
-    messages: list[dict[str, str]]
-    llm_kwargs: dict[str, Any]
-    commit_entries: list[dict[str, Any]]
-    auto_skip: bool
-    tract: Any  # Tract instance, needed for _apply_skip_annotations
-    consulted_hashes: tuple[str, ...]
-
-
-def _deduplicate_prepare(
+def _cherry_pick_core(
     tract: Tract,
+    query: str,
     *,
-    threshold: float = 0.8,
-    auto_skip: bool = False,
+    limit: int = 10,
     model: str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
-) -> tuple[_DedupCtx | None, DedupResult | None]:
-    """Shared pre-LLM logic for deduplicate."""
-    client = _resolve_llm_client(tract, "intelligence", "chat")
-    if client is None:
-        return None, DedupResult(
-            duplicate_groups=(),
-            actions_taken=0,
-            tokens_used=0,
-            reasoning="No LLM client configured; no deduplication performed (fail-open).",
-            consulted_hashes=(),
-        )
-
+) -> CherryPickResult:
+    """Core cherry_pick implementation using Judgment."""
+    # Build custom manifest (includes content previews)
     manifest, commit_entries = _build_intelligence_manifest(
-        tract, include_content_preview=True, preview_length=300,
+        tract, include_content_preview=True, preview_length=200,
     )
 
     if not commit_entries:
-        return None, DedupResult(
-            duplicate_groups=(),
-            actions_taken=0,
+        return CherryPickResult(
+            selected_hashes=(),
+            total_candidates=0,
             tokens_used=0,
-            reasoning="No commits to analyze.",
+            reasoning="No commits to evaluate.",
             consulted_hashes=(),
         )
 
     consulted_hashes = tuple(e["hash"] for e in commit_entries)
 
-    threshold_desc = (
-        "very strict (only near-identical content)" if threshold >= 0.9
-        else "strict (highly similar content)" if threshold >= 0.7
-        else "moderate (substantially overlapping content)" if threshold >= 0.5
-        else "loose (any meaningful overlap)"
-    )
-    user_content = (
-        f"=== DEDUPLICATION PARAMETERS ===\n"
-        f"Similarity threshold: {threshold} ({threshold_desc})\n"
+    instructions = (
+        f"=== TASK/QUERY ===\n"
+        f"{query}\n"
+        f"\n"
+        f"=== SELECTION LIMIT ===\n"
+        f"Select up to {limit} most relevant commits.\n"
         f"\n"
         f"{manifest}"
     )
-    prompt_override = tract.config.get_prompt("dedup")
-    messages = [
-        {"role": "system", "content": prompt_override or _DEDUP_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
 
-    llm_kwargs: dict[str, Any] = {}
-    if model is not None:
-        llm_kwargs["model"] = model
-    if temperature is not None:
-        llm_kwargs["temperature"] = temperature
-    else:
-        llm_kwargs["temperature"] = 0.1
-    if max_tokens is not None:
-        llm_kwargs["max_tokens"] = max_tokens
+    prompt_override = tract.config.get_prompt("cherry_pick")
 
-    return _DedupCtx(client, messages, llm_kwargs, commit_entries, auto_skip, tract, consulted_hashes), None
-
-
-def _deduplicate_finalize(
-    ctx: _DedupCtx,
-    result: tuple[str, int] | None,
-) -> DedupResult:
-    """Shared post-LLM logic for deduplicate."""
-    if result is None:
-        return DedupResult(
-            duplicate_groups=(),
-            actions_taken=0,
-            tokens_used=0,
-            reasoning="LLM call failed; no deduplication performed (fail-open).",
-            consulted_hashes=ctx.consulted_hashes,
-        )
-
-    raw_text, tokens_used = result
-    reasoning, groups = _parse_dedup_response(raw_text, ctx.commit_entries)
-
-    actions_taken = 0
-    if ctx.auto_skip and groups:
-        actions_taken = _apply_skip_annotations(ctx.tract, groups, ctx.commit_entries)
-
-    return DedupResult(
-        duplicate_groups=tuple(tuple(g) for g in groups),
-        actions_taken=actions_taken,
-        tokens_used=tokens_used,
-        reasoning=reasoning,
-        consulted_hashes=ctx.consulted_hashes,
+    judgment = Judgment(
+        instructions=instructions,
+        response_model=SelectionResult,
+        system_prompt=prompt_override or _CHERRY_PICK_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.1,
+        max_tokens=max_tokens,
+        operation_name="intelligence",
     )
 
+    result = judgment.evaluate(tract)
+
+    if not result.succeeded or result.output is None:
+        # Fail-open: return all commits
+        all_hashes = tuple(e["hash"] for e in commit_entries)
+        base = result.reasoning or "LLM call failed"
+        reasoning = (
+            base if "fail-open" in base.lower()
+            else f"{base}; returning all commits (fail-open)."
+        )
+        return CherryPickResult(
+            selected_hashes=all_hashes,
+            total_candidates=len(commit_entries),
+            tokens_used=result.tokens_used,
+            reasoning=reasoning,
+            consulted_hashes=consulted_hashes,
+        )
+
+    # Resolve short hashes from LLM output to full hashes
+    selected = _resolve_hashes(result.output.selected, commit_entries)
+    selected = selected[:limit]
+
+    return CherryPickResult(
+        selected_hashes=tuple(selected),
+        total_candidates=len(commit_entries),
+        tokens_used=result.tokens_used,
+        reasoning=result.output.reasoning or result.reasoning,
+        consulted_hashes=consulted_hashes,
+    )
+
+
+async def _acherry_pick_core(
+    tract: Tract,
+    query: str,
+    *,
+    limit: int = 10,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> CherryPickResult:
+    """Async core cherry_pick implementation using Judgment."""
+    manifest, commit_entries = _build_intelligence_manifest(
+        tract, include_content_preview=True, preview_length=200,
+    )
+
+    if not commit_entries:
+        return CherryPickResult(
+            selected_hashes=(),
+            total_candidates=0,
+            tokens_used=0,
+            reasoning="No commits to evaluate.",
+            consulted_hashes=(),
+        )
+
+    consulted_hashes = tuple(e["hash"] for e in commit_entries)
+
+    instructions = (
+        f"=== TASK/QUERY ===\n"
+        f"{query}\n"
+        f"\n"
+        f"=== SELECTION LIMIT ===\n"
+        f"Select up to {limit} most relevant commits.\n"
+        f"\n"
+        f"{manifest}"
+    )
+
+    prompt_override = tract.config.get_prompt("cherry_pick")
+
+    judgment = Judgment(
+        instructions=instructions,
+        response_model=SelectionResult,
+        system_prompt=prompt_override or _CHERRY_PICK_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.1,
+        max_tokens=max_tokens,
+        operation_name="intelligence",
+    )
+
+    result = await judgment.aevaluate(tract)
+
+    if not result.succeeded or result.output is None:
+        all_hashes = tuple(e["hash"] for e in commit_entries)
+        base = result.reasoning or "LLM call failed"
+        reasoning = (
+            base if "fail-open" in base.lower()
+            else f"{base}; returning all commits (fail-open)."
+        )
+        return CherryPickResult(
+            selected_hashes=all_hashes,
+            total_candidates=len(commit_entries),
+            tokens_used=result.tokens_used,
+            reasoning=reasoning,
+            consulted_hashes=consulted_hashes,
+        )
+
+    selected = _resolve_hashes(result.output.selected, commit_entries)
+    selected = selected[:limit]
+
+    return CherryPickResult(
+        selected_hashes=tuple(selected),
+        total_candidates=len(commit_entries),
+        tokens_used=result.tokens_used,
+        reasoning=result.output.reasoning or result.reasoning,
+        consulted_hashes=consulted_hashes,
+    )
+
+
+# ---------------------------------------------------------------------------
+# deduplicate: sync / async
+# ---------------------------------------------------------------------------
 
 def deduplicate(
     tract: Tract,
@@ -558,7 +512,8 @@ def deduplicate(
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> DedupResult:
-    """Detect and optionally handle duplicate/overlapping commits using LLM judgment.
+    """Detect and optionally handle duplicate/overlapping commits using LLM \
+judgment.
 
     Two-pass approach:
     1. Build manifest with content previews (300 chars).
@@ -581,15 +536,10 @@ def deduplicate(
     Returns:
         :class:`DedupResult` with duplicate groups and actions taken.
     """
-    ctx, early = _deduplicate_prepare(
+    return _deduplicate_core(
         tract, threshold=threshold, auto_skip=auto_skip,
         model=model, temperature=temperature, max_tokens=max_tokens,
     )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = _safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _deduplicate_finalize(ctx, result)
 
 
 async def adeduplicate(
@@ -602,15 +552,160 @@ async def adeduplicate(
     max_tokens: int | None = None,
 ) -> DedupResult:
     """Async version of :func:`deduplicate`."""
-    ctx, early = _deduplicate_prepare(
+    return await _adeduplicate_core(
         tract, threshold=threshold, auto_skip=auto_skip,
         model=model, temperature=temperature, max_tokens=max_tokens,
     )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = await _async_safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _deduplicate_finalize(ctx, result)
+
+
+def _build_dedup_instructions(
+    manifest: str,
+    threshold: float,
+) -> str:
+    """Build the instructions string for deduplication Judgment."""
+    threshold_desc = (
+        "very strict (only near-identical content)" if threshold >= 0.9
+        else "strict (highly similar content)" if threshold >= 0.7
+        else "moderate (substantially overlapping content)" if threshold >= 0.5
+        else "loose (any meaningful overlap)"
+    )
+    return (
+        f"=== DEDUPLICATION PARAMETERS ===\n"
+        f"Similarity threshold: {threshold} ({threshold_desc})\n"
+        f"\n"
+        f"{manifest}"
+    )
+
+
+def _deduplicate_core(
+    tract: Tract,
+    *,
+    threshold: float = 0.8,
+    auto_skip: bool = False,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> DedupResult:
+    """Core deduplicate implementation using Judgment."""
+    manifest, commit_entries = _build_intelligence_manifest(
+        tract, include_content_preview=True, preview_length=300,
+    )
+
+    if not commit_entries:
+        return DedupResult(
+            duplicate_groups=(),
+            actions_taken=0,
+            tokens_used=0,
+            reasoning="No commits to analyze.",
+            consulted_hashes=(),
+        )
+
+    consulted_hashes = tuple(e["hash"] for e in commit_entries)
+    instructions = _build_dedup_instructions(manifest, threshold)
+    prompt_override = tract.config.get_prompt("dedup")
+
+    judgment = Judgment(
+        instructions=instructions,
+        response_model=DedupGroups,
+        system_prompt=prompt_override or _DEDUP_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.1,
+        max_tokens=max_tokens,
+        operation_name="intelligence",
+    )
+
+    result = judgment.evaluate(tract)
+    return _finalize_dedup(
+        result, commit_entries, consulted_hashes, auto_skip, tract,
+    )
+
+
+async def _adeduplicate_core(
+    tract: Tract,
+    *,
+    threshold: float = 0.8,
+    auto_skip: bool = False,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> DedupResult:
+    """Async core deduplicate implementation using Judgment."""
+    manifest, commit_entries = _build_intelligence_manifest(
+        tract, include_content_preview=True, preview_length=300,
+    )
+
+    if not commit_entries:
+        return DedupResult(
+            duplicate_groups=(),
+            actions_taken=0,
+            tokens_used=0,
+            reasoning="No commits to analyze.",
+            consulted_hashes=(),
+        )
+
+    consulted_hashes = tuple(e["hash"] for e in commit_entries)
+    instructions = _build_dedup_instructions(manifest, threshold)
+    prompt_override = tract.config.get_prompt("dedup")
+
+    judgment = Judgment(
+        instructions=instructions,
+        response_model=DedupGroups,
+        system_prompt=prompt_override or _DEDUP_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.1,
+        max_tokens=max_tokens,
+        operation_name="intelligence",
+    )
+
+    result = await judgment.aevaluate(tract)
+    return _finalize_dedup(
+        result, commit_entries, consulted_hashes, auto_skip, tract,
+    )
+
+
+def _finalize_dedup(
+    result: Any,
+    commit_entries: list[dict[str, Any]],
+    consulted_hashes: tuple[str, ...],
+    auto_skip: bool,
+    tract: Tract,
+) -> DedupResult:
+    """Shared post-Judgment logic for deduplicate."""
+    if not result.succeeded or result.output is None:
+        base = result.reasoning or "LLM call failed"
+        reasoning = (
+            base if "fail-open" in base.lower()
+            else f"{base}; no deduplication performed (fail-open)."
+        )
+        return DedupResult(
+            duplicate_groups=(),
+            actions_taken=0,
+            tokens_used=result.tokens_used,
+            reasoning=reasoning,
+            consulted_hashes=consulted_hashes,
+        )
+
+    resolved_groups: list[list[str]] = []
+    for group in result.output.groups:
+        resolved = _resolve_hashes(group, commit_entries)
+        if len(resolved) >= 2:
+            resolved_groups.append(resolved)
+
+    actions_taken = 0
+    if auto_skip and resolved_groups:
+        actions_taken = _apply_skip_annotations(
+            tract, resolved_groups, commit_entries,
+        )
+
+    return DedupResult(
+        duplicate_groups=tuple(tuple(g) for g in resolved_groups),
+        actions_taken=actions_taken,
+        tokens_used=result.tokens_used,
+        reasoning=result.output.reasoning or result.reasoning,
+        consulted_hashes=consulted_hashes,
+    )
 
 
 # ---------------------------------------------------------------------------

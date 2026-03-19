@@ -1513,19 +1513,15 @@ class TestPeekingFlow:
         assert m.last_result is not None
         assert "fail-open" in m.last_result.reasoning.lower()
 
-    def test_peeking_empty_peek_list_falls_through(self):
-        """Empty peek list from LLM triggers a normal action call."""
-        class EmptyPeekThenActionClient:
+    def test_peeking_empty_peek_list_short_circuits(self):
+        """Empty peek list from LLM is treated as direct response (no second call)."""
+        class EmptyPeekClient:
             def __init__(self):
                 self.call_count = 0
-                self.calls = []
 
             def chat(self, messages, **kwargs):
-                self.calls.append((messages, kwargs))
                 self.call_count += 1
-                if self.call_count == 1:
-                    return {"choices": [{"message": {"content": '{"peek": []}'}}]}
-                return {"choices": [{"message": {"content": _action_response("Fallthrough", [{"type": "gc"}])}}]}
+                return {"choices": [{"message": {"content": '{"peek": [], "reasoning": "Nothing to peek"}'}}]}
 
             def extract_content(self, response):
                 return response["choices"][0]["message"]["content"]
@@ -1536,7 +1532,7 @@ class TestPeekingFlow:
             def close(self):
                 pass
 
-        client = EmptyPeekThenActionClient()
+        client = EmptyPeekClient()
         tract_mock = _make_tract_mock(client=client)
         ctx = _make_ctx(tract_mock)
 
@@ -1548,12 +1544,11 @@ class TestPeekingFlow:
         )
         m(ctx)
 
-        # Two LLM calls: empty peek + fallback action call
-        assert client.call_count == 2
+        # Only 1 LLM call — empty peek treated as direct response
+        assert client.call_count == 1
         assert m.last_result.peeks_requested == 0
         assert m.last_result.peeks_performed == 0
-        assert m.last_result.actions_executed == 1
-        tract_mock.compression.gc.assert_called_once()
+        assert m.last_result.actions_executed == 0
 
 
 # ---------------------------------------------------------------------------

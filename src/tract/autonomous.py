@@ -9,6 +9,9 @@ Provides LLM-driven functions for autonomous context management:
 All follow the fail-open pattern from gate.py/maintain.py: on LLM errors,
 operations return safe defaults (no action taken).
 
+Internally delegates to :class:`~tract.judgment.Judgment` for the LLM
+call, JSON parsing, and fail-open handling.
+
 Example::
 
     from tract.autonomous import auto_split, auto_rebase, auto_branch
@@ -28,12 +31,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
-from tract._helpers import async_safe_llm_call as _async_safe_llm_call
-from tract._helpers import resolve_llm_client as _resolve_llm_client
-from tract._helpers import safe_llm_call as _safe_llm_call
-from tract._helpers import strip_fences as _strip_fences
+from tract.context_view import ContextView
+from tract.judgment import (
+    BooleanDecision,
+    Judgment,
+    SplitPlan,
+)
 
 if TYPE_CHECKING:
     from tract.tract import Tract
@@ -99,7 +104,8 @@ _SPLIT_SYSTEM_PROMPT = """\
 You are a context management agent. Your job is to split a single large commit \
 into multiple smaller, logically coherent pieces.
 
-You will receive the content of a commit. Split it into granular, self-contained pieces.
+You will receive the content of a commit. Split it into granular, self-contained \
+pieces.
 
 Respond with JSON:
 {
@@ -110,7 +116,8 @@ Respond with JSON:
   ]
 }
 
-If the content is already small and coherent (cannot be meaningfully split), return:
+If the content is already small and coherent (cannot be meaningfully split), \
+return:
 {
   "reasoning": "Content is already atomic",
   "pieces": []
@@ -126,15 +133,15 @@ You will receive information about the current branch and available branches.
 Respond with JSON:
 {
   "reasoning": "Brief explanation of your decision",
-  "should_rebase": true,
-  "target_branch": "branch-name"
+  "decision": true,
+  "params": {"target_branch": "branch-name"}
 }
 
 Or if no rebase is needed:
 {
   "reasoning": "Brief explanation of why no rebase is needed",
-  "should_rebase": false,
-  "target_branch": null
+  "decision": false,
+  "params": {}
 }
 
 Consider: divergence from the main branch, whether the current branch would \
@@ -151,15 +158,15 @@ and a task/context description.
 Respond with JSON:
 {
   "reasoning": "Brief explanation of your decision",
-  "should_branch": true,
-  "branch_name": "feature/descriptive-name"
+  "decision": true,
+  "params": {"branch_name": "feature/descriptive-name"}
 }
 
 Or if no new branch is needed:
 {
   "reasoning": "Brief explanation of why no branch is needed",
-  "should_branch": false,
-  "branch_name": null
+  "decision": false,
+  "params": {}
 }
 
 Branch names must follow git naming rules (no spaces, no special characters). \
@@ -167,188 +174,97 @@ Use descriptive, kebab-case names.
 """
 
 # ---------------------------------------------------------------------------
-# Shared helpers
+# Manifest builders
 # ---------------------------------------------------------------------------
 
-def _resolve_client(tract: Tract, operation: str = "autonomous") -> Any | None:
-    """Resolve the LLM client, trying autonomous > intelligence > chat.
+def _build_rebase_manifest(tract: Tract) -> str:
+    """Build a manifest for rebase decisions."""
+    current = tract.current_branch or "(detached)"
+    head = tract.head
+    head_short = head[:8] if head else "(empty)"
+    branches = tract.branches.list()
 
-    Returns None if no client available (fail-open).
-    Delegates to :func:`tract._helpers.resolve_llm_client`.
-    """
-    return _resolve_llm_client(tract, operation, "intelligence", "chat")
+    lines = [
+        "=== BRANCH STATE ===",
+        f"Current branch: {current} | HEAD: {head_short}",
+        "",
+        "BRANCHES:",
+    ]
+    for b in branches:
+        marker = " *" if b.is_current else ""
+        bh = b.commit_hash[:8] if b.commit_hash else "(empty)"
+        lines.append(f"  {b.name}{marker} -> {bh}")
 
+    entries = tract.search.log(limit=10)
+    if entries:
+        lines.append("")
+        lines.append("RECENT COMMITS (current branch):")
+        for e in entries:
+            msg = e.message or "(no msg)"
+            lines.append(
+                f"  [{e.commit_hash[:8]}] {e.content_type} | \"{msg}\""
+            )
 
-def _build_llm_kwargs(
-    model: str | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> dict[str, Any]:
-    """Build LLM kwargs dict from optional parameters."""
-    kwargs: dict[str, Any] = {}
-    if model is not None:
-        kwargs["model"] = model
-    if temperature is not None:
-        kwargs["temperature"] = temperature
-    else:
-        kwargs["temperature"] = 0.2
-    if max_tokens is not None:
-        kwargs["max_tokens"] = max_tokens
-    return kwargs
-
-
-# ---------------------------------------------------------------------------
-# auto_split: prepare / finalize / sync / async
-# ---------------------------------------------------------------------------
-
-class _AutoSplitCtx(NamedTuple):
-    client: Any
-    messages: list[dict[str, str]]
-    llm_kwargs: dict[str, Any]
-    commit_hash: str
-    tract: Any  # needed by _execute_split
-    consulted_hashes: tuple[str, ...]
+    return "\n".join(lines)
 
 
-def _auto_split_prepare(
-    tract: Tract,
-    commit_hash: str,
-    *,
-    model: str | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> tuple[_AutoSplitCtx | None, AutoSplitResult | None]:
-    """Shared pre-LLM logic for auto_split."""
-    fail_open = AutoSplitResult(
-        original_hash=commit_hash,
-        new_hashes=(commit_hash,),
-        split_count=1,
-        tokens_used=0,
-        reasoning="No split performed (fail-open).",
-        consulted_hashes=(),
-    )
+def _build_branch_manifest(tract: Tract, context: str = "") -> str:
+    """Build a manifest for branch decisions."""
+    current = tract.current_branch or "(detached)"
+    head = tract.head
+    head_short = head[:8] if head else "(empty)"
+    branches = tract.branches.list()
 
-    client = _resolve_client(tract)
-    if client is None:
-        return None, AutoSplitResult(
-            original_hash=commit_hash,
-            new_hashes=(commit_hash,),
-            split_count=1,
-            tokens_used=0,
-            reasoning="No LLM client configured; no split performed (fail-open).",
-            consulted_hashes=(),
-        )
+    lines = [
+        "=== BRANCH STATE ===",
+        f"Current branch: {current} | HEAD: {head_short}",
+        "",
+        "EXISTING BRANCHES:",
+    ]
+    for b in branches:
+        marker = " *" if b.is_current else ""
+        lines.append(f"  {b.name}{marker}")
+
+    entries = tract.search.log(limit=10)
+    if entries:
+        lines.append("")
+        lines.append("RECENT COMMITS:")
+        for e in entries:
+            msg = e.message or "(no msg)"
+            lines.append(
+                f"  [{e.commit_hash[:8]}] {e.content_type} | \"{msg}\""
+            )
 
     try:
-        content = tract.search.get_content(commit_hash)
-        if content is None:
-            return None, fail_open
-        content_str = json.dumps(content, default=str) if isinstance(content, dict) else str(content)
+        directive_commits = tract.search.find(
+            content_type="instruction", limit=20,
+        )
+        if directive_commits:
+            lines.append("")
+            lines.append("ACTIVE DIRECTIVES:")
+            for dc in directive_commits:
+                text = tract.search.get_content(dc) or ""
+                label = dc.message or dc.commit_hash[:8]
+                lines.append(f"  {label}: {str(text)[:80]}...")
     except Exception:
-        logger.warning("Failed to get content for commit %s; no split.", commit_hash[:12], exc_info=True)
-        return None, fail_open
+        pass
 
-    consulted_hashes = (commit_hash,)
+    if context:
+        lines.append("")
+        lines.append("=== TASK CONTEXT ===")
+        lines.append(context)
 
-    prompt_override = tract.config.get_prompt("split")
-    messages = [
-        {"role": "system", "content": prompt_override or _SPLIT_SYSTEM_PROMPT},
-        {"role": "user", "content": f"=== COMMIT CONTENT ===\n{content_str}"},
-    ]
-
-    llm_kwargs = _build_llm_kwargs(model, temperature, max_tokens)
-
-    return _AutoSplitCtx(client, messages, llm_kwargs, commit_hash, tract, consulted_hashes), None
+    return "\n".join(lines)
 
 
-def _auto_split_finalize(
-    ctx: _AutoSplitCtx,
-    result: tuple[str, int] | None,
-) -> AutoSplitResult:
-    """Shared post-LLM logic for auto_split."""
-    if result is None:
-        return AutoSplitResult(
-            original_hash=ctx.commit_hash,
-            new_hashes=(ctx.commit_hash,),
-            split_count=1,
-            tokens_used=0,
-            reasoning="No split performed (fail-open).",
-            consulted_hashes=ctx.consulted_hashes,
-        )
-
-    raw_text, tokens_used = result
-    pieces = _parse_split_response(raw_text)
-    if not pieces:
-        return AutoSplitResult(
-            original_hash=ctx.commit_hash,
-            new_hashes=(ctx.commit_hash,),
-            split_count=1,
-            tokens_used=tokens_used,
-            reasoning="LLM returned no split pieces; keeping original.",
-            consulted_hashes=ctx.consulted_hashes,
-        )
-
-    return _execute_split(ctx.tract, ctx.commit_hash, pieces, tokens_used, ctx.consulted_hashes)
-
-
-def auto_split(
-    tract: Tract,
-    commit_hash: str,
-    *,
-    model: str | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> AutoSplitResult:
-    """Split a commit into smaller, logically coherent pieces using LLM judgment.
-
-    Gets the commit content, asks an LLM to split it into pieces, then
-    creates new APPEND commits for each piece and EDITs the original to SKIP it.
-
-    Fail-open: on LLM error, returns original hash unchanged.
-
-    Args:
-        tract: The Tract instance.
-        commit_hash: Hash of the commit to split.
-        model: Model override for the LLM call.
-        temperature: Temperature override.
-        max_tokens: Max tokens override.
-
-    Returns:
-        :class:`AutoSplitResult` with the new commit hashes.
-    """
-    ctx, early = _auto_split_prepare(
-        tract, commit_hash, model=model,
-        temperature=temperature, max_tokens=max_tokens,
-    )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = _safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _auto_split_finalize(ctx, result)
-
-
-async def aauto_split(
-    tract: Tract,
-    commit_hash: str,
-    *,
-    model: str | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> AutoSplitResult:
-    """Async version of :func:`auto_split`."""
-    ctx, early = _auto_split_prepare(
-        tract, commit_hash, model=model,
-        temperature=temperature, max_tokens=max_tokens,
-    )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = await _async_safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _auto_split_finalize(ctx, result)
-
+# ---------------------------------------------------------------------------
+# Response parsing helpers (kept for backward compatibility of test imports)
+# ---------------------------------------------------------------------------
 
 def _parse_split_response(text: str) -> list[dict[str, str]]:
     """Parse an LLM split response into a list of {content, message} dicts."""
+    from tract._helpers import strip_fences as _strip_fences
+
     cleaned = _strip_fences(text)
     try:
         data = json.loads(cleaned)
@@ -369,6 +285,287 @@ def _parse_split_response(text: str) -> list[dict[str, str]]:
     return []
 
 
+def _parse_rebase_response(
+    text: str,
+) -> tuple[bool, str | None, str] | None:
+    """Parse an LLM rebase response.
+
+    Returns (should_rebase, target, reasoning) or None.
+    """
+    from tract._helpers import strip_fences as _strip_fences
+
+    cleaned = _strip_fences(text)
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            reasoning = (
+                str(data.get("reasoning") or "").strip()
+                or "(no reasoning given)"
+            )
+            # Support both old (should_rebase) and new (decision+params)
+            should_rebase = bool(
+                data.get("should_rebase", data.get("decision", False))
+            )
+            target = data.get("target_branch")
+            if target is None and isinstance(data.get("params"), dict):
+                target = data["params"].get("target_branch")
+            if target is not None:
+                target = str(target).strip() or None
+            return should_rebase, target, reasoning
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return None
+
+
+def _parse_branch_response(
+    text: str,
+) -> tuple[bool, str | None, str] | None:
+    """Parse an LLM branch response.
+
+    Returns (should_branch, name, reasoning) or None.
+    """
+    from tract._helpers import strip_fences as _strip_fences
+
+    cleaned = _strip_fences(text)
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            reasoning = (
+                str(data.get("reasoning") or "").strip()
+                or "(no reasoning given)"
+            )
+            # Support both old (should_branch) and new (decision+params)
+            should_branch = bool(
+                data.get("should_branch", data.get("decision", False))
+            )
+            name = data.get("branch_name")
+            if name is None and isinstance(data.get("params"), dict):
+                name = data["params"].get("branch_name")
+            if name is not None:
+                name = str(name).strip() or None
+            return should_branch, name, reasoning
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# auto_split: sync / async
+# ---------------------------------------------------------------------------
+
+def auto_split(
+    tract: Tract,
+    commit_hash: str,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> AutoSplitResult:
+    """Split a commit into smaller, logically coherent pieces using LLM \
+judgment.
+
+    Gets the commit content, asks an LLM to split it into pieces, then
+    creates new APPEND commits for each piece and EDITs the original to \
+SKIP it.
+
+    Fail-open: on LLM error, returns original hash unchanged.
+
+    Args:
+        tract: The Tract instance.
+        commit_hash: Hash of the commit to split.
+        model: Model override for the LLM call.
+        temperature: Temperature override.
+        max_tokens: Max tokens override.
+
+    Returns:
+        :class:`AutoSplitResult` with the new commit hashes.
+    """
+    return _auto_split_core(
+        tract, commit_hash, model=model,
+        temperature=temperature, max_tokens=max_tokens,
+    )
+
+
+async def aauto_split(
+    tract: Tract,
+    commit_hash: str,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> AutoSplitResult:
+    """Async version of :func:`auto_split`."""
+    return await _aauto_split_core(
+        tract, commit_hash, model=model,
+        temperature=temperature, max_tokens=max_tokens,
+    )
+
+
+def _auto_split_core(
+    tract: Tract,
+    commit_hash: str,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> AutoSplitResult:
+    """Core auto_split implementation using Judgment."""
+    fail_result = AutoSplitResult(
+        original_hash=commit_hash,
+        new_hashes=(commit_hash,),
+        split_count=1,
+        tokens_used=0,
+        reasoning="No split performed (fail-open).",
+        consulted_hashes=(),
+    )
+
+    try:
+        content = tract.search.get_content(commit_hash)
+        if content is None:
+            return fail_result
+        content_str = (
+            json.dumps(content, default=str)
+            if isinstance(content, dict)
+            else str(content)
+        )
+    except Exception:
+        logger.warning(
+            "Failed to get content for commit %s; no split.",
+            commit_hash[:12], exc_info=True,
+        )
+        return fail_result
+
+    consulted_hashes = (commit_hash,)
+    prompt_override = tract.config.get_prompt("split")
+
+    judgment = Judgment(
+        instructions=f"=== COMMIT CONTENT ===\n{content_str}",
+        response_model=SplitPlan,
+        system_prompt=prompt_override or _SPLIT_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.2,
+        max_tokens=max_tokens,
+        operation_name="autonomous",
+    )
+
+    result = judgment.evaluate(tract)
+    return _finalize_split(
+        result, tract, commit_hash, consulted_hashes,
+    )
+
+
+async def _aauto_split_core(
+    tract: Tract,
+    commit_hash: str,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> AutoSplitResult:
+    """Async core auto_split implementation using Judgment."""
+    fail_result = AutoSplitResult(
+        original_hash=commit_hash,
+        new_hashes=(commit_hash,),
+        split_count=1,
+        tokens_used=0,
+        reasoning="No split performed (fail-open).",
+        consulted_hashes=(),
+    )
+
+    try:
+        content = tract.search.get_content(commit_hash)
+        if content is None:
+            return fail_result
+        content_str = (
+            json.dumps(content, default=str)
+            if isinstance(content, dict)
+            else str(content)
+        )
+    except Exception:
+        logger.warning(
+            "Failed to get content for commit %s; no split.",
+            commit_hash[:12], exc_info=True,
+        )
+        return fail_result
+
+    consulted_hashes = (commit_hash,)
+    prompt_override = tract.config.get_prompt("split")
+
+    judgment = Judgment(
+        instructions=f"=== COMMIT CONTENT ===\n{content_str}",
+        response_model=SplitPlan,
+        system_prompt=prompt_override or _SPLIT_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.2,
+        max_tokens=max_tokens,
+        operation_name="autonomous",
+    )
+
+    result = await judgment.aevaluate(tract)
+    return _finalize_split(
+        result, tract, commit_hash, consulted_hashes,
+    )
+
+
+def _finalize_split(
+    result: Any,
+    tract: Tract,
+    commit_hash: str,
+    consulted_hashes: tuple[str, ...],
+) -> AutoSplitResult:
+    """Shared post-Judgment logic for auto_split."""
+    if not result.succeeded or result.output is None:
+        base = result.reasoning or "No split performed"
+        reasoning = (
+            base if "fail-open" in base.lower()
+            else f"{base}; no split performed (fail-open)."
+        )
+        return AutoSplitResult(
+            original_hash=commit_hash,
+            new_hashes=(commit_hash,),
+            split_count=1,
+            tokens_used=result.tokens_used,
+            reasoning=reasoning,
+            consulted_hashes=consulted_hashes,
+        )
+
+    pieces = result.output.pieces
+    if not pieces:
+        return AutoSplitResult(
+            original_hash=commit_hash,
+            new_hashes=(commit_hash,),
+            split_count=1,
+            tokens_used=result.tokens_used,
+            reasoning="LLM returned no split pieces; keeping original.",
+            consulted_hashes=consulted_hashes,
+        )
+
+    valid_pieces: list[dict[str, str]] = []
+    for piece in pieces:
+        if isinstance(piece, dict) and "content" in piece:
+            valid_pieces.append({
+                "content": str(piece["content"]),
+                "message": str(piece.get("message", "Split piece")),
+            })
+
+    if not valid_pieces:
+        return AutoSplitResult(
+            original_hash=commit_hash,
+            new_hashes=(commit_hash,),
+            split_count=1,
+            tokens_used=result.tokens_used,
+            reasoning="LLM returned no valid split pieces; keeping original.",
+            consulted_hashes=consulted_hashes,
+        )
+
+    return _execute_split(
+        tract, commit_hash, valid_pieces,
+        result.tokens_used, consulted_hashes,
+    )
+
+
 def _execute_split(
     tract: Tract,
     original_hash: str,
@@ -386,19 +583,23 @@ def _execute_split(
     for piece in pieces:
         try:
             info = tract.commit(
-                {"content_type": "freeform", "payload": {"text": piece["content"]}},
+                {
+                    "content_type": "freeform",
+                    "payload": {"text": piece["content"]},
+                },
                 operation=CommitOperation.APPEND,
                 message=piece["message"],
             )
             new_hashes.append(info.commit_hash)
-            reasoning_parts.append(f"Created: {info.commit_hash[:8]} - {piece['message']}")
+            reasoning_parts.append(
+                f"Created: {info.commit_hash[:8]} - {piece['message']}"
+            )
         except Exception as exc:
             logger.warning(
                 "Failed to create split commit: %s", exc, exc_info=True,
             )
 
     if not new_hashes:
-        # All pieces failed -- fail-open, keep original
         return AutoSplitResult(
             original_hash=original_hash,
             new_hashes=(original_hash,),
@@ -408,15 +609,21 @@ def _execute_split(
             consulted_hashes=consulted_hashes,
         )
 
-    # SKIP the original commit
     try:
-        tract.annotations.set(original_hash, Priority.SKIP, reason="Split into smaller commits")
+        tract.annotations.set(
+            original_hash, Priority.SKIP,
+            reason="Split into smaller commits",
+        )
     except Exception:
         logger.warning(
-            "Failed to SKIP original commit %s after split.", original_hash[:12], exc_info=True,
+            "Failed to SKIP original commit %s after split.",
+            original_hash[:12], exc_info=True,
         )
 
-    reasoning = f"Split into {len(new_hashes)} pieces. " + "; ".join(reasoning_parts)
+    reasoning = (
+        f"Split into {len(new_hashes)} pieces. "
+        + "; ".join(reasoning_parts)
+    )
 
     return AutoSplitResult(
         original_hash=original_hash,
@@ -429,134 +636,8 @@ def _execute_split(
 
 
 # ---------------------------------------------------------------------------
-# auto_rebase: prepare / finalize / sync / async
+# auto_rebase: sync / async
 # ---------------------------------------------------------------------------
-
-def _build_rebase_manifest(tract: Tract) -> str:
-    """Build a manifest for rebase decisions."""
-    current = tract.current_branch or "(detached)"
-    head = tract.head
-    head_short = head[:8] if head else "(empty)"
-    branches = tract.branches.list()
-
-    lines = [
-        "=== BRANCH STATE ===",
-        f"Current branch: {current} | HEAD: {head_short}",
-        "",
-        "BRANCHES:",
-    ]
-    for b in branches:
-        marker = " *" if b.is_current else ""
-        lines.append(f"  {b.name}{marker} -> {b.commit_hash[:8] if b.commit_hash else '(empty)'}")
-
-    # Recent commits on current branch
-    entries = tract.search.log(limit=10)
-    if entries:
-        lines.append("")
-        lines.append("RECENT COMMITS (current branch):")
-        for e in entries:
-            lines.append(f"  [{e.commit_hash[:8]}] {e.content_type} | \"{e.message or '(no msg)'}\"")
-
-    return "\n".join(lines)
-
-
-class _AutoRebaseCtx(NamedTuple):
-    client: Any
-    messages: list[dict[str, str]]
-    llm_kwargs: dict[str, Any]
-    tract: Any  # needed for rebase execution
-    consulted_hashes: tuple[str, ...]
-
-
-def _auto_rebase_prepare(
-    tract: Tract,
-    *,
-    model: str | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> tuple[_AutoRebaseCtx | None, AutoRebaseResult | None]:
-    """Shared pre-LLM logic for auto_rebase."""
-    client = _resolve_client(tract)
-    if client is None:
-        return None, AutoRebaseResult(
-            rebased=False,
-            reason="No LLM client configured; no rebase performed (fail-open).",
-            target_branch=None,
-            tokens_used=0,
-            consulted_hashes=(),
-        )
-
-    manifest = _build_rebase_manifest(tract)
-    entries = tract.search.log(limit=10)
-    consulted_hashes = tuple(e.commit_hash for e in entries) if entries else ()
-
-    prompt_override = tract.config.get_prompt("rebase")
-    messages = [
-        {"role": "system", "content": prompt_override or _REBASE_SYSTEM_PROMPT},
-        {"role": "user", "content": manifest},
-    ]
-    llm_kwargs = _build_llm_kwargs(model, temperature, max_tokens)
-
-    return _AutoRebaseCtx(client, messages, llm_kwargs, tract, consulted_hashes), None
-
-
-def _auto_rebase_finalize(
-    ctx: _AutoRebaseCtx,
-    result: tuple[str, int] | None,
-) -> AutoRebaseResult:
-    """Shared post-LLM logic for auto_rebase."""
-    if result is None:
-        return AutoRebaseResult(
-            rebased=False,
-            reason="No rebase performed (fail-open).",
-            target_branch=None,
-            tokens_used=0,
-            consulted_hashes=ctx.consulted_hashes,
-        )
-
-    raw_text, tokens_used = result
-    decision = _parse_rebase_response(raw_text)
-    if decision is None:
-        return AutoRebaseResult(
-            rebased=False,
-            reason="Could not parse LLM response; no rebase performed.",
-            target_branch=None,
-            tokens_used=tokens_used,
-            consulted_hashes=ctx.consulted_hashes,
-        )
-
-    should_rebase, target_branch, reasoning = decision
-
-    if not should_rebase or not target_branch:
-        return AutoRebaseResult(
-            rebased=False,
-            reason=reasoning,
-            target_branch=None,
-            tokens_used=tokens_used,
-            consulted_hashes=ctx.consulted_hashes,
-        )
-
-    try:
-        ctx.tract.rebase(target_branch)
-        return AutoRebaseResult(
-            rebased=True,
-            reason=reasoning,
-            target_branch=target_branch,
-            tokens_used=tokens_used,
-            consulted_hashes=ctx.consulted_hashes,
-        )
-    except Exception as exc:
-        logger.warning(
-            "Auto-rebase onto '%s' failed: %s", target_branch, exc, exc_info=True,
-        )
-        return AutoRebaseResult(
-            rebased=False,
-            reason=f"Rebase failed: {exc}",
-            target_branch=target_branch,
-            tokens_used=tokens_used,
-            consulted_hashes=ctx.consulted_hashes,
-        )
-
 
 def auto_rebase(
     tract: Tract,
@@ -581,14 +662,10 @@ def auto_rebase(
     Returns:
         :class:`AutoRebaseResult`.
     """
-    ctx, early = _auto_rebase_prepare(
-        tract, model=model, temperature=temperature, max_tokens=max_tokens,
+    return _auto_rebase_core(
+        tract, model=model, temperature=temperature,
+        max_tokens=max_tokens,
     )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = _safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _auto_rebase_finalize(ctx, result)
 
 
 async def aauto_rebase(
@@ -599,181 +676,139 @@ async def aauto_rebase(
     max_tokens: int | None = None,
 ) -> AutoRebaseResult:
     """Async version of :func:`auto_rebase`."""
-    ctx, early = _auto_rebase_prepare(
-        tract, model=model, temperature=temperature, max_tokens=max_tokens,
+    return await _aauto_rebase_core(
+        tract, model=model, temperature=temperature,
+        max_tokens=max_tokens,
     )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = await _async_safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _auto_rebase_finalize(ctx, result)
 
 
-def _parse_rebase_response(text: str) -> tuple[bool, str | None, str] | None:
-    """Parse an LLM rebase response. Returns (should_rebase, target, reasoning) or None."""
-    cleaned = _strip_fences(text)
-    try:
-        data = json.loads(cleaned)
-        if isinstance(data, dict):
-            reasoning = str(data.get("reasoning") or "").strip() or "(no reasoning given)"
-            should_rebase = bool(data.get("should_rebase", False))
-            target = data.get("target_branch")
-            if target is not None:
-                target = str(target).strip() or None
-            return should_rebase, target, reasoning
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
-    return None
-
-
-# ---------------------------------------------------------------------------
-# auto_branch: prepare / finalize / sync / async
-# ---------------------------------------------------------------------------
-
-def _build_branch_manifest(tract: Tract, context: str = "") -> str:
-    """Build a manifest for branch decisions."""
-    current = tract.current_branch or "(detached)"
-    head = tract.head
-    head_short = head[:8] if head else "(empty)"
-    branches = tract.branches.list()
-
-    lines = [
-        "=== BRANCH STATE ===",
-        f"Current branch: {current} | HEAD: {head_short}",
-        "",
-        "EXISTING BRANCHES:",
-    ]
-    for b in branches:
-        marker = " *" if b.is_current else ""
-        lines.append(f"  {b.name}{marker}")
-
-    # Recent commits
-    entries = tract.search.log(limit=10)
-    if entries:
-        lines.append("")
-        lines.append("RECENT COMMITS:")
-        for e in entries:
-            lines.append(f"  [{e.commit_hash[:8]}] {e.content_type} | \"{e.message or '(no msg)'}\"")
-
-    # Active directives
-    try:
-        directive_commits = tract.search.find(content_type="instruction", limit=20)
-        if directive_commits:
-            lines.append("")
-            lines.append("ACTIVE DIRECTIVES:")
-            for dc in directive_commits:
-                text = tract.search.get_content(dc) or ""
-                label = dc.message or dc.commit_hash[:8]
-                lines.append(f"  {label}: {str(text)[:80]}...")
-    except Exception:
-        pass
-
-    if context:
-        lines.append("")
-        lines.append("=== TASK CONTEXT ===")
-        lines.append(context)
-
-    return "\n".join(lines)
-
-
-class _AutoBranchCtx(NamedTuple):
-    client: Any
-    messages: list[dict[str, str]]
-    llm_kwargs: dict[str, Any]
-    tract: Any  # needed for branch creation
-    consulted_hashes: tuple[str, ...]
-
-
-def _auto_branch_prepare(
+def _auto_rebase_core(
     tract: Tract,
     *,
-    context: str = "",
     model: str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
-) -> tuple[_AutoBranchCtx | None, AutoBranchResult | None]:
-    """Shared pre-LLM logic for auto_branch."""
-    client = _resolve_client(tract)
-    if client is None:
-        return None, AutoBranchResult(
-            branched=False,
-            branch_name=None,
-            reason="No LLM client configured; no branch created (fail-open).",
-            tokens_used=0,
-            consulted_hashes=(),
-        )
-
-    manifest = _build_branch_manifest(tract, context)
+) -> AutoRebaseResult:
+    """Core auto_rebase implementation using Judgment."""
+    manifest = _build_rebase_manifest(tract)
     entries = tract.search.log(limit=10)
-    consulted_hashes = tuple(e.commit_hash for e in entries) if entries else ()
+    consulted = tuple(e.commit_hash for e in entries) if entries else ()
+    prompt_override = tract.config.get_prompt("rebase")
 
-    prompt_override = tract.config.get_prompt("branch")
-    messages = [
-        {"role": "system", "content": prompt_override or _BRANCH_SYSTEM_PROMPT},
-        {"role": "user", "content": manifest},
-    ]
-    llm_kwargs = _build_llm_kwargs(model, temperature, max_tokens)
+    judgment = Judgment(
+        instructions=manifest,
+        response_model=BooleanDecision,
+        system_prompt=prompt_override or _REBASE_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.2,
+        max_tokens=max_tokens,
+        operation_name="autonomous",
+    )
 
-    return _AutoBranchCtx(client, messages, llm_kwargs, tract, consulted_hashes), None
+    result = judgment.evaluate(tract)
+    return _finalize_rebase(result, tract, consulted)
 
 
-def _auto_branch_finalize(
-    ctx: _AutoBranchCtx,
-    result: tuple[str, int] | None,
-) -> AutoBranchResult:
-    """Shared post-LLM logic for auto_branch."""
-    if result is None:
-        return AutoBranchResult(
-            branched=False,
-            branch_name=None,
-            reason="No branch created (fail-open).",
-            tokens_used=0,
-            consulted_hashes=ctx.consulted_hashes,
+async def _aauto_rebase_core(
+    tract: Tract,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> AutoRebaseResult:
+    """Async core auto_rebase implementation using Judgment."""
+    manifest = _build_rebase_manifest(tract)
+    entries = tract.search.log(limit=10)
+    consulted = tuple(e.commit_hash for e in entries) if entries else ()
+    prompt_override = tract.config.get_prompt("rebase")
+
+    judgment = Judgment(
+        instructions=manifest,
+        response_model=BooleanDecision,
+        system_prompt=prompt_override or _REBASE_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.2,
+        max_tokens=max_tokens,
+        operation_name="autonomous",
+    )
+
+    result = await judgment.aevaluate(tract)
+    return _finalize_rebase(result, tract, consulted)
+
+
+def _finalize_rebase(
+    result: Any,
+    tract: Tract,
+    consulted_hashes: tuple[str, ...],
+) -> AutoRebaseResult:
+    """Shared post-Judgment logic for auto_rebase."""
+    if not result.succeeded or result.output is None:
+        base = result.reasoning or "No rebase performed"
+        reason = (
+            base if "fail-open" in base.lower()
+            else f"{base}; no rebase performed (fail-open)."
+        )
+        return AutoRebaseResult(
+            rebased=False,
+            reason=reason,
+            target_branch=None,
+            tokens_used=result.tokens_used,
+            consulted_hashes=consulted_hashes,
         )
 
-    raw_text, tokens_used = result
-    decision = _parse_branch_response(raw_text)
-    if decision is None:
-        return AutoBranchResult(
-            branched=False,
-            branch_name=None,
-            reason="Could not parse LLM response; no branch created.",
-            tokens_used=tokens_used,
-            consulted_hashes=ctx.consulted_hashes,
-        )
+    out = result.output
+    # Support both new (decision+params) and old (should_rebase+target_branch)
+    should_rebase = out.decision or bool(getattr(out, "should_rebase", False))
+    target_branch = (
+        out.params.get("target_branch")
+        if out.params
+        else None
+    )
+    # Fallback: old format puts target_branch as a top-level field
+    if target_branch is None:
+        target_branch = getattr(out, "target_branch", None)
+    reasoning = out.reasoning or result.reasoning
 
-    should_branch, branch_name, reasoning = decision
+    if target_branch is not None:
+        target_branch = str(target_branch).strip() or None
 
-    if not should_branch or not branch_name:
-        return AutoBranchResult(
-            branched=False,
-            branch_name=None,
+    if not should_rebase or not target_branch:
+        return AutoRebaseResult(
+            rebased=False,
             reason=reasoning,
-            tokens_used=tokens_used,
-            consulted_hashes=ctx.consulted_hashes,
+            target_branch=None,
+            tokens_used=result.tokens_used,
+            consulted_hashes=consulted_hashes,
         )
 
     try:
-        ctx.tract.branches.create(branch_name)
-        return AutoBranchResult(
-            branched=True,
-            branch_name=branch_name,
+        tract.rebase(target_branch)
+        return AutoRebaseResult(
+            rebased=True,
             reason=reasoning,
-            tokens_used=tokens_used,
-            consulted_hashes=ctx.consulted_hashes,
+            target_branch=target_branch,
+            tokens_used=result.tokens_used,
+            consulted_hashes=consulted_hashes,
         )
     except Exception as exc:
         logger.warning(
-            "Auto-branch '%s' failed: %s", branch_name, exc, exc_info=True,
+            "Auto-rebase onto '%s' failed: %s",
+            target_branch, exc, exc_info=True,
         )
-        return AutoBranchResult(
-            branched=False,
-            branch_name=branch_name,
-            reason=f"Branch creation failed: {exc}",
-            tokens_used=tokens_used,
-            consulted_hashes=ctx.consulted_hashes,
+        return AutoRebaseResult(
+            rebased=False,
+            reason=f"Rebase failed: {exc}",
+            target_branch=target_branch,
+            tokens_used=result.tokens_used,
+            consulted_hashes=consulted_hashes,
         )
 
+
+# ---------------------------------------------------------------------------
+# auto_branch: sync / async
+# ---------------------------------------------------------------------------
 
 def auto_branch(
     tract: Tract,
@@ -800,15 +835,10 @@ def auto_branch(
     Returns:
         :class:`AutoBranchResult`.
     """
-    ctx, early = _auto_branch_prepare(
+    return _auto_branch_core(
         tract, context=context, model=model,
         temperature=temperature, max_tokens=max_tokens,
     )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = _safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _auto_branch_finalize(ctx, result)
 
 
 async def aauto_branch(
@@ -820,29 +850,133 @@ async def aauto_branch(
     max_tokens: int | None = None,
 ) -> AutoBranchResult:
     """Async version of :func:`auto_branch`."""
-    ctx, early = _auto_branch_prepare(
+    return await _aauto_branch_core(
         tract, context=context, model=model,
         temperature=temperature, max_tokens=max_tokens,
     )
-    if early is not None:
-        return early
-    assert ctx is not None
-    result = await _async_safe_llm_call(ctx.client, ctx.messages, ctx.llm_kwargs)
-    return _auto_branch_finalize(ctx, result)
 
 
-def _parse_branch_response(text: str) -> tuple[bool, str | None, str] | None:
-    """Parse an LLM branch response. Returns (should_branch, name, reasoning) or None."""
-    cleaned = _strip_fences(text)
+def _auto_branch_core(
+    tract: Tract,
+    *,
+    context: str = "",
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> AutoBranchResult:
+    """Core auto_branch implementation using Judgment."""
+    manifest = _build_branch_manifest(tract, context)
+    entries = tract.search.log(limit=10)
+    consulted = tuple(e.commit_hash for e in entries) if entries else ()
+    prompt_override = tract.config.get_prompt("branch")
+
+    judgment = Judgment(
+        instructions=manifest,
+        response_model=BooleanDecision,
+        system_prompt=prompt_override or _BRANCH_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.2,
+        max_tokens=max_tokens,
+        operation_name="autonomous",
+    )
+
+    result = judgment.evaluate(tract)
+    return _finalize_branch(result, tract, consulted)
+
+
+async def _aauto_branch_core(
+    tract: Tract,
+    *,
+    context: str = "",
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> AutoBranchResult:
+    """Async core auto_branch implementation using Judgment."""
+    manifest = _build_branch_manifest(tract, context)
+    entries = tract.search.log(limit=10)
+    consulted = tuple(e.commit_hash for e in entries) if entries else ()
+    prompt_override = tract.config.get_prompt("branch")
+
+    judgment = Judgment(
+        instructions=manifest,
+        response_model=BooleanDecision,
+        system_prompt=prompt_override or _BRANCH_SYSTEM_PROMPT,
+        context=ContextView(scope=0),
+        model=model,
+        temperature=temperature if temperature is not None else 0.2,
+        max_tokens=max_tokens,
+        operation_name="autonomous",
+    )
+
+    result = await judgment.aevaluate(tract)
+    return _finalize_branch(result, tract, consulted)
+
+
+def _finalize_branch(
+    result: Any,
+    tract: Tract,
+    consulted_hashes: tuple[str, ...],
+) -> AutoBranchResult:
+    """Shared post-Judgment logic for auto_branch."""
+    if not result.succeeded or result.output is None:
+        base = result.reasoning or "No branch created"
+        reason = (
+            base if "fail-open" in base.lower()
+            else f"{base}; no branch created (fail-open)."
+        )
+        return AutoBranchResult(
+            branched=False,
+            branch_name=None,
+            reason=reason,
+            tokens_used=result.tokens_used,
+            consulted_hashes=consulted_hashes,
+        )
+
+    out = result.output
+    # Support both new (decision+params) and old (should_branch+branch_name)
+    should_branch = out.decision or bool(getattr(out, "should_branch", False))
+    branch_name = (
+        out.params.get("branch_name")
+        if out.params
+        else None
+    )
+    # Fallback: old format puts branch_name as a top-level field
+    if branch_name is None:
+        branch_name = getattr(out, "branch_name", None)
+    reasoning = out.reasoning or result.reasoning
+
+    if branch_name is not None:
+        branch_name = str(branch_name).strip() or None
+
+    if not should_branch or not branch_name:
+        return AutoBranchResult(
+            branched=False,
+            branch_name=None,
+            reason=reasoning,
+            tokens_used=result.tokens_used,
+            consulted_hashes=consulted_hashes,
+        )
+
     try:
-        data = json.loads(cleaned)
-        if isinstance(data, dict):
-            reasoning = str(data.get("reasoning") or "").strip() or "(no reasoning given)"
-            should_branch = bool(data.get("should_branch", False))
-            name = data.get("branch_name")
-            if name is not None:
-                name = str(name).strip() or None
-            return should_branch, name, reasoning
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
-    return None
+        tract.branches.create(branch_name)
+        return AutoBranchResult(
+            branched=True,
+            branch_name=branch_name,
+            reason=reasoning,
+            tokens_used=result.tokens_used,
+            consulted_hashes=consulted_hashes,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Auto-branch '%s' failed: %s",
+            branch_name, exc, exc_info=True,
+        )
+        return AutoBranchResult(
+            branched=False,
+            branch_name=branch_name,
+            reason=f"Branch creation failed: {exc}",
+            tokens_used=result.tokens_used,
+            consulted_hashes=consulted_hashes,
+        )

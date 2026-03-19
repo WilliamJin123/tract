@@ -3,6 +3,9 @@
 Provides fuzzy and LLM-powered routing of queries/intents to branches,
 stages, or workflows.
 
+Internally the LLM path delegates to :class:`~tract.judgment.Judgment`
+for the call, JSON parsing, and fail-open handling.
+
 Example (fuzzy only)::
 
     from tract.routing import RoutingTable
@@ -26,13 +29,16 @@ Example (semantic)::
 from __future__ import annotations
 
 import difflib
-import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
-from tract._helpers import strip_fences as _strip_fences
+from tract.context_view import ContextView
+from tract.judgment import (
+    Judgment,
+    RouteSelection,
+)
 
 if TYPE_CHECKING:
     from tract.tract import Tract
@@ -286,13 +292,6 @@ Pick the single best matching route. If nothing matches well, set confidence bel
 Only use route names from the provided list."""
 
 
-class _RouteCtx(NamedTuple):
-    client: Any
-    messages: list[dict[str, str]]
-    llm_kwargs: dict[str, Any]
-    query: str
-
-
 @dataclass
 class SemanticRouter:
     """LLM-powered query router with fuzzy fallback.
@@ -324,68 +323,6 @@ class SemanticRouter:
     last_result: RoutingResult | None = field(default=None, init=False, repr=False)
 
     # ------------------------------------------------------------------
-    # Prepare / finalize (shared logic)
-    # ------------------------------------------------------------------
-    def _route_prepare(
-        self, query: str, tract: Tract
-    ) -> tuple[_RouteCtx | None, RoutingResult | None]:
-        """Shared pre-LLM logic for route/aroute."""
-        try:
-            client = tract.config._resolve_llm_client("route")
-        except RuntimeError:
-            logger.debug(
-                "Router '%s': no LLM client configured; using fuzzy fallback.",
-                self.name,
-            )
-            return None, self._fuzzy_fallback(query)
-
-        prompt_override = tract.config.get_prompt("route")
-        messages = self._build_messages(query, system_prompt=prompt_override)
-        llm_kwargs: dict[str, Any] = {"temperature": self.temperature}
-        if self.model is not None:
-            llm_kwargs["model"] = self.model
-        if self.max_tokens is not None:
-            llm_kwargs["max_tokens"] = self.max_tokens
-
-        return _RouteCtx(client, messages, llm_kwargs, query), None
-
-    def _route_finalize(
-        self, ctx: _RouteCtx, response: Any
-    ) -> RoutingResult:
-        """Shared post-LLM logic for route/aroute.
-
-        ``response`` is the raw LLM response object.
-        Returns RoutingResult. Falls back to fuzzy on extraction failure.
-        """
-        try:
-            raw_text = ctx.client.extract_content(response)
-        except Exception:
-            logger.warning(
-                "Router '%s' failed to extract LLM response; using fuzzy fallback.",
-                self.name,
-                exc_info=True,
-            )
-            return self._fuzzy_fallback(ctx.query)
-
-        tokens_used = 0
-        try:
-            usage = ctx.client.extract_usage(response) if hasattr(ctx.client, "extract_usage") else None
-            if usage and isinstance(usage, dict):
-                tokens_used = int(usage.get("total_tokens", 0))
-        except Exception:
-            pass
-
-        route = self._parse_response(raw_text, ctx.query)
-        result = RoutingResult(
-            route=route,
-            applied=False,
-            tokens_used=tokens_used,
-            method="semantic",
-        )
-        self.last_result = result
-        return result
-
-    # ------------------------------------------------------------------
     # Sync route
     # ------------------------------------------------------------------
     def route(self, query: str, tract: Tract) -> RoutingResult:
@@ -398,22 +335,9 @@ class SemanticRouter:
         Returns:
             A :class:`RoutingResult` with the best route and metadata.
         """
-        ctx, early = self._route_prepare(query, tract)
-        if early is not None:
-            return early
-        assert ctx is not None
-
-        try:
-            response = ctx.client.chat(ctx.messages, **ctx.llm_kwargs)
-        except Exception:
-            logger.warning(
-                "Router '%s' LLM call failed; using fuzzy fallback (fail-open).",
-                self.name,
-                exc_info=True,
-            )
-            return self._fuzzy_fallback(query)
-
-        return self._route_finalize(ctx, response)
+        judgment = self._build_judgment(query, tract)
+        jresult = judgment.evaluate(tract)
+        return self._process_judgment_result(jresult, query)
 
     # ------------------------------------------------------------------
     # Async route
@@ -421,27 +345,114 @@ class SemanticRouter:
     async def aroute(self, query: str, tract: Tract) -> RoutingResult:
         """Async version of :meth:`route`.
 
-        Uses ``achat()`` if the client supports it, otherwise wraps
-        the sync ``chat()`` via ``asyncio.to_thread()``.
+        Uses :meth:`Judgment.aevaluate` which dispatches via
+        ``achat()`` if the client supports it.
         """
-        from tract.llm.protocols import acall_llm
+        judgment = self._build_judgment(query, tract)
+        jresult = await judgment.aevaluate(tract)
+        return self._process_judgment_result(jresult, query)
 
-        ctx, early = self._route_prepare(query, tract)
-        if early is not None:
-            return early
-        assert ctx is not None
+    # ------------------------------------------------------------------
+    # Judgment construction
+    # ------------------------------------------------------------------
+    def _build_judgment(self, query: str, tract: Tract) -> Judgment:
+        """Build a Judgment for routing."""
+        prompt_override = tract.config.get_prompt("route")
+        system = prompt_override or _ROUTER_SYSTEM_PROMPT
+        if self.instructions:
+            system += f"\n\nAdditional instructions:\n{self.instructions}"
 
-        try:
-            response = await acall_llm(ctx.client, ctx.messages, **ctx.llm_kwargs)
-        except Exception:
-            logger.warning(
-                "Router '%s' async LLM call failed; using fuzzy fallback.",
-                self.name,
-                exc_info=True,
+        # Build routes manifest
+        route_lines: list[str] = ["Available routes:"]
+        for name in self.routes.list_routes():
+            entry = self.routes._routes[name]
+            kw_str = ", ".join(entry.keywords) if entry.keywords else "(none)"
+            route_lines.append(
+                f"  - {entry.name} [{entry.route_type}]: {entry.description} "
+                f"(keywords: {kw_str})"
             )
+
+        instructions = (
+            f"{chr(10).join(route_lines)}\n\n"
+            f"Query: {query}"
+        )
+
+        return Judgment(
+            instructions=instructions,
+            response_model=RouteSelection,
+            system_prompt=system,
+            context=ContextView(scope=0),
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            operation_name="route",
+        )
+
+    # ------------------------------------------------------------------
+    # Process Judgment result
+    # ------------------------------------------------------------------
+    def _process_judgment_result(
+        self, jresult: Any, query: str
+    ) -> RoutingResult:
+        """Convert a JudgmentResult into a RoutingResult."""
+        if not jresult.succeeded or jresult.output is None:
+            # Distinguish: LLM was called but response was bad vs no client
+            if jresult.raw_response:
+                # LLM was called -- parse failed, use fuzzy for the route
+                # but report method as "semantic" since LLM was invoked
+                matches = self.routes.match(query)
+                route = matches[0] if matches else Route(
+                    target="",
+                    route_type="branch",
+                    confidence=0.0,
+                    reasoning=f"Could not parse router response; no fuzzy matches.",
+                )
+                result = RoutingResult(
+                    route=route,
+                    applied=False,
+                    tokens_used=jresult.tokens_used,
+                    method="semantic",
+                )
+                self.last_result = result
+                return result
+            # No LLM client -- true fuzzy fallback
             return self._fuzzy_fallback(query)
 
-        return self._route_finalize(ctx, response)
+        route_sel: RouteSelection = jresult.output
+        target = route_sel.target.strip() if route_sel.target else ""
+        confidence = route_sel.confidence
+        reasoning = route_sel.reasoning or "(no reasoning given)"
+
+        # Validate target exists in routing table
+        if target and target in self.routes._routes:
+            entry = self.routes._routes[target]
+            route = Route(
+                target=target,
+                route_type=entry.route_type,
+                confidence=max(0.0, min(1.0, confidence)),
+                reasoning=reasoning,
+            )
+        else:
+            # LLM returned an invalid target -- fall back to fuzzy parse
+            matches = self.routes.match(query)
+            if matches:
+                route = matches[0]
+            else:
+                route = Route(
+                    target="",
+                    route_type="branch",
+                    confidence=0.0,
+                    reasoning=f"LLM target '{target}' not in routing table; no fuzzy matches.",
+                )
+
+        result = RoutingResult(
+            route=route,
+            applied=False,
+            tokens_used=jresult.tokens_used,
+            method="semantic",
+        )
+        self.last_result = result
+        return result
 
     # ------------------------------------------------------------------
     # Fuzzy fallback
@@ -466,71 +477,3 @@ class SemanticRouter:
         )
         self.last_result = result
         return result
-
-    # ------------------------------------------------------------------
-    # Message construction
-    # ------------------------------------------------------------------
-    def _build_messages(self, query: str, system_prompt: str | None = None) -> list[dict[str, str]]:
-        """Build LLM messages for routing."""
-        system = system_prompt or _ROUTER_SYSTEM_PROMPT
-        if self.instructions:
-            system += f"\n\nAdditional instructions:\n{self.instructions}"
-
-        # Build routes manifest
-        route_lines: list[str] = ["Available routes:"]
-        for name in self.routes.list_routes():
-            entry = self.routes._routes[name]
-            kw_str = ", ".join(entry.keywords) if entry.keywords else "(none)"
-            route_lines.append(
-                f"  - {entry.name} [{entry.route_type}]: {entry.description} "
-                f"(keywords: {kw_str})"
-            )
-
-        user_content = (
-            f"{chr(10).join(route_lines)}\n\n"
-            f"Query: {query}"
-        )
-        return [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ]
-
-    # ------------------------------------------------------------------
-    # Response parsing
-    # ------------------------------------------------------------------
-    def _parse_response(self, text: str, query: str) -> Route:
-        """Parse an LLM routing response into a Route.
-
-        Falls back to fuzzy matching if the response cannot be parsed.
-        """
-        cleaned = _strip_fences(text)
-
-        try:
-            data = json.loads(cleaned)
-            if isinstance(data, dict):
-                target = str(data.get("target") or "").strip()
-                confidence = float(data.get("confidence", 0.0))
-                reasoning = str(data.get("reasoning") or "").strip() or "(no reasoning given)"
-
-                # Validate target exists in routing table
-                if target and target in self.routes._routes:
-                    entry = self.routes._routes[target]
-                    return Route(
-                        target=target,
-                        route_type=entry.route_type,
-                        confidence=max(0.0, min(1.0, confidence)),
-                        reasoning=reasoning,
-                    )
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
-
-        # Fallback to fuzzy
-        matches = self.routes.match(query)
-        if matches:
-            return matches[0]
-        return Route(
-            target="",
-            route_type="branch",
-            confidence=0.0,
-            reasoning=f"Could not parse router response; no fuzzy matches. Raw: {text[:200]}",
-        )

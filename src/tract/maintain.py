@@ -549,43 +549,14 @@ class SemanticMaintainer:
         pass1_tokens = pass1.tokens_used
         peek_or_actions: PeekOrActions = pass1.output  # type: ignore[assignment]
 
-        # Check if LLM provided direct actions (no peeking needed)
-        if peek_or_actions.actions and not peek_or_actions.peek:
-            reasoning = peek_or_actions.reasoning or "(no reasoning given)"
-            action_dicts = _actions_to_dicts(peek_or_actions.actions)
-            return reasoning, action_dicts, pass1_tokens, 0, 0, consulted_hashes
-
         # Filter out empty/falsy peek hashes
         peek_hashes = [str(h) for h in peek_or_actions.peek if h]
 
+        # No peek requested — treat as direct response (with or without actions)
         if not peek_hashes:
-            # Empty peek list -- fall through to normal action call
-            action_judgment = Judgment(
-                instructions=base_instructions,
-                response_model=MaintenancePlan,
-                system_prompt=maintain_prompt or _MAINTAINER_SYSTEM_PROMPT,
-                context=view,
-                model=self.model,
-                temperature=self.temperature,
-                fail_open_default=None,
-                operation_name="maintain",
-            )
-            pass2 = action_judgment.evaluate(tract, llm_client=client)
-            consulted_hashes = pass2.consulted_hashes
-            if not pass2.succeeded or pass2.output is None:
-                self.last_result = MaintainResult(
-                    maintainer_name=self.name,
-                    actions_requested=0, actions_executed=0, actions_failed=0,
-                    tokens_used=0,
-                    reasoning="LLM call failed; fail-open default.",
-                    errors=(),
-                    consulted_hashes=consulted_hashes,
-                )
-                return None
-            plan: MaintenancePlan = pass2.output  # type: ignore[assignment]
-            reasoning = plan.reasoning or "(no reasoning given)"
-            action_dicts = _actions_to_dicts(plan.actions)
-            return reasoning, action_dicts, pass1_tokens + pass2.tokens_used, 0, 0, consulted_hashes
+            reasoning = peek_or_actions.reasoning or "(no reasoning given)"
+            action_dicts = _actions_to_dicts(peek_or_actions.actions) if peek_or_actions.actions else []
+            return reasoning, action_dicts, pass1_tokens, 0, 0, consulted_hashes
 
         # Cap at max_peeks
         requested = len(peek_hashes)
