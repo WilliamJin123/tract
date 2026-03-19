@@ -33,12 +33,12 @@ def scenario_log() -> None:
     a2 = t.assistant("The capital of Germany is Berlin.")
 
     # Full history, newest first
-    history = t.search.log()
+    history = t.log()
     print(f"Total commits: {len(history)}")
     pprint_log(history)
 
     # Limited to last 3
-    history_limited = t.search.log(limit=3)
+    history_limited = t.log(limit=3)
     print(f"Limited: {len(history_limited)} commits")
 
     # Chronological (oldest first)
@@ -62,10 +62,10 @@ def scenario_show() -> None:
     a1 = t.assistant("The capital of France is Paris.")
 
     # Rich detail view
-    t.search.show(a1)
+    t.show(a1)
 
     # Raw content
-    content = t.search.get_content(a1)
+    content = t.get_content(a1)
     print(f"Content: {content}")
 
     t.close()
@@ -83,12 +83,12 @@ def scenario_diff() -> None:
     a2 = t.assistant("The capital of Germany is Berlin.")
 
     # diff(A, B) compares FULL compiled context at commit A vs commit B
-    result = t.search.diff(u1.commit_hash, a2.commit_hash)
+    result = t.diff(u1.commit_hash, a2.commit_hash)
     result.pprint()
     result.pprint(stat_only=True)
 
     # diff(A) compares A vs HEAD
-    result2 = t.search.diff(u1.commit_hash)
+    result2 = t.diff(u1.commit_hash)
 
     # DiffResult fields:
     #   result.message_diffs  — per-message changes
@@ -111,12 +111,12 @@ def scenario_reset() -> None:
     t.user("Second question.")
     t.assistant("Second answer.")
 
-    t.branches.reset(u1.commit_hash)
+    t.reset(u1.commit_hash)
     ctx = t.compile()
     print(f"After reset: {len(ctx.messages)} messages")  # system + user1 only
 
     # Undo via ORIG_HEAD (saved automatically on reset)
-    t.branches.reset("ORIG_HEAD")
+    t.reset("ORIG_HEAD")
     ctx = t.compile()
     print(f"After undo:  {len(ctx.messages)} messages")  # all restored
 
@@ -144,11 +144,11 @@ def scenario_edit() -> None:
     # e = t.llm.revise(a1.commit_hash, "Add info about the Eiffel Tower")
 
     # View edit chain: [original, edit1, edit2, ...]
-    versions = t.search.edit_history(a1.commit_hash)
+    versions = t.edit_history(a1.commit_hash)
     pprint_log(versions)
 
     # Restore an earlier version (creates a new edit, preserves full history)
-    restored = t.search.restore(a1.commit_hash, version=0)
+    restored = t.restore(a1.commit_hash, version=0)
     print(f"Restored to v0: {restored.commit_hash[:8]}")
 
     # Compiled context always uses the latest edit for each target
@@ -172,7 +172,7 @@ def scenario_branch_lifecycle() -> None:
     t.user("Initial message on main.")
 
     # Create + switch (default: switch=True)
-    t.branches.create("feature")
+    t.branch("feature")
     print(f"Current: {t.current_branch}")  # "feature"
 
     t.user("Work on feature branch.")
@@ -180,20 +180,20 @@ def scenario_branch_lifecycle() -> None:
     ctx.pprint(style="chat")
 
     # Switch back
-    t.branches.switch("main")
+    t.switch("main")
     print(f"Current: {t.current_branch}")  # "main"
 
     # Create without switching
-    t.branches.create("draft", switch=False)
+    t.branch("draft", switch=False)
     print(f"Still on: {t.current_branch}")  # "main"
 
     # List all branches
-    for b in t.branches.list():
+    for b in t.list_branches():
         marker = "*" if b.is_current else " "
         print(f"  {marker} {b.name:12s} @ {b.commit_hash[:8]}")
 
     # Delete a branch
-    t.branches.delete("draft", force=True)
+    t.delete_branch("draft", force=True)
 
     t.close()
 
@@ -206,10 +206,10 @@ def scenario_merge_fast_forward() -> None:
     t.system("Assistant.")
     t.user("Base message.")
 
-    t.branches.create("feature")
+    t.branch("feature")
     t.user("Feature work.")
 
-    t.branches.switch("main")
+    t.switch("main")
     result = t.merge("feature")
     print(f"Merge type: {result.merge_type}")  # "fast_forward"
 
@@ -225,10 +225,10 @@ def scenario_merge_clean() -> None:
     t.system("Assistant.")
     t.user("Shared base.")
 
-    t.branches.create("feature")
+    t.branch("feature")
     t.user("Feature content.")
 
-    t.branches.switch("main")
+    t.switch("main")
     t.user("Main content.")
 
     result = t.merge("feature")
@@ -249,7 +249,7 @@ def scenario_merge_conflict() -> None:
     t.user("Hello.")
 
     # Feature edits the system prompt
-    t.branches.create("formal")
+    t.branch("formal")
     t.commit(
         InstructionContent(text="You are a formal academic assistant."),
         operation=CommitOperation.EDIT,
@@ -257,7 +257,7 @@ def scenario_merge_conflict() -> None:
     )
 
     # Main also edits the system prompt -> conflict
-    t.branches.switch("main")
+    t.switch("main")
     t.commit(
         InstructionContent(text="You are a casual friendly assistant."),
         operation=CommitOperation.EDIT,
@@ -291,14 +291,14 @@ def scenario_merge_options() -> None:
 
     t = Tract.open()
     t.system("Assistant.")
-    t.branches.create("quick-fix")
+    t.branch("quick-fix")
     t.user("Fix content.")
 
-    t.branches.switch("main")
+    t.switch("main")
     result = t.merge("quick-fix", no_ff=True, delete_branch=True)
     # no_ff=True   -> forces merge commit even when FF is possible
     # delete_branch -> auto-deletes source branch after merge
-    branches = [b.name for b in t.branches.list()]
+    branches = [b.name for b in t.list_branches()]
     print(f"Branches after: {branches}")  # ["main"] — quick-fix deleted
 
     t.close()
@@ -312,10 +312,10 @@ def scenario_import_commit() -> None:
     t.system("Assistant.")
     t.user("Main base.")
 
-    t.branches.create("experiment")
+    t.branch("experiment")
     good_ci = t.user("This insight is worth keeping.")
 
-    t.branches.switch("main")
+    t.switch("main")
     ir = t.import_commit(good_ci.commit_hash)
     print(f"Original: {ir.original_commit.commit_hash[:8]}")
     print(f"New copy: {ir.new_commit.commit_hash[:8]}")
@@ -332,14 +332,14 @@ def scenario_rebase() -> None:
     t.system("Assistant.")
     t.user("Shared base.")
 
-    t.branches.create("examples")
+    t.branch("examples")
     t.user("Example 1.")
     t.user("Example 2.")
 
-    t.branches.switch("main")
+    t.switch("main")
     t.user("New main content.")  # main advances
 
-    t.branches.switch("examples")
+    t.switch("examples")
     result = t.rebase("main")
 
     print(f"Replayed: {len(result.replayed_commits)} commits")
@@ -368,7 +368,7 @@ def scenario_manual_compress() -> None:
     t.user("What about neutron stars?")
     t.assistant("Neutron stars are ultra-dense remnants of supernovae.")
 
-    result = t.compression.compress(
+    result = t.compress(
         content="User learned about black holes (extreme gravity) and neutron stars (dense remnants).",
     )
     result.pprint()
@@ -382,7 +382,7 @@ def scenario_range_compress() -> None:
 
     t = Tract.open()
     sys_ci = t.system("You are a contract reviewer.")
-    t.annotations.set(sys_ci.commit_hash, Priority.PINNED)
+    t.annotate(sys_ci.commit_hash, Priority.PINNED)
 
     q1 = t.user("What are the payment terms?")
     a1 = t.assistant("Net 45, 1.5% late penalty.")
@@ -390,7 +390,7 @@ def scenario_range_compress() -> None:
     a2 = t.assistant("Uptime SLA is aggressive at 99.95%.")
 
     # Compress but preserve specific commits verbatim
-    result = t.compression.compress(
+    result = t.compress(
         content="Contract: Net 45 payment, 1.5% penalty, 99.95% SLA.",
         preserve=[q1.commit_hash, a1.commit_hash],
     )
@@ -409,17 +409,17 @@ def scenario_guided_compression() -> None:
     t.assistant("Revenue is strong. Churn is below industry average.")
 
     # Mark report as IMPORTANT with retention criteria
-    t.annotations.set(
+    t.annotate(
         report.commit_hash,
         Priority.IMPORTANT,
         retain="Preserve all dollar amounts and percentages",
     )
 
     # LLM-based compress with target token count (requires LLM config):
-    # result = t.compression.compress(target_tokens=100)
+    # result = t.compress(target_tokens=100)
 
     # Verify the annotation stuck
-    history = t.search.log()
+    history = t.log()
     for ci in history:
         if ci.commit_hash == report.commit_hash:
             print(f"Report priority: {ci.effective_priority}")
@@ -434,18 +434,18 @@ def scenario_gc() -> None:
 
     t = Tract.open()
     sys_ci = t.system("You are helpful.")
-    t.annotations.set(sys_ci.commit_hash, Priority.PINNED)
+    t.annotate(sys_ci.commit_hash, Priority.PINNED)
     t.user("Hello")
     t.assistant("Hi there!")
 
-    t.compression.compress(content="User greeted the assistant.")
+    t.compress(content="User greeted the assistant.")
 
     # Conservative: keep archives forever (default)
-    gc1 = t.compression.gc(archive_retention_days=None)
+    gc1 = t.gc(archive_retention_days=None)
     print(f"gc(None): removed {gc1.commits_removed} commits")
 
     # Aggressive: remove archives immediately
-    gc2 = t.compression.gc(archive_retention_days=0)
+    gc2 = t.gc(archive_retention_days=0)
     print(f"gc(0): removed {gc2.commits_removed}, freed {gc2.tokens_freed} tokens")
 
     # Production recommendation: archive_retention_days=30

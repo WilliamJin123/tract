@@ -339,7 +339,7 @@ class TestChatGenerateIntegration:
 
         t.system("You are helpful")
         t.user("Hello")
-        t.llm.generate()
+        t.runtime.generate()
 
         assert mock.last_kwargs.get("model") == "chat-model"
         t.close()
@@ -353,7 +353,7 @@ class TestChatGenerateIntegration:
 
         t.system("You are helpful")
         t.user("Hello")
-        t.llm.generate(model="call-model")
+        t.runtime.generate(model="call-model")
 
         assert mock.last_kwargs.get("model") == "call-model"
         t.close()
@@ -367,7 +367,7 @@ class TestChatGenerateIntegration:
 
         t.system("You are helpful")
         t.user("Hello")
-        t.llm.generate()
+        t.runtime.generate()
 
         assert mock.last_kwargs.get("temperature") == 0.8
         t.close()
@@ -381,7 +381,7 @@ class TestChatGenerateIntegration:
 
         t.system("You are helpful")
         t.user("Hello")
-        resp = t.llm.generate()
+        resp = t.runtime.generate()
 
         # Verify the per-op model was sent to the LLM
         assert mock.last_kwargs.get("model") == "chat-model"
@@ -408,7 +408,7 @@ class TestMergeIntegration:
         base = t.commit(InstructionContent(text="original"))
 
         # Feature branch with edit
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
@@ -416,7 +416,7 @@ class TestMergeIntegration:
         )
 
         # Back to main with edit
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -477,7 +477,7 @@ class TestCompressIntegration:
         t.commit(DialogueContent(role="user", text="Hello"))
         t.commit(DialogueContent(role="assistant", text="Hi there"))
 
-        result = t.compression.compress()
+        result = t.compress()
         assert mock.last_kwargs.get("model") == "compress-model"
         t.close()
 
@@ -491,7 +491,7 @@ class TestCompressIntegration:
         t.commit(DialogueContent(role="user", text="Hello"))
         t.commit(DialogueContent(role="assistant", text="Hi there"))
 
-        result = t.compression.compress()
+        result = t.compress()
         # No model/temperature/max_tokens in kwargs
         assert "model" not in mock.last_kwargs
         assert "temperature" not in mock.last_kwargs
@@ -509,7 +509,7 @@ class TestCompressIntegration:
         t.commit(DialogueContent(role="user", text="Hello"))
         t.commit(DialogueContent(role="assistant", text="Hi there"))
 
-        result = t.compression.compress(model="call-compress")
+        result = t.compress(model="call-compress")
         assert mock.last_kwargs.get("model") == "call-compress"
         t.close()
 
@@ -525,7 +525,7 @@ class TestCompressIntegration:
         t.commit(DialogueContent(role="assistant", text="Hi there"))
 
         # Call-level override
-        result = t.compression.compress(temperature=0.5)
+        result = t.compress(temperature=0.5)
         assert mock.last_kwargs.get("temperature") == 0.5
         t.close()
 
@@ -545,7 +545,7 @@ class TestBackwardCompatibility:
 
         t.system("You are helpful")
         t.user("Hello")
-        resp = t.llm.generate()
+        resp = t.runtime.generate()
 
         assert resp.text == "Mock response"
         # No model/temperature/max_tokens in kwargs (no operation config, no call override)
@@ -563,7 +563,7 @@ class TestBackwardCompatibility:
         t.commit(DialogueContent(role="user", text="Hello"))
         t.commit(DialogueContent(role="assistant", text="Hi there"))
 
-        result = t.compression.compress()
+        result = t.compress()
         # No extra kwargs passed to LLM
         assert "model" not in mock.last_kwargs
         assert "temperature" not in mock.last_kwargs
@@ -601,7 +601,7 @@ class TestQueryByConfigMultiField:
     def test_single_field_backward_compat(self):
         """Original (field, op, value) signature still works."""
         t = self._setup_tract_with_configs()
-        results = t.search.query_by_config("model", "=", "gpt-4o")
+        results = t.query_by_config("model", "=", "gpt-4o")
         assert len(results) == 2
         assert all(r.generation_config.model == "gpt-4o" for r in results)
         t.close()
@@ -609,7 +609,7 @@ class TestQueryByConfigMultiField:
     def test_multi_field_and(self):
         """Multiple conditions combined with AND."""
         t = self._setup_tract_with_configs()
-        results = t.search.query_by_config(conditions=[
+        results = t.query_by_config(conditions=[
             ("model", "=", "gpt-4o"),
             ("temperature", ">", 0.7),
         ])
@@ -621,7 +621,7 @@ class TestQueryByConfigMultiField:
     def test_in_operator(self):
         """IN operator for set membership."""
         t = self._setup_tract_with_configs()
-        results = t.search.query_by_config(conditions=[
+        results = t.query_by_config(conditions=[
             ("model", "in", ["gpt-4o", "gpt-3.5-turbo"]),
         ])
         assert len(results) == 3
@@ -630,7 +630,7 @@ class TestQueryByConfigMultiField:
     def test_in_operator_combined_with_field(self):
         """IN operator combined with other conditions."""
         t = self._setup_tract_with_configs()
-        results = t.search.query_by_config(conditions=[
+        results = t.query_by_config(conditions=[
             ("model", "in", ["gpt-4o", "gpt-4o-mini"]),
             ("temperature", ">=", 0.7),
         ])
@@ -640,7 +640,7 @@ class TestQueryByConfigMultiField:
     def test_whole_config_match(self):
         """LLMConfig object matches all non-None fields."""
         t = self._setup_tract_with_configs()
-        results = t.search.query_by_config(LLMConfig(model="gpt-4o", temperature=0.5))
+        results = t.query_by_config(LLMConfig(model="gpt-4o", temperature=0.5))
         assert len(results) == 1
         assert results[0].generation_config.model == "gpt-4o"
         assert results[0].generation_config.temperature == 0.5
@@ -649,21 +649,21 @@ class TestQueryByConfigMultiField:
     def test_whole_config_single_field(self):
         """LLMConfig with only one field set matches like single-field query."""
         t = self._setup_tract_with_configs()
-        results = t.search.query_by_config(LLMConfig(model="gpt-4o"))
+        results = t.query_by_config(LLMConfig(model="gpt-4o"))
         assert len(results) == 2
         t.close()
 
     def test_whole_config_empty_returns_empty(self):
         """LLMConfig with all None fields returns empty list."""
         t = self._setup_tract_with_configs()
-        results = t.search.query_by_config(LLMConfig())
+        results = t.query_by_config(LLMConfig())
         assert len(results) == 0
         t.close()
 
     def test_no_matches(self):
         """Query returns empty list when nothing matches."""
         t = self._setup_tract_with_configs()
-        results = t.search.query_by_config("model", "=", "nonexistent-model")
+        results = t.query_by_config("model", "=", "nonexistent-model")
         assert len(results) == 0
         t.close()
 
@@ -671,14 +671,14 @@ class TestQueryByConfigMultiField:
         """Unsupported operator raises ValueError."""
         t = self._setup_tract_with_configs()
         with pytest.raises(ValueError, match="Unsupported operator"):
-            t.search.query_by_config("model", "LIKE", "gpt%")
+            t.query_by_config("model", "LIKE", "gpt%")
         t.close()
 
     def test_invalid_usage_raises_type_error(self):
         """Calling with wrong argument combination raises TypeError."""
         t = self._setup_tract_with_configs()
         with pytest.raises(TypeError, match="query_by_config requires"):
-            t.search.query_by_config()
+            t.query_by_config()
         t.close()
 
 
@@ -1096,7 +1096,7 @@ class TestFullGenerationConfigCapture:
 
         t.system("You are helpful")
         t.user("Hello")
-        resp = t.llm.generate()
+        resp = t.runtime.generate()
 
         # All fields should be captured in generation_config
         gc = resp.generation_config
@@ -1130,7 +1130,7 @@ class TestFullGenerationConfigCapture:
 
         t.system("You are helpful")
         t.user("Hello")
-        resp = t.llm.generate()
+        resp = t.runtime.generate()
 
         assert resp.generation_config.model == "actual-model-from-api"
         t.close()
@@ -1152,7 +1152,7 @@ class TestLlmConfigParameter:
         t.system("You are helpful")
         t.user("Hello")
         cfg = LLMConfig(model="cfg-model", temperature=0.3, top_p=0.8)
-        resp = t.llm.generate(llm_config=cfg)
+        resp = t.runtime.generate(llm_config=cfg)
 
         assert mock.last_kwargs.get("model") == "cfg-model"
         assert mock.last_kwargs.get("temperature") == 0.3
@@ -1167,7 +1167,7 @@ class TestLlmConfigParameter:
 
         t.system("You are helpful")
         cfg = LLMConfig(model="cfg-model", seed=42)
-        resp = t.llm.chat("Hello", llm_config=cfg)
+        resp = t.runtime.chat("Hello", llm_config=cfg)
 
         assert mock.last_kwargs.get("model") == "cfg-model"
         assert mock.last_kwargs.get("seed") == 42
@@ -1182,7 +1182,7 @@ class TestLlmConfigParameter:
         t.system("You are helpful")
         t.user("Hello")
         cfg = LLMConfig(model="cfg-model")
-        resp = t.llm.generate(model="sugar-model", llm_config=cfg)
+        resp = t.runtime.generate(model="sugar-model", llm_config=cfg)
 
         assert mock.last_kwargs.get("model") == "sugar-model"
         t.close()
@@ -1198,7 +1198,7 @@ class TestLlmConfigParameter:
         t.commit(DialogueContent(role="assistant", text="Hi"))
 
         cfg = LLMConfig(model="compress-cfg-model", temperature=0.1)
-        t.compression.compress(llm_config=cfg)
+        t.compress(llm_config=cfg)
 
         assert mock.last_kwargs.get("model") == "compress-cfg-model"
         assert mock.last_kwargs.get("temperature") == 0.1
@@ -1220,7 +1220,7 @@ class TestExtraKwargsPassThrough:
 
         t.system("You are helpful")
         t.user("Hello")
-        resp = t.llm.generate(reasoning_effort="high")
+        resp = t.runtime.generate(reasoning_effort="high")
 
         assert mock.last_kwargs.get("reasoning_effort") == "high"
         t.close()
@@ -1232,7 +1232,7 @@ class TestExtraKwargsPassThrough:
         t.config.configure_llm(mock)
 
         t.system("You are helpful")
-        resp = t.llm.chat("Hello", reasoning_effort="high")
+        resp = t.runtime.chat("Hello", reasoning_effort="high")
 
         assert mock.last_kwargs.get("reasoning_effort") == "high"
         t.close()
@@ -1246,7 +1246,7 @@ class TestExtraKwargsPassThrough:
         t.system("You are helpful")
         t.user("Hello")
         cfg = LLMConfig(extra={"reasoning_effort": "low", "other": "keep"})
-        resp = t.llm.generate(llm_config=cfg, reasoning_effort="high")
+        resp = t.runtime.generate(llm_config=cfg, reasoning_effort="high")
 
         assert mock.last_kwargs.get("reasoning_effort") == "high"
         assert mock.last_kwargs.get("other") == "keep"
@@ -1261,7 +1261,7 @@ class TestExtraKwargsPassThrough:
 
         t.system("You are helpful")
         t.user("Hello")
-        resp = t.llm.generate(reasoning_effort="high")
+        resp = t.runtime.generate(reasoning_effort="high")
 
         assert mock.last_kwargs.get("reasoning_effort") == "high"
         t.close()
@@ -1274,7 +1274,7 @@ class TestExtraKwargsPassThrough:
 
         t.system("You are helpful")
         t.user("Hello")
-        resp = t.llm.generate(reasoning_effort="high", top_k=40, custom_flag=True)
+        resp = t.runtime.generate(reasoning_effort="high", top_k=40, custom_flag=True)
 
         assert mock.last_kwargs.get("reasoning_effort") == "high"
         assert mock.last_kwargs.get("top_k") == 40
@@ -1289,7 +1289,7 @@ class TestExtraKwargsPassThrough:
 
         t.system("You are helpful")
         t.user("Hello")
-        resp = t.llm.generate(reasoning_effort="high")
+        resp = t.runtime.generate(reasoning_effort="high")
 
         # reasoning_effort should be captured in the generation_config extra
         assert resp.generation_config.extra is not None
@@ -1303,7 +1303,7 @@ class TestExtraKwargsPassThrough:
         t.config.configure_llm(mock)
 
         t.system("You are helpful")
-        resp = t.llm.chat(
+        resp = t.runtime.chat(
             "Hello",
             model="gpt-4o",
             temperature=0.5,
@@ -1333,7 +1333,7 @@ class TestCompressErrorGuard:
         t.commit(DialogueContent(role="assistant", text="Hi"))
 
         with pytest.raises(LLMConfigError, match="LLM parameters provided"):
-            t.compression.compress(model="gpt-4o")
+            t.compress(model="gpt-4o")
         t.close()
 
     def test_compress_llm_config_without_client_raises(self):
@@ -1346,7 +1346,7 @@ class TestCompressErrorGuard:
         t.commit(DialogueContent(role="assistant", text="Hi"))
 
         with pytest.raises(LLMConfigError, match="LLM parameters provided"):
-            t.compression.compress(llm_config=LLMConfig(model="gpt-4o"))
+            t.compress(llm_config=LLMConfig(model="gpt-4o"))
         t.close()
 
     def test_compress_content_without_client_ok(self):
@@ -1356,7 +1356,7 @@ class TestCompressErrorGuard:
         t.commit(DialogueContent(role="user", text="Hello"))
         t.commit(DialogueContent(role="assistant", text="Hi"))
 
-        result = t.compression.compress(content="Manual summary")
+        result = t.compress(content="Manual summary")
         assert result is not None
         t.close()
 
@@ -1368,7 +1368,7 @@ class TestCompressErrorGuard:
         t.commit(DialogueContent(role="assistant", text="Hi"))
 
         # content= provided so no LLM call needed
-        result = t.compression.compress(model="gpt-4o", content="Manual summary")
+        result = t.compress(model="gpt-4o", content="Manual summary")
         assert result is not None
         t.close()
 
@@ -1386,7 +1386,7 @@ class TestCompressErrorGuard:
         # No explicit LLM params on compress() call, so no error -- but it still
         # fails because no LLM client (existing CompressionError behavior)
         with pytest.raises(CompressionError, match="No LLM client configured"):
-            t.compression.compress()
+            t.compress()
         t.close()
 
 
@@ -1408,10 +1408,10 @@ class TestCompressionGenerationConfig:
         t.commit(DialogueContent(role="user", text="Hello"))
         t.commit(DialogueContent(role="assistant", text="Hi"))
 
-        result = t.compression.compress()
+        result = t.compress()
         # The summary commit should have generation_config
         # We can check via query_by_config
-        results = t.search.query_by_config("model", "=", "compress-model")
+        results = t.query_by_config("model", "=", "compress-model")
         assert len(results) >= 1, "Summary commit should have generation_config with compress-model"
         t.close()
 
@@ -1426,8 +1426,8 @@ class TestCompressionGenerationConfig:
         t.commit(DialogueContent(role="user", text="Hello"))
         t.commit(DialogueContent(role="assistant", text="Hi"))
 
-        t.compression.compress()
-        results = t.search.query_by_config("temperature", "=", 0.2)
+        t.compress()
+        results = t.query_by_config("temperature", "=", 0.2)
         assert len(results) >= 1, "Summary commit should have temperature=0.2"
         t.close()
 
@@ -1439,9 +1439,9 @@ class TestCompressionGenerationConfig:
         t.commit(DialogueContent(role="user", text="Hello"))
         t.commit(DialogueContent(role="assistant", text="Hi"))
 
-        t.compression.compress(content="Manual summary")
+        t.compress(content="Manual summary")
         # No generation_config on manual compression
-        results = t.search.query_by_config("model", "=", "anything")
+        results = t.query_by_config("model", "=", "anything")
         assert len(results) == 0
         t.close()
 

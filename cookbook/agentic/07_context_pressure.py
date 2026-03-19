@@ -79,20 +79,20 @@ def section_1_budget_enforcement() -> None:
                     message=topic,
                 )
                 committed += 1
-                tokens = t.search.status().token_count
+                tokens = t.status().token_count
                 print(f"  Committed: {topic} ({tokens} tokens)")
 
             except BudgetExceededError as e:
                 print(f"\n  ** BudgetExceededError: {e.current_tokens}/{e.max_tokens} tokens")
                 print(f"  ** Compressing to make room...\n")
 
-                result = t.compression.compress(
+                result = t.compress(
                     content="Research summary: HTTP/2 multiplexes over TCP. "
                     "QUIC/HTTP/3 improves with UDP-based streams, TLS 1.3, "
                     "and connection migration.",
                 )
                 compressions += 1
-                after = t.search.status()
+                after = t.status()
                 print(f"  Compressed: {result.original_tokens} -> "
                       f"{result.compressed_tokens} tokens ({result.compression_ratio:.1%})")
                 print(f"  Budget now: {after.token_count}/{e.max_tokens}\n")
@@ -103,10 +103,10 @@ def section_1_budget_enforcement() -> None:
                     message=topic,
                 )
                 committed += 1
-                print(f"  Committed: {topic} ({t.search.status().token_count} tokens)")
+                print(f"  Committed: {topic} ({t.status().token_count} tokens)")
 
         print(f"\n  Done: {committed} committed, {compressions} compression(s)")
-        print(f"  Final: {t.search.status().token_count} tokens\n")
+        print(f"  Final: {t.status().token_count} tokens\n")
 
 
 # =====================================================================
@@ -142,7 +142,7 @@ def section_2_priority_eviction() -> None:
         ]:
             h = t.commit(content={"content_type": "freeform", "text": text},
                          message="architecture decision")
-            t.annotations.set(h, Priority.IMPORTANT, reason="Architecture decision")
+            t.annotate(h, Priority.IMPORTANT, reason="Architecture decision")
             print(f"  [IMPORTANT] {text[:60]}")
 
         # PINNED: test cases (must survive verbatim)
@@ -154,18 +154,18 @@ def section_2_priority_eviction() -> None:
         ]:
             h = t.commit(content={"content_type": "freeform", "text": text},
                          message="test case")
-            t.annotations.set(h, Priority.PINNED, reason="Test case -- must survive")
+            t.annotate(h, Priority.PINNED, reason="Test case -- must survive")
             print(f"  [PINNED]    {text[:60]}")
 
-        before = t.search.status()
+        before = t.status()
         print(f"\n  Before: {before.commit_count} commits, {before.token_count} tokens")
 
         # Compress -- NORMAL summarized, IMPORTANT/PINNED preserved
-        result = t.compression.compress(
+        result = t.compress(
             content="Team discussed deployment timeline, CI options, and PR comments.",
         )
 
-        after = t.search.status()
+        after = t.status()
         print(f"  After:  {after.commit_count} commits, {after.token_count} tokens")
         print(f"  Ratio: {result.compression_ratio:.1%}, "
               f"compressed {len(result.source_commits)} source commits, "
@@ -173,7 +173,7 @@ def section_2_priority_eviction() -> None:
 
         # Verify survivors
         print(f"\n  Surviving commits:")
-        for entry in t.search.log(limit=20):
+        for entry in t.log(limit=20):
             if entry.content_type == "system":
                 continue
             prio = entry.effective_priority or "normal"
@@ -224,7 +224,7 @@ def section_3_auto_compression() -> None:
                      "text": "CONSTRAINT: gRPC for internal comms, REST external only."},
             message="Constraint: gRPC internal, REST external",
         )
-        t.annotations.set(h, Priority.PINNED, reason="Hard architectural constraint")
+        t.annotate(h, Priority.PINNED, reason="Hard architectural constraint")
         print(f"  Pinned constraint: {h[:8]}")
 
         log = StepLogger()
@@ -261,7 +261,7 @@ def section_3_auto_compression() -> None:
         for p in pinned:
             print(f"    {p.commit_hash[:8]}  {(p.text or '')[:70]}")
 
-        final = t.search.status()
+        final = t.status()
         print(f"\n  Final: {final.commit_count} commits, {final.token_count} tokens\n")
 
 

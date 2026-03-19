@@ -48,13 +48,13 @@ def scenario_quality_gate() -> None:
             "Research topics thoroughly before moving to implementation."
         )
         t.config.set(stage="research")
-        t.branches.create("implementation", switch=False)
+        t.branch("implementation", switch=False)
 
         # Gate: require >= 3 artifact commits before transition
         def research_gate(ctx: MiddlewareContext):
             if ctx.target != "implementation":
                 return
-            entries = ctx.tract.search.log(limit=50)
+            entries = ctx.tract.log(limit=50)
             artifacts = [e for e in entries if e.content_type == "artifact"]
             if len(artifacts) < 3:
                 raise BlockedError(
@@ -80,7 +80,7 @@ def scenario_quality_gate() -> None:
         result.pprint()
 
         # --- Results ---
-        entries = t.search.log(limit=50)
+        entries = t.log(limit=50)
         artifacts = [e for e in entries if e.content_type == "artifact"]
         reached = t.current_branch == "implementation"
 
@@ -97,7 +97,7 @@ def scenario_quality_gate() -> None:
             except BlockedError as e:
                 print(f"  Gate blocked: {e}")
 
-        s = t.search.status()
+        s = t.status()
         print(f"  Final: {s.commit_count} commits, {s.token_count} tokens")
     print("\n  PASSED")
 
@@ -122,7 +122,7 @@ def scenario_phase_detection() -> None:
         """Lower temperature and inject directive when code appears."""
         if phase_state["shifted"] or not ctx.commit:
             return
-        content = ctx.tract.search.get_content(ctx.commit)
+        content = ctx.tract.get_content(ctx.commit)
         if not content:
             return
         text = str(content) if not isinstance(content, dict) else content.get("text", "")
@@ -174,14 +174,14 @@ def scenario_phase_detection() -> None:
             print(f"  Config: temperature={t.config.get('temperature')}, "
                   f"stage={t.config.get('stage')}")
 
-        directives = [e for e in t.search.log(limit=30)
+        directives = [e for e in t.log(limit=30)
                       if e.content_type == "directive"]
         if directives:
             print(f"  Directives injected: {len(directives)}")
             for d in directives:
                 print(f"    [{d.commit_hash[:8]}] {(d.message or '')[:60]}")
 
-        s = t.search.status()
+        s = t.status()
         print(f"  Final: {s.commit_count} commits, {s.token_count} tokens\n")
         t.compile().pprint(style="chat")
     print("\n  PASSED")

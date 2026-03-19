@@ -184,7 +184,7 @@ class TestTractLoadProfile:
         with Tract.open() as t:
             t.templates.load_profile("coding")
             # Directives are committed as InstructionContent
-            log = t.search.log()
+            log = t.log()
             messages = [ci.message for ci in log]
             assert any("directive: methodology" in m for m in messages)
             assert any("directive: code_quality" in m for m in messages)
@@ -195,7 +195,7 @@ class TestTractLoadProfile:
             # Config should still be applied
             assert t.config.get("temperature") == 0.3
             # But no directives
-            log = t.search.log()
+            log = t.log()
             messages = [ci.message for ci in log]
             assert not any("directive:" in m for m in messages)
 
@@ -233,7 +233,7 @@ class TestTractLoadProfile:
         try:
             with Tract.open() as t:
                 t.templates.load_profile("_tmpl_test")
-                log = t.search.log()
+                log = t.log()
                 messages = [ci.message for ci in log]
                 assert any("directive: output_format" in m for m in messages)
         finally:
@@ -350,7 +350,7 @@ class TestCustomProfileEndToEnd:
                 assert t.config.get("compile_strategy") == "full"
 
                 # Directive applied
-                log_msgs = [ci.message for ci in t.search.log()]
+                log_msgs = [ci.message for ci in t.log()]
                 assert any("directive: rule" in m for m in log_msgs)
 
                 # Switch to explore stage

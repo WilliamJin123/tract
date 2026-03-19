@@ -126,7 +126,7 @@ class TestInit:
         tract_id = _read_id(tract_dir)
         db_path = str(tract_dir / ".tract" / "tract.db")
         t = Tract.open(path=db_path, tract_id=tract_id)
-        commits = t.search.log(limit=10)
+        commits = t.log(limit=10)
         t.close()
         # At least one commit (the init seed)
         assert len(commits) >= 1
@@ -198,7 +198,7 @@ class TestLog:
         t = _init_and_open(tract_dir)
         capsys.readouterr()
         info = t.user("Important message")
-        t.annotations.set(info.commit_hash, Priority.PINNED)
+        t.annotate(info.commit_hash, Priority.PINNED)
         t.close()
 
         main(["log"])
@@ -584,9 +584,9 @@ class TestDiff:
         t = _init_and_open(tract_dir)
         capsys.readouterr()
         t.system("Base content")
-        t.branches.create("feature")
+        t.branch("feature")
         t.user("Feature-only content")
-        t.branches.switch("main")
+        t.switch("main")
         t.close()
 
         main(["diff", "main..feature"])
@@ -647,10 +647,10 @@ class TestBranches:
         t = _init_and_open(tract_dir)
         capsys.readouterr()
         t.system("Base content")
-        t.branches.create("feature")
-        t.branches.switch("main")
-        t.branches.create("bugfix")
-        t.branches.switch("main")
+        t.branch("feature")
+        t.switch("main")
+        t.branch("bugfix")
+        t.switch("main")
         t.close()
 
         main(["branches"])
@@ -685,7 +685,7 @@ class TestBranches:
         t = _init_and_open(tract_dir)
         capsys.readouterr()
         t.system("Base")
-        t.branches.create("feature")
+        t.branch("feature")
         # Now on "feature"
         t.close()
 
@@ -1000,9 +1000,9 @@ class TestIntegrationWorkflow:
         t = _init_and_open(tract_dir)
         capsys.readouterr()
         t.system("Base system prompt")
-        t.branches.create("experiment")
+        t.branch("experiment")
         t.user("Experiment content")
-        t.branches.switch("main")
+        t.switch("main")
         t.close()
 
         # List branches
@@ -1091,9 +1091,9 @@ class TestIntegrationWorkflow:
         t.user("Analyze the quarterly revenue data.")
         t.assistant("The quarterly revenue shows a 15% increase.")
         t.config.set(model="gpt-4o", temperature=0.3)
-        t.branches.create("follow-up")
+        t.branch("follow-up")
         t.user("What about the cost analysis?")
-        t.branches.switch("main")
+        t.switch("main")
         t.close()
 
         # Verify status

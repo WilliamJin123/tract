@@ -159,7 +159,7 @@ def transition_gates() -> None:
         def review_gate(ctx: MiddlewareContext):
             if ctx.target != "review":
                 return
-            count = len(ctx.tract.search.log())
+            count = len(ctx.tract.log())
             if count < 5:
                 raise BlockedError(
                     "pre_transition",
@@ -187,7 +187,7 @@ def transition_gates() -> None:
         assert t.current_branch == "review"
 
         # --- Config-based gate ---
-        t.branches.switch("main")
+        t.switch("main")
 
         def production_gate(ctx: MiddlewareContext):
             if ctx.target != "production":
@@ -210,7 +210,7 @@ def transition_gates() -> None:
         print(f"  After approval: transitioned to {t.current_branch}")
 
         # --- Handoff modes ---
-        t.branches.switch("main")
+        t.switch("main")
         t.user("Context for handoff demo")
         t.assistant("Acknowledged")
 
@@ -218,18 +218,18 @@ def transition_gates() -> None:
         if result:
             print(f"  full    -> {result.commit_hash[:8]} on {t.current_branch}")
 
-        t.branches.switch("main")
+        t.switch("main")
         t.config.set(handoff_summary_k=3)
         result = t.transition("summary-handoff", handoff="summary")
         if result:
             print(f"  summary -> {result.commit_hash[:8]} on {t.current_branch}")
 
-        t.branches.switch("main")
+        t.switch("main")
         result = t.transition("custom-handoff", handoff="Key context: fibonacci")
         if result:
             print(f"  custom  -> {result.commit_hash[:8]} on {t.current_branch}")
 
-        t.branches.switch("main")
+        t.switch("main")
         result = t.transition("bare-branch", handoff="none")
         print(f"  none    -> result={result}, branch={t.current_branch}")
 
@@ -250,7 +250,7 @@ def data_preservation() -> None:
     print("=" * 60, "\n")
 
     with Tract.open() as t:
-        t.tags.register("credentials")
+        t.register_tag("credentials")
 
         t.system("You are a helpful assistant.")
         t.user("What is Python?")
@@ -262,7 +262,7 @@ def data_preservation() -> None:
         t.assistant("I will remember that format.")
 
         # Layer 1: PINNED annotation
-        t.annotations.set(important.commit_hash, Priority.PINNED, reason="credential data")
+        t.annotate(important.commit_hash, Priority.PINNED, reason="credential data")
         print(f"  PINNED commit: {important.commit_hash[:8]}")
         print("    Hard engine-level protection -- survives all compression")
 
@@ -272,7 +272,7 @@ def data_preservation() -> None:
 
         # Layer 3: Pre-compress middleware guards
         def protect_credentials(ctx: MiddlewareContext):
-            for ci in ctx.tract.search.log():
+            for ci in ctx.tract.log():
                 if "credentials" in (ci.tags or []):
                     raise BlockedError(
                         "pre_compress",
@@ -280,7 +280,7 @@ def data_preservation() -> None:
                     )
 
         def require_min_history(ctx: MiddlewareContext):
-            count = len(ctx.tract.search.log())
+            count = len(ctx.tract.log())
             if count < 20:
                 raise BlockedError(
                     "pre_compress",
@@ -351,11 +351,11 @@ def observability() -> None:
         t.user("Implement login.")
         t.assistant("Login module done.")
         t.compile()
-        t.compression.compress(content="[Summary] Planning and implementation done.")
-        t.branches.create("hotfix")
+        t.compress(content="[Summary] Planning and implementation done.")
+        t.branch("hotfix")
         t.user("Fix auth bypass.")
         t.assistant("Patched session validation.")
-        t.branches.switch("implementation")
+        t.switch("implementation")
         t.merge("hotfix")
 
         print(f"  {len(log)} audit entries:")
@@ -432,7 +432,7 @@ def autonomous_behaviors() -> None:
 
         def auto_skip(ctx: MiddlewareContext):
             if ctx.commit and ctx.commit.content_type in skip_types:
-                ctx.tract.annotations.set(ctx.commit.commit_hash, Priority.SKIP)
+                ctx.tract.annotate(ctx.commit.commit_hash, Priority.SKIP)
 
         t.middleware.add("post_commit", auto_skip)
 
@@ -443,7 +443,7 @@ def autonomous_behaviors() -> None:
         t.assistant("A programming language.")
 
         skipped = len(t.search.skipped())
-        print(f"  {len(t.search.log())} commits, {t.compile().commit_count} compiled, {skipped} skipped")
+        print(f"  {len(t.log())} commits, {t.compile().commit_count} compiled, {skipped} skipped")
         assert skipped == 2
 
     # --- Commit-count compression trigger ---
@@ -455,7 +455,7 @@ def autonomous_behaviors() -> None:
         def auto_compress(ctx: MiddlewareContext):
             state["count"] += 1
             if state["count"] >= 6:
-                # Production: ctx.tract.compression.compress(strategy="sliding_window")
+                # Production: ctx.tract.compress(strategy="sliding_window")
                 state["triggered"] = True
                 state["count"] = 0
 
@@ -466,7 +466,7 @@ def autonomous_behaviors() -> None:
             t.user(f"Finding #{i}")
             t.assistant(f"Noted #{i}.")
 
-        print(f"  {len(t.search.log())} commits, trigger fired: {state['triggered']}")
+        print(f"  {len(t.log())} commits, trigger fired: {state['triggered']}")
         assert state["triggered"]
 
     # --- Keyword-based stage routing ---
@@ -483,7 +483,7 @@ def autonomous_behaviors() -> None:
             if not ctx.commit:
                 return
             text = (ctx.commit.message or "").lower()
-            content = str(ctx.tract.search.get_content(ctx.commit) or "").lower()
+            content = str(ctx.tract.get_content(ctx.commit) or "").lower()
             combined = text + " " + content
             current = ctx.tract.config.get("stage") or "research"
             for target, keywords in routes.items():

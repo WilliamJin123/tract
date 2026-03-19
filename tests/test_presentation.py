@@ -207,11 +207,11 @@ class TestToolResultStr:
             tool_name="switch",
             success=False,
             error="Branch not found",
-            hint="Use t.branches.list()",
+            hint="Use t.list_branches()",
         )
         s = str(result)
         assert "[error] switch: Branch not found" in s
-        assert "[hint] Use t.branches.list()" in s
+        assert "[hint] Use t.list_branches()" in s
 
     def test_tool_result_str_error_no_hint(self):
         result = ToolResult(

@@ -31,7 +31,7 @@ def create_orphans(t, hashes):
     Returns the orphaned hashes (those no longer reachable from HEAD).
     """
     # Reset to the first commit, making commits 2..N orphaned
-    t.branches.reset(hashes[0], mode="hard")
+    t.reset(hashes[0], mode="hard")
     return hashes[1:]
 
 
@@ -47,7 +47,7 @@ class TestBasicGC:
         """gc() on tract with no orphans returns commits_removed=0."""
         t, hashes = make_tract_with_commits(5)
 
-        result = t.compression.gc(orphan_retention_days=0)
+        result = t.gc(orphan_retention_days=0)
 
         assert isinstance(result, GCResult)
         assert result.commits_removed == 0
@@ -60,7 +60,7 @@ class TestBasicGC:
         t, hashes = make_tract_with_commits(5)
         orphans = create_orphans(t, hashes)
 
-        result = t.compression.gc(orphan_retention_days=0)
+        result = t.gc(orphan_retention_days=0)
 
         assert result.commits_removed == len(orphans)
         assert result.tokens_freed > 0
@@ -76,7 +76,7 @@ class TestBasicGC:
         orphans = create_orphans(t, hashes)
 
         # Default retention = 7 days. Freshly created commits are < 7 days old.
-        result = t.compression.gc(orphan_retention_days=7)
+        result = t.gc(orphan_retention_days=7)
 
         assert result.commits_removed == 0
         # Orphans still exist
@@ -89,7 +89,7 @@ class TestBasicGC:
         t, hashes = make_tract_with_commits(5)
         orphans = create_orphans(t, hashes)
 
-        result = t.compression.gc(orphan_retention_days=0)
+        result = t.gc(orphan_retention_days=0)
 
         assert isinstance(result, GCResult)
         assert result.commits_removed == 4  # 4 orphans (hashes[1:5])
@@ -116,7 +116,7 @@ class TestBasicGC:
         # Create orphans
         create_orphans(t, hashes)
 
-        result = t.compression.gc(orphan_retention_days=0)
+        result = t.gc(orphan_retention_days=0)
 
         assert result.commits_removed == 4
         # All orphaned blobs should be removed since they have unique content
@@ -136,10 +136,10 @@ class TestArchiveGC:
         t, hashes = make_tract_with_commits(5)
 
         # Compress all commits
-        result = t.compression.compress(content="Summary of everything")
+        result = t.compress(content="Summary of everything")
 
         # Original commits are now unreachable but archived
-        gc_result = t.compression.gc(orphan_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0)
 
         # Archives should be preserved (archive_retention=None)
         assert gc_result.source_commits_removed == 0
@@ -149,10 +149,10 @@ class TestArchiveGC:
         t, hashes = make_tract_with_commits(5)
 
         # Compress all commits
-        result = t.compression.compress(content="Summary of everything")
+        result = t.compress(content="Summary of everything")
 
         # Now GC with archive_retention_days=0
-        gc_result = t.compression.gc(orphan_retention_days=0, archive_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
 
         # Archives should be removed
         assert gc_result.source_commits_removed > 0
@@ -162,10 +162,10 @@ class TestArchiveGC:
         t, hashes = make_tract_with_commits(5)
 
         # Compress all commits
-        result = t.compression.compress(content="Summary of everything")
+        result = t.compress(content="Summary of everything")
 
         # GC with 30-day archive retention (commits are seconds old)
-        gc_result = t.compression.gc(orphan_retention_days=0, archive_retention_days=30)
+        gc_result = t.gc(orphan_retention_days=0, archive_retention_days=30)
 
         assert gc_result.source_commits_removed == 0
 
@@ -174,10 +174,10 @@ class TestArchiveGC:
         t, hashes = make_tract_with_commits(5)
 
         # Compress
-        compress_result = t.compression.compress(content="Summary")
+        compress_result = t.compress(content="Summary")
 
         # GC with immediate archive removal
-        gc_result = t.compression.gc(orphan_retention_days=0, archive_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
 
         assert gc_result.source_commits_removed == len(compress_result.source_commits)
 
@@ -195,13 +195,13 @@ class TestMultiBranchGC:
         t, hashes = make_tract_with_commits(3)
 
         # Create feature branch at commit 3
-        t.branches.create("feature", switch=False)
+        t.branch("feature", switch=False)
 
         # Reset main back to commit 1 (hashes[2] is only on feature)
-        t.branches.reset(hashes[0], mode="hard")
+        t.reset(hashes[0], mode="hard")
 
         # GC -- hashes[1] and hashes[2] are reachable from 'feature'
-        gc_result = t.compression.gc(orphan_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0)
 
         assert gc_result.commits_removed == 0
 
@@ -214,13 +214,13 @@ class TestMultiBranchGC:
         t, hashes = make_tract_with_commits(3)
 
         # Create feature branch from commit 3
-        t.branches.create("feature", switch=False)
+        t.branch("feature", switch=False)
 
         # Reset main to commit 1
-        t.branches.reset(hashes[0], mode="hard")
+        t.reset(hashes[0], mode="hard")
 
         # GC scoped to main -- hashes[1:] not reachable from main
-        gc_result = t.compression.gc(orphan_retention_days=0, branch="main")
+        gc_result = t.gc(orphan_retention_days=0, branch="main")
 
         assert gc_result.commits_removed == 2
         # hashes[1] and hashes[2] should be removed
@@ -232,11 +232,11 @@ class TestMultiBranchGC:
         t, hashes = make_tract_with_commits(5)
 
         # Detach HEAD at commit 3, then reset main to commit 1
-        t.branches.checkout(hashes[2])  # Detach at commit 3
+        t.checkout(hashes[2])  # Detach at commit 3
         # hashes[2] is now the detached HEAD
 
         # GC should preserve commits reachable from detached HEAD
-        gc_result = t.compression.gc(orphan_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0)
 
         # Commits 0, 1, 2 reachable from detached HEAD
         # Commits 0-4 reachable from main
@@ -255,7 +255,7 @@ class TestGCEdgeCases:
         """gc() on empty tract returns all zeros."""
         t = Tract.open()
 
-        result = t.compression.gc(orphan_retention_days=0)
+        result = t.gc(orphan_retention_days=0)
 
         assert result.commits_removed == 0
         assert result.blobs_removed == 0
@@ -266,7 +266,7 @@ class TestGCEdgeCases:
         """GCResult.duration_seconds >= 0."""
         t, hashes = make_tract_with_commits(3)
 
-        result = t.compression.gc(orphan_retention_days=0)
+        result = t.gc(orphan_retention_days=0)
 
         assert result.duration_seconds >= 0
 
@@ -275,10 +275,10 @@ class TestGCEdgeCases:
         t, hashes = make_tract_with_commits(5)
         create_orphans(t, hashes)
 
-        first_result = t.compression.gc(orphan_retention_days=0)
+        first_result = t.gc(orphan_retention_days=0)
         assert first_result.commits_removed == 4
 
-        second_result = t.compression.gc(orphan_retention_days=0)
+        second_result = t.gc(orphan_retention_days=0)
         assert second_result.commits_removed == 0
 
 
@@ -298,10 +298,10 @@ class TestGCProvenanceCleanup:
         from tests.test_compression import MockLLMClient
         mock = MockLLMClient()
         t.config.configure_llm(mock)
-        result = t.compression.compress()
+        result = t.compress()
 
         # Now run GC with archive_retention_days=0 to remove archives
-        gc_result = t.compression.gc(orphan_retention_days=0, archive_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
 
         assert gc_result.source_commits_removed > 0
 
@@ -311,7 +311,7 @@ class TestGCProvenanceCleanup:
         # (no sources or results remain)
         # We verify by checking the GC result is consistent
         # and a second GC finds nothing more to remove
-        gc_result2 = t.compression.gc(orphan_retention_days=0, archive_retention_days=0)
+        gc_result2 = t.gc(orphan_retention_days=0, archive_retention_days=0)
         assert gc_result2.commits_removed == 0
         assert gc_result2.source_commits_removed == 0
 
@@ -320,7 +320,7 @@ class TestGCProvenanceCleanup:
         t, hashes = make_tract_with_commits(5)
 
         # Compress to create summary commits
-        result = t.compression.compress(content="Summary of everything")
+        result = t.compress(content="Summary of everything")
         summary_hashes = result.summary_commits
         compression_id = result.compression_id
 
@@ -334,15 +334,15 @@ class TestGCProvenanceCleanup:
         new_h1 = t.commit(DialogueContent(role="user", text="New after compress"))
         new_h2 = t.commit(DialogueContent(role="assistant", text="Response"))
         # Now compress again to orphan the previous summary
-        result2 = t.compression.compress(content="Second summary replacing everything")
+        result2 = t.compress(content="Second summary replacing everything")
 
         # First summary commits are now unreachable (orphaned)
         # GC should clean them up along with their operation commit entries
-        gc_result = t.compression.gc(orphan_retention_days=0, archive_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
 
         # Should have removed the old summary commits and source archives
         assert gc_result.commits_removed > 0
 
         # Verify no FK constraint violations -- a second GC should succeed cleanly
-        gc_result2 = t.compression.gc(orphan_retention_days=0, archive_retention_days=0)
+        gc_result2 = t.gc(orphan_retention_days=0, archive_retention_days=0)
         assert gc_result2.commits_removed >= 0  # May remove more or zero

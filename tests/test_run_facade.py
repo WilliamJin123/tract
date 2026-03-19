@@ -83,7 +83,7 @@ class TestRunStepBudget:
         client = MockLLMClient([_text_resp("response", tokens=600)])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(
+            result = t._llm_mgr.run(
                 task="Do something",
                 llm_client=client,
                 tools=[],
@@ -98,7 +98,7 @@ class TestRunStepBudget:
         client = MockLLMClient([_text_resp("done")])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(llm_client=client, tools=[])
+            result = t._llm_mgr.run(llm_client=client, tools=[])
             assert result.status == "completed"
             assert not result.budget_exhausted
 
@@ -111,7 +111,7 @@ class TestRunStepBudget:
         ])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(
+            result = t._llm_mgr.run(
                 llm_client=client,
                 tools=[],
                 step_budget=500,
@@ -146,7 +146,7 @@ class TestRunToolValidator:
         ])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(
+            result = t._llm_mgr.run(
                 llm_client=client,
                 tools=[{"type": "function", "function": {"name": "blocked_tool", "parameters": {}}}],
                 tool_validator=validator,
@@ -165,7 +165,7 @@ class TestRunToolValidator:
         ])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(
+            result = t._llm_mgr.run(
                 llm_client=client,
                 tools=[{"type": "function", "function": {"name": "good_tool", "parameters": {}}}],
                 tool_handlers={"good_tool": lambda: "ok"},
@@ -186,7 +186,7 @@ class TestRunToolValidator:
         ])
         with Tract.open() as t:
             t.system("Test")
-            t.llm.run(
+            t._llm_mgr.run(
                 llm_client=client,
                 tools=[{"type": "function", "function": {"name": "bad_tool", "parameters": {}}}],
                 tool_validator=validator,
@@ -211,7 +211,7 @@ class TestRunAutoCompress:
         client = MockLLMClient([_text_resp("done")])
         with Tract.open() as t:
             t.system("Short prompt")
-            result = t.llm.run(
+            result = t._llm_mgr.run(
                 llm_client=client,
                 tools=[],
                 auto_compress_threshold=0.8,
@@ -233,7 +233,7 @@ class TestRunStepMetrics:
         client = MockLLMClient([_text_resp("done", tokens=100)])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(llm_client=client, tools=[])
+            result = t._llm_mgr.run(llm_client=client, tools=[])
             assert len(result.step_metrics) == 1
             m = result.step_metrics[0]
             assert isinstance(m, StepMetrics)
@@ -246,7 +246,7 @@ class TestRunStepMetrics:
         client = MockLLMClient([_text_resp("done")])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(llm_client=client, tools=[])
+            result = t._llm_mgr.run(llm_client=client, tools=[])
             assert result.total_duration_ms > 0
 
     def test_tool_metrics_in_step(self):
@@ -257,7 +257,7 @@ class TestRunStepMetrics:
         ])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(
+            result = t._llm_mgr.run(
                 llm_client=client,
                 tools=[{"type": "function", "function": {"name": "my_tool", "parameters": {}}}],
                 tool_handlers={"my_tool": lambda: "result"},
@@ -271,7 +271,7 @@ class TestRunStepMetrics:
         client = MockLLMClient([_text_resp("done")])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(llm_client=client, tools=[])
+            result = t._llm_mgr.run(llm_client=client, tools=[])
             assert result.step_metrics[0].tool_count == 0
             assert result.step_metrics[0].tool_names == ()
 
@@ -280,7 +280,7 @@ class TestRunStepMetrics:
         client = MockLLMClient([_text_resp("done")])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(llm_client=client, tools=[])
+            result = t._llm_mgr.run(llm_client=client, tools=[])
             # No auto-compress configured, so compressed=False
             assert not result.step_metrics[0].compressed
 
@@ -301,7 +301,7 @@ class TestRunCombined:
         client = MockLLMClient([_text_resp("r", tokens=1000)])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(
+            result = t._llm_mgr.run(
                 llm_client=client,
                 tools=[],
                 step_budget=500,
@@ -318,7 +318,7 @@ class TestRunCombined:
         client = MockLLMClient([_text_resp("done", tokens=50)])
         with Tract.open() as t:
             t.system("Test")
-            result = t.llm.run(
+            result = t._llm_mgr.run(
                 llm_client=client,
                 tools=[],
                 step_budget=10000,

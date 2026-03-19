@@ -182,8 +182,8 @@ def branch_isolation():
         t.config.set(model="gpt-4", temperature=0.7)
 
         # Experiment branch gets its own overrides
-        t.branches.create("experiment")
-        t.branches.switch("experiment")
+        t.branch("experiment")
+        t.switch("experiment")
         t.config.set(model="claude-3", temperature=0.0)
 
         assert t.config.get("model") == "claude-3"
@@ -191,14 +191,14 @@ def branch_isolation():
         print(f"  experiment:  model={t.config.get('model')}, temp={t.config.get('temperature')}")
 
         # Main still has original values
-        t.branches.switch("main")
+        t.switch("main")
         assert t.config.get("model") == "gpt-4"
         assert t.config.get("temperature") == 0.7
         print(f"  main:        model={t.config.get('model')}, temp={t.config.get('temperature')}")
 
         # Feature branch inherits from main at fork point
-        t.branches.create("feature")
-        t.branches.switch("feature")
+        t.branch("feature")
+        t.switch("feature")
         assert t.config.get("model") == "gpt-4"        # inherited
         t.config.set(max_tokens=2048)                   # branch-specific addition
         assert t.config.get("max_tokens") == 2048
@@ -275,7 +275,7 @@ def directives():
         print(f"  Compiled: {len(system_texts)} system messages with active directives")
 
         # Directives are visible in the log
-        log = t.search.log()
+        log = t.log()
         directive_commits = [c for c in log if c.content_type == "instruction"]
         print(f"  Directive commits in log: {len(directive_commits)}")
 
@@ -363,7 +363,7 @@ def batch_commits():
 
 
 def status_tracking():
-    """t.search.status() for token counting and budget tracking."""
+    """t.status() for token counting and budget tracking."""
     with Tract.open() as t:
         print("\n=== 10. Status ===\n")
 
@@ -371,7 +371,7 @@ def status_tracking():
         t.user("Hello")
         t.assistant("Hi there!")
 
-        status = t.search.status()
+        status = t.status()
         print(f"  str(status):      {status}")
         print(f"  commit_count:     {status.commit_count}")
         print(f"  token_count:      {status.token_count}")
@@ -384,7 +384,7 @@ def status_tracking():
     with Tract.open(config=config) as t2:
         t2.system("You are helpful.")
         t2.user("Hello")
-        s = t2.search.status()
+        s = t2.status()
         if s.token_budget_max:
             pct = s.token_count / s.token_budget_max * 100
             print(f"  Budget usage:     {pct:.1f}% of {s.token_budget_max} tokens")
@@ -482,7 +482,7 @@ def log_visibility():
         t.user("Hello")
         t.assistant("Hi!")
 
-        log = t.search.log()
+        log = t.log()
         for entry in log:
             print(f"  {entry.commit_hash[:8]}  [{entry.content_type:12}]  {entry.message}")
 

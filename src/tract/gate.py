@@ -48,15 +48,15 @@ def build_manifest(tract: Tract, max_log_entries: int = 30) -> str:
     """Build a text manifest from log entries and active config.
 
     Shared by :class:`SemanticGate` and
-    :class:`~tract.maintain.SemanticMaintainer`.  Uses only ``t.search.log()``
-    and ``t.config.get_all()`` -- never ``t.search.status()`` or ``t.compile()``
+    :class:`~tract.maintain.SemanticMaintainer`.  Uses only ``t.log()``
+    and ``t.config.get_all()`` -- never ``t.status()`` or ``t.compile()``
     to avoid middleware recursion.
     """
     branch = tract.current_branch or "(detached)"
     head = tract.head
     head_short = head[:8] if head else "(empty)"
 
-    entries = tract.search.log(limit=max_log_entries)
+    entries = tract.log(limit=max_log_entries)
     shown = len(entries)
 
     lines: list[str] = [

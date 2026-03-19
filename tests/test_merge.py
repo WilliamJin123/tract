@@ -45,14 +45,14 @@ def diverge_branches(
     feature_texts = feature_texts or ["feature work"]
 
     # Create branch from current HEAD
-    t.branches.create(branch_name)
+    t.branch(branch_name)
 
     # Commit on feature branch
     for text in feature_texts:
         t.commit(DialogueContent(role="user", text=text))
 
     # Switch back to main and commit
-    t.branches.switch("main")
+    t.switch("main")
     for text in main_texts:
         t.commit(DialogueContent(role="user", text=text))
 
@@ -93,12 +93,12 @@ class TestFastForwardMerge:
         t.commit(InstructionContent(text="base"))
         base_hash = t.head
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="feature 1"))
         t.commit(DialogueContent(role="user", text="feature 2"))
         feature_tip = t.head
 
-        t.branches.switch("main")
+        t.switch("main")
         assert t.head == base_hash  # main hasn't moved
 
         result = t.merge("feature")
@@ -112,11 +112,11 @@ class TestFastForwardMerge:
         """Fast-forward should NOT create a merge commit."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="feature"))
         feature_tip = t.head
 
-        t.branches.switch("main")
+        t.switch("main")
         result = t.merge("feature")
 
         assert result.merge_type == "fast_forward"
@@ -129,11 +129,11 @@ class TestFastForwardMerge:
         """no_ff=True forces a merge commit even for fast-forward."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="feature"))
         feature_tip = t.head
 
-        t.branches.switch("main")
+        t.switch("main")
         base_hash = t.head
 
         result = t.merge("feature", no_ff=True)
@@ -157,9 +157,9 @@ class TestFastForwardMerge:
         """Source branch is ancestor of current -> NothingToMergeError."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
-        t.branches.create("feature")
+        t.branch("feature")
         # Don't commit on feature, switch back and commit on main
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main ahead"))
 
         with pytest.raises(NothingToMergeError, match="already up-to-date"):
@@ -170,7 +170,7 @@ class TestFastForwardMerge:
         """Source branch pointing to same commit as HEAD -> NothingToMergeError."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
-        t.branches.create("feature", switch=False)
+        t.branch("feature", switch=False)
 
         with pytest.raises(NothingToMergeError):
             t.merge("feature")
@@ -240,10 +240,10 @@ class TestCleanMerge:
         """Verify branch-blocks ordering: all first-parent then second-parent's."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="feat-1"))
         t.commit(DialogueContent(role="user", text="feat-2"))
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main-1"))
 
         t.merge("feature")
@@ -294,14 +294,14 @@ class TestConflictDetection:
         base = t.commit(InstructionContent(text="original"))
         base_hash = base.commit_hash
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
             edit_target=base_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -324,7 +324,7 @@ class TestConflictDetection:
         base_hash = base.commit_hash
 
         # Feature branch: EDIT the base commit
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
@@ -332,8 +332,8 @@ class TestConflictDetection:
         )
 
         # Main branch: SKIP the base commit and add something
-        t.branches.switch("main")
-        t.annotations.set(base_hash, Priority.SKIP, reason="not needed")
+        t.switch("main")
+        t.annotate(base_hash, Priority.SKIP, reason="not needed")
         t.commit(DialogueContent(role="user", text="main addition"))
 
         result = t.merge("feature")
@@ -349,7 +349,7 @@ class TestConflictDetection:
         base_hash = base.commit_hash
 
         # Feature branch: EDIT the pre-merge-base commit
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
@@ -357,7 +357,7 @@ class TestConflictDetection:
         )
 
         # Main branch: just APPEND
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main append"))
 
         result = t.merge("feature")
@@ -372,7 +372,7 @@ class TestConflictDetection:
         t.commit(InstructionContent(text="base"))
 
         # Feature branch: commit and edit its own commit
-        t.branches.create("feature")
+        t.branch("feature")
         feat_commit = t.commit(DialogueContent(role="user", text="feature original"))
         t.commit(
             DialogueContent(role="user", text="feature edited"),
@@ -381,7 +381,7 @@ class TestConflictDetection:
         )
 
         # Main branch: just APPEND
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main append"))
 
         result = t.merge("feature")
@@ -396,14 +396,14 @@ class TestConflictDetection:
         base = t.commit(InstructionContent(text="original text"))
         base_hash = base.commit_hash
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature version"),
             operation=CommitOperation.EDIT,
             edit_target=base_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main version"),
             operation=CommitOperation.EDIT,
@@ -432,14 +432,14 @@ class TestConflictResolution:
         t = Tract.open()
         base = t.commit(InstructionContent(text="original"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -459,14 +459,14 @@ class TestConflictResolution:
         t = Tract.open()
         base = t.commit(InstructionContent(text="original"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -486,14 +486,14 @@ class TestConflictResolution:
         t = Tract.open()
         base = t.commit(InstructionContent(text="original"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -524,14 +524,14 @@ class TestConflictResolution:
         t = Tract.open()
         base = t.commit(InstructionContent(text="original"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -551,14 +551,14 @@ class TestConflictResolution:
         t = Tract.open()
         base = t.commit(InstructionContent(text="original"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -576,16 +576,16 @@ class TestConflictResolution:
         """delete_branch=True removes source branch after merge."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="feature work"))
-        t.branches.switch("main")
+        t.switch("main")
 
         # Fast-forward merge with delete
         result = t.merge("feature", delete_branch=True)
         assert result.committed is True
 
         # Branch should be deleted
-        branches = [b.name for b in t.branches.list()]
+        branches = [b.name for b in t.list_branches()]
         assert "feature" not in branches
         t.close()
 
@@ -594,14 +594,14 @@ class TestConflictResolution:
         t = Tract.open()
         base = t.commit(InstructionContent(text="original"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -612,7 +612,7 @@ class TestConflictResolution:
         assert result.committed is False
 
         # Branch should still exist
-        branches = [b.name for b in t.branches.list()]
+        branches = [b.name for b in t.list_branches()]
         assert "feature" in branches
         t.close()
 
@@ -621,14 +621,14 @@ class TestConflictResolution:
         t = Tract.open()
         base = t.commit(InstructionContent(text="original"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -656,9 +656,9 @@ class TestMergeIntegration:
         t.commit(DialogueContent(role="user", text="initial query"))
 
         # Branch and diverge
-        t.branches.create("experiment")
+        t.branch("experiment")
         t.commit(DialogueContent(role="assistant", text="experiment response"))
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="assistant", text="main response"))
 
         # Merge
@@ -679,14 +679,14 @@ class TestMergeIntegration:
         t = Tract.open()
         base = t.commit(InstructionContent(text="original"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             DialogueContent(role="assistant", text="feature edit"),
             operation=CommitOperation.EDIT,
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(
             DialogueContent(role="assistant", text="main edit"),
             operation=CommitOperation.EDIT,
@@ -701,7 +701,7 @@ class TestMergeIntegration:
 
         assert result.committed is True
         # The generation_config should be recorded on the merge commit
-        merge_commit = t.search.get_commit(result.merge_commit_hash)
+        merge_commit = t.get_commit(result.merge_commit_hash)
         assert merge_commit is not None
         assert merge_commit.generation_config is not None
         assert merge_commit.generation_config.model == "gpt-4o"
@@ -714,9 +714,9 @@ class TestMergeIntegration:
         t.commit(InstructionContent(text="base"))
         _ = t.compile()  # populate cache
 
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="feature"))
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main"))
 
         t.merge("feature")
@@ -743,8 +743,8 @@ class TestMergeIntegration:
         """Merge in detached HEAD state raises MergeError."""
         t = Tract.open()
         c1 = t.commit(InstructionContent(text="base"))
-        t.branches.create("feature", switch=False)
-        t.branches.checkout(c1.commit_hash)  # detach HEAD
+        t.branch("feature", switch=False)
+        t.checkout(c1.commit_hash)  # detach HEAD
 
         with pytest.raises(MergeError, match="detached"):
             t.merge("feature")
@@ -768,17 +768,17 @@ class TestMergeIntegration:
         t.commit(InstructionContent(text="base"))
 
         # First merge: feature-a
-        t.branches.create("feature-a")
+        t.branch("feature-a")
         t.commit(DialogueContent(role="user", text="feature-a"))
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main-1"))
         result_a = t.merge("feature-a")
         assert result_a.merge_type == "clean"
 
         # Second merge: feature-b
-        t.branches.create("feature-b")
+        t.branch("feature-b")
         t.commit(DialogueContent(role="user", text="feature-b"))
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main-2"))
         result_b = t.merge("feature-b")
         assert result_b.merge_type == "clean"
@@ -1011,16 +1011,16 @@ class TestMergeCommitHashIncludesSecondParent:
         t.commit(InstructionContent(text="base"))
 
         # Create feature-a with one commit
-        t.branches.create("feature-a")
+        t.branch("feature-a")
         t.commit(DialogueContent(role="user", text="feature-a work"))
 
         # Create feature-b from main with a different commit
-        t.branches.switch("main")
-        t.branches.create("feature-b")
+        t.switch("main")
+        t.branch("feature-b")
         t.commit(DialogueContent(role="user", text="feature-b work"))
 
         # Diverge main so merges are not fast-forward
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
         # Merge feature-a into main
@@ -1036,10 +1036,10 @@ class TestMergeCommitHashIncludesSecondParent:
         t2 = Tract.open()
         t2.commit(InstructionContent(text="base"))
 
-        t2.branches.create("feature-b")
+        t2.branch("feature-b")
         t2.commit(DialogueContent(role="user", text="feature-b work"))
 
-        t2.branches.switch("main")
+        t2.switch("main")
         t2.commit(DialogueContent(role="user", text="main work"))
 
         result_b = t2.merge("feature-b")

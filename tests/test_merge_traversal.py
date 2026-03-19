@@ -28,12 +28,12 @@ def _setup_merged_tract() -> tuple[Tract, str, str, str]:
         Then merge feature into main, creating a merge commit.
     """
     t = Tract.open()
-    t.tags.register("feature-tag", "Tag for feature work")
-    t.tags.register("main-tag", "Tag for main work")
+    t.register_tag("feature-tag", "Tag for feature work")
+    t.register_tag("main-tag", "Tag for main work")
     t.commit(InstructionContent(text="base instruction"))
 
     # Create feature branch and commit
-    t.branches.create("feature")
+    t.branch("feature")
     feature_info = t.commit(
         DialogueContent(role="user", text="feature work"),
         tags=["feature-tag"],
@@ -41,7 +41,7 @@ def _setup_merged_tract() -> tuple[Tract, str, str, str]:
     feature_hash = feature_info.commit_hash
 
     # Switch to main and commit
-    t.branches.switch("main")
+    t.switch("main")
     main_info = t.commit(
         DialogueContent(role="user", text="main work"),
         tags=["main-tag"],
@@ -67,7 +67,7 @@ class TestFindTraversesMergeParents:
     def test_find_content_from_merged_branch(self) -> None:
         t, feature_hash, _, _ = _setup_merged_tract()
         try:
-            results = t.search.find(content="feature work")
+            results = t.find(content="feature work")
             hashes = [r.commit_hash for r in results]
             assert feature_hash in hashes, (
                 "find(content=) did not traverse merge parents"
@@ -78,7 +78,7 @@ class TestFindTraversesMergeParents:
     def test_find_content_from_main_branch(self) -> None:
         t, _, main_hash, _ = _setup_merged_tract()
         try:
-            results = t.search.find(content="main work")
+            results = t.find(content="main work")
             hashes = [r.commit_hash for r in results]
             assert main_hash in hashes
         finally:
@@ -87,7 +87,7 @@ class TestFindTraversesMergeParents:
     def test_find_tag_from_merged_branch(self) -> None:
         t, feature_hash, _, _ = _setup_merged_tract()
         try:
-            results = t.search.find(tag="feature-tag")
+            results = t.find(tag="feature-tag")
             hashes = [r.commit_hash for r in results]
             assert feature_hash in hashes, (
                 "find(tag=) did not traverse merge parents"
@@ -100,7 +100,7 @@ class TestFindTraversesMergeParents:
         t, feature_hash, main_hash, _ = _setup_merged_tract()
         try:
             # Search for all user dialogue
-            results = t.search.find(content_type="dialogue")
+            results = t.find(content_type="dialogue")
             hashes = [r.commit_hash for r in results]
             assert feature_hash in hashes, "Missing feature branch commit"
             assert main_hash in hashes, "Missing main branch commit"
@@ -110,7 +110,7 @@ class TestFindTraversesMergeParents:
     def test_find_one_from_merged_branch(self) -> None:
         t, feature_hash, _, _ = _setup_merged_tract()
         try:
-            result = t.search.find_one(content="feature work")
+            result = t.find_one(content="feature work")
             assert result is not None
             assert result.commit_hash == feature_hash
         finally:
@@ -128,7 +128,7 @@ class TestLogTraversesMergeParents:
     def test_log_includes_merged_branch_commits(self) -> None:
         t, feature_hash, main_hash, merge_hash = _setup_merged_tract()
         try:
-            entries = t.search.log(limit=50)
+            entries = t.log(limit=50)
             hashes = [e.commit_hash for e in entries]
             assert feature_hash in hashes, (
                 "log() did not traverse merge parents"
@@ -141,7 +141,7 @@ class TestLogTraversesMergeParents:
         """Merged branch commits should appear in chronological position."""
         t, feature_hash, main_hash, merge_hash = _setup_merged_tract()
         try:
-            entries = t.search.log(limit=50)
+            entries = t.log(limit=50)
             hashes = [e.commit_hash for e in entries]
             # Merge commit should be first (newest)
             assert hashes[0] == merge_hash
@@ -154,7 +154,7 @@ class TestLogTraversesMergeParents:
     def test_log_with_tag_filter_finds_merged(self) -> None:
         t, feature_hash, _, _ = _setup_merged_tract()
         try:
-            entries = t.search.log(limit=50, tags=["feature-tag"])
+            entries = t.log(limit=50, tags=["feature-tag"])
             hashes = [e.commit_hash for e in entries]
             assert feature_hash in hashes, (
                 "log(tags=) did not traverse merge parents"
@@ -174,7 +174,7 @@ class TestQueryByTagsTraversesMergeParents:
     def test_query_finds_tag_from_merged_branch(self) -> None:
         t, feature_hash, _, _ = _setup_merged_tract()
         try:
-            results = t.tags.query(["feature-tag"])
+            results = t._tags_mgr.query(["feature-tag"])
             hashes = [r.commit_hash for r in results]
             assert feature_hash in hashes, (
                 "query_by_tags() did not traverse merge parents"
@@ -185,7 +185,7 @@ class TestQueryByTagsTraversesMergeParents:
     def test_query_finds_tags_from_both_branches(self) -> None:
         t, feature_hash, main_hash, _ = _setup_merged_tract()
         try:
-            results = t.tags.query(["feature-tag", "main-tag"])
+            results = t._tags_mgr.query(["feature-tag", "main-tag"])
             hashes = [r.commit_hash for r in results]
             assert feature_hash in hashes, "Missing feature branch tagged commit"
             assert main_hash in hashes, "Missing main branch tagged commit"
@@ -196,21 +196,21 @@ class TestQueryByTagsTraversesMergeParents:
         """Test match='all' with a commit that has multiple tags, one from merge."""
         t = Tract.open()
         try:
-            t.tags.register("alpha", "Alpha tag")
-            t.tags.register("beta", "Beta tag")
+            t.register_tag("alpha", "Alpha tag")
+            t.register_tag("beta", "Beta tag")
             t.commit(InstructionContent(text="base"))
-            t.branches.create("feature")
+            t.branch("feature")
             info = t.commit(
                 DialogueContent(role="user", text="tagged"),
                 tags=["alpha", "beta"],
             )
             tagged_hash = info.commit_hash
 
-            t.branches.switch("main")
+            t.switch("main")
             t.commit(DialogueContent(role="user", text="main"))
             t.merge("feature", no_ff=True)
 
-            results = t.tags.query(["alpha", "beta"], match="all")
+            results = t._tags_mgr.query(["alpha", "beta"], match="all")
             hashes = [r.commit_hash for r in results]
             assert tagged_hash in hashes
         finally:
@@ -231,19 +231,19 @@ class TestListTagsTraversesMergeParents:
             t.commit(InstructionContent(text="base"))
 
             # Register the tag first
-            t.tags.register("feature-tag", "A tag for feature work")
+            t.register_tag("feature-tag", "A tag for feature work")
 
-            t.branches.create("feature")
+            t.branch("feature")
             t.commit(
                 DialogueContent(role="user", text="feature"),
                 tags=["feature-tag"],
             )
 
-            t.branches.switch("main")
+            t.switch("main")
             t.commit(DialogueContent(role="user", text="main"))
             t.merge("feature", no_ff=True)
 
-            tags = t.tags.list()
+            tags = t.list_tags()
             feature_tag = next(
                 (tg for tg in tags if tg["name"] == "feature-tag"), None,
             )
@@ -269,9 +269,9 @@ class TestMergeTraversalEdgeCases:
         try:
             t.commit(InstructionContent(text="msg1"))
             t.commit(DialogueContent(role="user", text="msg2"))
-            entries = t.search.log(limit=10)
+            entries = t.log(limit=10)
             assert len(entries) == 2
-            results = t.search.find(content="msg1")
+            results = t.find(content="msg1")
             assert len(results) == 1
         finally:
             t.close()
@@ -281,14 +281,14 @@ class TestMergeTraversalEdgeCases:
         t = Tract.open()
         try:
             t.commit(InstructionContent(text="base"))
-            t.branches.create("feature")
+            t.branch("feature")
             t.commit(DialogueContent(role="user", text="feature"))
 
-            t.branches.switch("main")
+            t.switch("main")
             result = t.merge("feature")
             assert result.merge_type == "fast_forward"
 
-            entries = t.search.log(limit=50)
+            entries = t.log(limit=50)
             hashes = [e.commit_hash for e in entries]
             # No duplicates
             assert len(hashes) == len(set(hashes))
@@ -302,26 +302,26 @@ class TestMergeTraversalEdgeCases:
             t.commit(InstructionContent(text="base"))
 
             # First feature branch
-            t.branches.create("feature-a")
+            t.branch("feature-a")
             a_info = t.commit(
                 DialogueContent(role="user", text="work from branch A"),
             )
             a_hash = a_info.commit_hash
 
-            t.branches.switch("main")
+            t.switch("main")
             t.merge("feature-a", no_ff=True)
 
             # Second feature branch
-            t.branches.create("feature-b")
+            t.branch("feature-b")
             b_info = t.commit(
                 DialogueContent(role="user", text="work from branch B"),
             )
             b_hash = b_info.commit_hash
 
-            t.branches.switch("main")
+            t.switch("main")
             t.merge("feature-b", no_ff=True)
 
-            results = t.search.find(content_type="dialogue")
+            results = t.find(content_type="dialogue")
             hashes = [r.commit_hash for r in results]
             assert a_hash in hashes, "Missing commit from first merged branch"
             assert b_hash in hashes, "Missing commit from second merged branch"

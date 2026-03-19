@@ -236,7 +236,7 @@ class TestConcurrentAsyncCalls:
             t.config.configure_llm(client)
             t.system("You are helpful.")
             t.user(f"Question {i}")
-            results.append(t.llm.agenerate())
+            results.append(t._llm_mgr.agenerate())
 
         responses = await asyncio.gather(*results)
 
@@ -254,7 +254,7 @@ class TestConcurrentAsyncCalls:
             t = Tract.open()
             t.config.configure_llm(client)
             t.system("You are helpful.")
-            return await t.llm.achat(f"Question {idx}")
+            return await t._llm_mgr.achat(f"Question {idx}")
 
         responses = await asyncio.gather(*[do_chat(i) for i in range(5)])
 
@@ -275,7 +275,7 @@ class TestConcurrentAsyncCalls:
             t.assistant(f"Resp {idx}")
             t.user(f"Msg {idx} part 2")
             t.assistant(f"Resp {idx} part 2")
-            return await t.compression.acompress()
+            return await t.acompress()
 
         results = await asyncio.gather(*[do_compress(i) for i in range(3)])
 
@@ -291,7 +291,7 @@ class TestConcurrentAsyncCalls:
         t1 = Tract.open()
         t1.config.configure_llm(c1)
         t1.system("Helpful.")
-        chat_coro = t1.llm.achat("Hello")
+        chat_coro = t1._llm_mgr.achat("Hello")
 
         # agenerate
         c2 = MockLLMClient([_make_response("Generate result")])
@@ -299,7 +299,7 @@ class TestConcurrentAsyncCalls:
         t2.config.configure_llm(c2)
         t2.system("Helpful.")
         t2.user("Question")
-        gen_coro = t2.llm.agenerate()
+        gen_coro = t2._llm_mgr.agenerate()
 
         # acompress
         c3 = MockLLMClient([_make_response("Compressed")])
@@ -310,7 +310,7 @@ class TestConcurrentAsyncCalls:
         t3.assistant("B")
         t3.user("C")
         t3.assistant("D")
-        compress_coro = t3.compression.acompress()
+        compress_coro = t3.acompress()
 
         chat_r, gen_r, compress_r = await asyncio.gather(
             chat_coro, gen_coro, compress_coro
@@ -328,7 +328,7 @@ class TestConcurrentAsyncCalls:
             t = Tract.open()
             t.config.configure_llm(client)
             t.system("Agent.")
-            return await t.llm.arun(task=f"Task {idx}")
+            return await t._llm_mgr.arun(task=f"Task {idx}")
 
         results = await asyncio.gather(*[do_run(i) for i in range(3)])
 
@@ -355,8 +355,8 @@ class TestConcurrentAsyncCalls:
         t2.user("Hello")
 
         results = await asyncio.gather(
-            t1.llm.agenerate(),
-            t2.llm.agenerate(),
+            t1._llm_mgr.agenerate(),
+            t2._llm_mgr.agenerate(),
             return_exceptions=True,
         )
 
@@ -381,7 +381,7 @@ class TestCancellationHandling:
         t.system("Helpful.")
         t.user("Hello")
 
-        task = asyncio.create_task(t.llm.agenerate())
+        task = asyncio.create_task(t._llm_mgr.agenerate())
         # Let the task start
         await asyncio.sleep(0.05)
         task.cancel()
@@ -397,7 +397,7 @@ class TestCancellationHandling:
         t.config.configure_llm(client)
         t.system("Helpful.")
 
-        task = asyncio.create_task(t.llm.achat("Hello"))
+        task = asyncio.create_task(t._llm_mgr.achat("Hello"))
         await asyncio.sleep(0.05)
         task.cancel()
 
@@ -412,7 +412,7 @@ class TestCancellationHandling:
         t.config.configure_llm(client)
         t.system("Agent.")
 
-        task = asyncio.create_task(t.llm.arun(task="Do something"))
+        task = asyncio.create_task(t._llm_mgr.arun(task="Do something"))
         await asyncio.sleep(0.05)
         task.cancel()
 
@@ -431,7 +431,7 @@ class TestCancellationHandling:
         t.user("C")
         t.assistant("D")
 
-        task = asyncio.create_task(t.compression.acompress())
+        task = asyncio.create_task(t.acompress())
         await asyncio.sleep(0.05)
         task.cancel()
 
@@ -455,8 +455,8 @@ class TestCancellationHandling:
         t_fast.system("Fast.")
         t_fast.user("Go")
 
-        slow_task = asyncio.create_task(t_slow.llm.agenerate())
-        fast_task = asyncio.create_task(t_fast.llm.agenerate())
+        slow_task = asyncio.create_task(t_slow._llm_mgr.agenerate())
+        fast_task = asyncio.create_task(t_fast._llm_mgr.agenerate())
 
         # Wait for the fast one
         fast_result = await fast_task
@@ -477,7 +477,7 @@ class TestCancellationHandling:
         t.user("Hello")
 
         with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(t.llm.agenerate(), timeout=0.1)
+            await asyncio.wait_for(t._llm_mgr.agenerate(), timeout=0.1)
 
 
 # ===========================================================================
@@ -630,7 +630,7 @@ class TestAsyncErrorPropagation:
         t.user("Hello")
 
         with pytest.raises(LLMConfigError):
-            await t.llm.agenerate()
+            await t._llm_mgr.agenerate()
 
     @pytest.mark.asyncio
     async def test_achat_no_client_raises_llm_config_error(self):
@@ -641,7 +641,7 @@ class TestAsyncErrorPropagation:
         t.system("Test.")
 
         with pytest.raises(LLMConfigError):
-            await t.llm.achat("Hello")
+            await t._llm_mgr.achat("Hello")
 
     @pytest.mark.asyncio
     async def test_agenerate_llm_runtime_error_propagates(self):
@@ -653,7 +653,7 @@ class TestAsyncErrorPropagation:
         t.user("Hello")
 
         with pytest.raises(RuntimeError, match="GPU on fire"):
-            await t.llm.agenerate()
+            await t._llm_mgr.agenerate()
 
     @pytest.mark.asyncio
     async def test_achat_llm_connection_error_propagates(self):
@@ -664,7 +664,7 @@ class TestAsyncErrorPropagation:
         t.system("Test.")
 
         with pytest.raises(ConnectionError, match="Timed out"):
-            await t.llm.achat("Hello")
+            await t._llm_mgr.achat("Hello")
 
     @pytest.mark.asyncio
     async def test_agenerate_rate_limit_error_propagates(self):
@@ -678,7 +678,7 @@ class TestAsyncErrorPropagation:
         t.user("Hello")
 
         with pytest.raises(LLMRateLimitError, match="429 rate limit"):
-            await t.llm.agenerate()
+            await t._llm_mgr.agenerate()
 
     @pytest.mark.asyncio
     async def test_agenerate_auth_error_propagates(self):
@@ -692,7 +692,7 @@ class TestAsyncErrorPropagation:
         t.user("Hello")
 
         with pytest.raises(LLMAuthError, match="Bad API key"):
-            await t.llm.agenerate()
+            await t._llm_mgr.agenerate()
 
     @pytest.mark.asyncio
     async def test_arun_llm_error_returns_error_status(self):
@@ -702,7 +702,7 @@ class TestAsyncErrorPropagation:
         t.config.configure_llm(client)
         t.system("Agent.")
 
-        result = await t.llm.arun(task="Do work")
+        result = await t._llm_mgr.arun(task="Do work")
 
         assert result.status == "error"
         # Error detail goes into 'reason', not 'final_response'
@@ -720,7 +720,7 @@ class TestAsyncErrorPropagation:
 
         # resolve_commit raises CommitNotFoundError for unknown hashes
         with pytest.raises(CommitNotFoundError):
-            await t.llm.arevise("deadbeef00000000", "Improve this")
+            await t._llm_mgr.arevise("deadbeef00000000", "Improve this")
 
     @pytest.mark.asyncio
     async def test_acompress_no_client_no_content_raises(self):
@@ -731,7 +731,7 @@ class TestAsyncErrorPropagation:
         t.assistant("Resp")
 
         with pytest.raises(Exception):
-            await t.compression.acompress()
+            await t.acompress()
 
     @pytest.mark.asyncio
     async def test_acompress_on_detached_head_raises(self):
@@ -746,10 +746,10 @@ class TestAsyncErrorPropagation:
         h = t.assistant("Resp")
 
         # Detach HEAD by checking out a specific commit
-        t.branches.checkout(h.commit_hash)
+        t.checkout(h.commit_hash)
 
         with pytest.raises(DetachedHeadError):
-            await t.compression.acompress()
+            await t.acompress()
 
     @pytest.mark.asyncio
     async def test_retry_exhausted_error_in_agenerate(self):
@@ -767,7 +767,7 @@ class TestAsyncErrorPropagation:
             return (False, "not acceptable")
 
         with pytest.raises(RetryExhaustedError) as exc_info:
-            await t.llm.agenerate(validator=always_reject, max_retries=2)
+            await t._llm_mgr.agenerate(validator=always_reject, max_retries=2)
 
         assert exc_info.value.attempts == 3
         assert "not acceptable" in exc_info.value.last_diagnosis
@@ -799,7 +799,7 @@ class TestAsyncErrorPropagation:
         t.assistant("Hi.")
 
         with pytest.raises(CompressionError, match="No tool turns"):
-            await t.compression.acompress_tool_calls()
+            await t._compression_mgr.acompress_tool_calls()
 
     @pytest.mark.asyncio
     async def test_agenerate_blocked_error_propagates(self):
@@ -820,7 +820,7 @@ class TestAsyncErrorPropagation:
         t.middleware.add("pre_generate", blocker)
 
         with pytest.raises(BlockedError, match="Blocked by policy"):
-            await t.llm.agenerate()
+            await t._llm_mgr.agenerate()
 
 
 # ===========================================================================

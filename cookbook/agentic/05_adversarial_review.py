@@ -40,7 +40,7 @@ def print_conversation(t: Tract, label: str) -> None:
     """Compile current branch and print the full chat transcript."""
     print(f"\n{'=' * 60}")
     print(f"  FULL CONVERSATION: {label}")
-    print(f"  branch={t.current_branch}  commits={len(t.search.log())}")
+    print(f"  branch={t.current_branch}  commits={len(t.log())}")
     print(f"{'=' * 60}\n")
     t.compile().pprint(style="chat")
     print()
@@ -60,7 +60,7 @@ def main() -> None:
         # =============================================================
 
         for tag in ["flaw", "risk", "nitpick", "valid", "dismissed", "revised"]:
-            t.tags.register(tag)
+            t.register_tag(tag)
 
         # =============================================================
         # Stage 1: PROPOSE -- seed the original plan on main
@@ -106,7 +106,7 @@ def main() -> None:
             message="proposal: implementation plan",
         )
 
-        proposal_log = t.search.log()
+        proposal_log = t.log()
         print(f"  Seeded {len(proposal_log)} commits on main")
         print_conversation(t, "PROPOSAL (main)")
 
@@ -116,8 +116,8 @@ def main() -> None:
 
         print("=== Stage 2: CRITIQUE ===\n")
 
-        t.branches.create("critique")
-        t.branches.switch("critique")
+        t.branch("critique")
+        t.switch("critique")
         t.config.set(stage="critique", temperature=0.8)
 
         t.directive(
@@ -138,7 +138,7 @@ def main() -> None:
         def critique_completion_gate(ctx: MiddlewareContext):
             if ctx.target != "main":
                 return
-            findings = [c for c in ctx.tract.search.log() if c.tags and "flaw" in c.tags]
+            findings = [c for c in ctx.tract.log() if c.tags and "flaw" in c.tags]
             if len(findings) < findings_needed:
                 raise BlockedError(
                     "pre_transition",
@@ -166,7 +166,7 @@ def main() -> None:
             tool_names=["commit", "tag", "get_config", "status", "log"],
         )
 
-        critique_log = t.search.log()
+        critique_log = t.log()
         flaw_commits = [c for c in critique_log if c.tags and "flaw" in c.tags]
         print(f"\n  Critic: {len(critique_log)} commits, "
               f"{len(flaw_commits)} tagged as flaws")
@@ -181,21 +181,21 @@ def main() -> None:
 
         print("=== Stage 3: DEFEND ===\n")
 
-        t.branches.switch("main")
-        t.branches.create("defense")
-        t.branches.switch("defense")
+        t.switch("main")
+        t.branch("defense")
+        t.switch("defense")
         t.config.set(stage="defend", temperature=0.3)
 
         # Compile the critique branch to get the full conversation text.
         # (compare().to_json() only has structural metadata — no message content.)
-        t.branches.switch("critique")
+        t.switch("critique")
         critique_ctx = t.compile()
         critique_messages = "\n\n".join(
             f"[{m.get('role', '?')}]: {m.get('content', '')}"
             for m in critique_ctx.to_dicts()
             if m.get("role") != "system"
         )
-        t.branches.switch("defense")
+        t.switch("defense")
 
         t.system(
             "You are an independent technical reviewer. You have the original "
@@ -235,7 +235,7 @@ def main() -> None:
             tool_names=["commit", "tag", "get_config", "status", "log"],
         )
 
-        defense_log = t.search.log()
+        defense_log = t.log()
         valid = [c for c in defense_log if c.tags and "valid" in c.tags]
         dismissed = [c for c in defense_log if c.tags and "dismissed" in c.tags]
         print(f"\n  Defender verdicts: {len(valid)} valid, {len(dismissed)} dismissed")
@@ -250,7 +250,7 @@ def main() -> None:
 
         print("=== Stage 4: REVISE ===\n")
 
-        t.branches.switch("main")
+        t.switch("main")
         t.config.set(stage="revise", temperature=0.4)
 
         # Merge defense branch to bring verdicts into main
@@ -299,12 +299,12 @@ def main() -> None:
               f"{critic_result.steps + defense_result.steps + revise_result.steps}")
 
         print(f"\n  Branches:")
-        for b in t.branches.list():
+        for b in t.list_branches():
             marker = "*" if b.is_current else " "
             print(f"    {marker} {b.name}")
 
         print(f"\n  Tag summary:")
-        for entry in t.tags.list():
+        for entry in t.list_tags():
             if entry["count"] > 0:
                 print(f"    {entry['name']:12s} count={entry['count']}")
 

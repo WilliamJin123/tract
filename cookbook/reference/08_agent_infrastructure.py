@@ -128,7 +128,7 @@ def stage_transitions():
             stages_visited.append(stage_name)
 
             # Create a branch for this stage's work
-            t.branches.create(stage_name, switch=True)
+            t.branch(stage_name, switch=True)
 
             temp = t.config.get("temperature")
             strategy = t.config.get("compile_strategy")
@@ -146,7 +146,7 @@ def stage_transitions():
             t.user(f"Working on {stage_name} phase...")
             t.assistant(f"Completed {stage_name} work.")
 
-            t.branches.switch("main")
+            t.switch("main")
 
         print()
         print(f"  Stages visited: {stages_visited}")
@@ -294,7 +294,7 @@ def research_profile_walkthrough():
 
         for stage_name in research.stages:
             t.templates.apply_stage(stage_name)
-            t.branches.create(stage_name, switch=True)
+            t.branch(stage_name, switch=True)
 
             temp = t.config.get("temperature")
             strategy = t.config.get("compile_strategy")
@@ -314,7 +314,7 @@ def research_profile_walkthrough():
             print(f"  [{stage_name}] temp={temp}, strategy={strategy}, "
                   f"msgs={len(ctx.messages)}")
 
-            t.branches.switch("main")
+            t.switch("main")
 
         print()
 

@@ -109,7 +109,7 @@ def semantic_gate_transitions():
             "research log shows breadth and depth."
         )
         t.config.set(stage="research")
-        t.branches.create("synthesis", switch=False)
+        t.branch("synthesis", switch=False)
 
         # --- Register the semantic gate ---
         # Condition callback: only fire when transitioning to "synthesis".
@@ -153,7 +153,7 @@ def semantic_gate_transitions():
         )
         result.pprint()
 
-        entries = t.search.log(limit=20)
+        entries = t.log(limit=20)
         print(f"\n  Commits after Phase 1: {len(entries)}")
         for entry in entries[:5]:
             msg = (entry.message or "(no message)")[:60]
@@ -200,7 +200,7 @@ def semantic_gate_transitions():
             )
             result.pprint()
 
-            entries = t.search.log(limit=20)
+            entries = t.log(limit=20)
             print(f"\n  Total commits after Phase 2: {len(entries)}")
             for entry in entries[:8]:
                 msg = (entry.message or "(no message)")[:60]
@@ -226,10 +226,10 @@ def semantic_gate_transitions():
         print("  " + "-" * 60)
 
         print(f"  Current branch: {t.current_branch}")
-        entries = t.search.log(limit=50)
+        entries = t.log(limit=50)
         print(f"  Total commits: {len(entries)}")
         print(f"  Gates: {t.middleware.list_gates()}")
-        status = t.search.status()
+        status = t.status()
         print(f"  Tokens: {status.token_count}")
 
         print(f"\n  Compiled context:")
@@ -297,7 +297,7 @@ def semantic_maintainer():
             ),
             actions=["annotate", "compress_range", "configure", "directive", "edit", "tag"],
             model=llm.small,
-            condition=lambda ctx: len(ctx.tract.search.log()) > 5,
+            condition=lambda ctx: len(ctx.tract.log()) > 5,
         )
 
         print(f"  Branch: {t.current_branch}")
@@ -323,7 +323,7 @@ def semantic_maintainer():
         )
         result.pprint()
 
-        entries = t.search.log(limit=20)
+        entries = t.log(limit=20)
         print(f"\n  Commits after Phase 1: {len(entries)}")
         for entry in entries[:6]:
             msg = (entry.message or "(no message)")[:60]
@@ -357,11 +357,11 @@ def semantic_maintainer():
         print("  Final State")
         print("  " + "-" * 60)
 
-        entries = t.search.log(limit=30)
+        entries = t.log(limit=30)
         print(f"  Branch: {t.current_branch}")
         print(f"  Total commits: {len(entries)}")
         print(f"  Maintainers: {t.middleware.list_maintainers()}")
-        print(f"  Tokens: {t.search.status().token_count}")
+        print(f"  Tokens: {t.status().token_count}")
 
         print(f"\n  Maintainer 'context-health' last_result:")
         _print_maintainer_result(_get_maintainer_handler(t, "context-health"))

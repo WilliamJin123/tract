@@ -106,7 +106,7 @@ def section_1_eval_loop() -> None:
         )
 
         for tag in ["generation", "evaluation", "passed", "failed"]:
-            t.tags.register(tag)
+            t.register_tag(tag)
 
         final_scores = None
         passed = False
@@ -116,7 +116,7 @@ def section_1_eval_loop() -> None:
 
             # --- Generate on a dedicated branch ---
             branch_name = f"gen/{iteration}"
-            t.branches.create(branch_name, switch=True)
+            t.branch(branch_name, switch=True)
             t.config.set(temperature=0.7, stage=f"generation-{iteration}")
 
             if iteration == 1:
@@ -138,7 +138,7 @@ def section_1_eval_loop() -> None:
                 on_tool_result=log.on_tool_result,
             )
 
-            gen_log = t.search.log(limit=20)
+            gen_log = t.log(limit=20)
             artifacts = [e for e in gen_log if e.content_type == "artifact"]
             print(f"\n  Generator: {gen_result.status}, "
                   f"{len(artifacts)} artifact(s) committed")
@@ -148,7 +148,7 @@ def section_1_eval_loop() -> None:
 
             # Build eval input from the latest artifact
             if artifacts:
-                code_content = t.search.get_content(artifacts[0])
+                code_content = t.get_content(artifacts[0])
                 code_text = str(code_content) if code_content else "(no content)"
             else:
                 code_text = gen_result.final_response or "(no output)"
@@ -193,7 +193,7 @@ def section_1_eval_loop() -> None:
                     message=f"passed: iteration {iteration}",
                     tags=["passed"],
                 )
-                t.branches.switch("main")
+                t.switch("main")
                 t.merge(branch_name, strategy="theirs",
                         message=f"merge passing generation (iter {iteration})")
                 print(f"\n  PASSED at iteration {iteration} -- merged to main")
@@ -205,7 +205,7 @@ def section_1_eval_loop() -> None:
                     message=f"failed: iteration {iteration}",
                     tags=["failed"],
                 )
-                t.branches.switch("main")
+                t.switch("main")
                 # Merge the evaluation feedback so the next branch sees it
                 t.merge(branch_name, strategy="theirs",
                         message=f"merge feedback from iteration {iteration}")
@@ -219,11 +219,11 @@ def section_1_eval_loop() -> None:
         if final_scores:
             print(f"  Final scores: {final_scores}")
         print(f"  Branches created:")
-        for b in t.branches.list():
+        for b in t.list_branches():
             marker = "*" if b.is_current else " "
             print(f"    {marker} {b.name}")
 
-        s = t.search.status()
+        s = t.status()
         print(f"  Total: {s.commit_count} commits, {s.token_count} tokens")
 
         print(f"\n  Compiled context (final):")
@@ -250,7 +250,7 @@ def section_2_rationale_gate() -> None:
         )
 
         for tag in ["rationale", "implementation"]:
-            t.tags.register(tag)
+            t.register_tag(tag)
 
         # --- Gate: block implementation commits without a prior rationale ---
         def require_rationale(ctx: MiddlewareContext):
@@ -260,7 +260,7 @@ def section_2_rationale_gate() -> None:
             if "implementation" not in ctx.commit.tags:
                 return
             # Check if any rationale commit exists on this branch
-            rationales = ctx.tract.search.find(tag="rationale", limit=5)
+            rationales = ctx.tract.find(tag="rationale", limit=5)
             if not rationales:
                 raise BlockedError(
                     "pre_commit",
@@ -322,7 +322,7 @@ def section_2_rationale_gate() -> None:
         # --- Demo 3: Agent loop with the gate active ---
         print("  --- Attempt 3: let the agent handle the gate ---\n")
 
-        t.branches.create("agent-work", switch=True)
+        t.branch("agent-work", switch=True)
 
         result = t.llm.run(
             "Implement a Python function `flatten(nested: list) -> list` that "
@@ -343,7 +343,7 @@ def section_2_rationale_gate() -> None:
         t.compile().pprint(style="chat")
 
         # --- Summary ---
-        entries = t.search.log(limit=30)
+        entries = t.log(limit=30)
         rationales = [e for e in entries if e.tags and "rationale" in e.tags]
         implementations = [e for e in entries if e.tags and "implementation" in e.tags]
 
@@ -352,7 +352,7 @@ def section_2_rationale_gate() -> None:
         print(f"    Implementations committed: {len(implementations)}")
         print(f"    Gate enforced ordering:    rationale always before implementation")
 
-        s = t.search.status()
+        s = t.status()
         print(f"    Total: {s.commit_count} commits, {s.token_count} tokens")
 
     print("\n  PASSED")

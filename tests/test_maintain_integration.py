@@ -62,7 +62,7 @@ class ErrorLLMClient:
 
 def _seed_commits(t: Tract, n: int = 3, tag: str = "research") -> list[str]:
     """Add *n* commits tagged with *tag*. Returns list of commit hashes."""
-    t.tags.register(tag, f"Auto-registered for test")
+    t.register_tag(tag, f"Auto-registered for test")
     hashes = []
     for i in range(n):
         info = t.commit(
@@ -184,7 +184,7 @@ class TestMaintainerAnnotateAction:
             assert len(mock.calls) == 1
 
             # Verify the annotation was applied
-            annotations = t.annotations.get(target_hash)
+            annotations = t.get_annotation(target_hash)
             assert any(a.priority == Priority.SKIP for a in annotations)
 
 
@@ -253,7 +253,7 @@ class TestMaintainerDirectiveAction:
 
             assert len(mock.calls) == 1
             # Verify directive was created by checking log
-            entries = t.search.log(limit=1)
+            entries = t.log(limit=1)
             assert entries[0].content_type == "instruction"
 
 
@@ -296,7 +296,7 @@ class TestMaintainerSkipsDisallowed:
         """LLM returns an action type not in allowed list -- it's silently skipped."""
         with Tract.open() as t:
             _seed_commits(t, n=1)
-            hashes = [e.commit_hash for e in t.search.log(limit=1)]
+            hashes = [e.commit_hash for e in t.log(limit=1)]
 
             response = _action_response("Trying everything", [
                 {"type": "gc"},  # allowed
@@ -323,7 +323,7 @@ class TestMaintainerSkipsDisallowed:
             # (we don't have direct access to last_result through the API,
             #  but the fact that no error was raised and annotation was not
             #  applied confirms filtering worked)
-            annotations = t.annotations.get(hashes[0])
+            annotations = t.get_annotation(hashes[0])
             # Should have no SKIP annotation
             assert not any(a.priority == Priority.SKIP for a in annotations)
 

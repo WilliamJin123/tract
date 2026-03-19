@@ -243,7 +243,7 @@ class TestChatUsesOperationClient:
         t.config.configure_clients(chat=chat_client)
 
         t.system("Hello")
-        response = t.llm.chat("Question")
+        response = t.runtime.chat("Question")
 
         assert response.text == "Chat response"
         assert chat_client.call_count == 1
@@ -259,7 +259,7 @@ class TestChatUsesOperationClient:
 
         t.system("Hello")
         t.user("Question")
-        response = t.llm.generate()
+        response = t.runtime.generate()
 
         assert response.text == "Gen response"
         assert chat_client.call_count == 1
@@ -272,7 +272,7 @@ class TestChatUsesOperationClient:
         t.config.configure_llm(default)
 
         t.system("Hello")
-        response = t.llm.chat("Question")
+        response = t.runtime.chat("Question")
 
         assert response.text == "Default response"
         assert default.call_count == 1
@@ -285,7 +285,7 @@ class TestChatUsesOperationClient:
         t.config.configure_clients(chat=chat_client)
 
         t.system("Hello")
-        response = t.llm.chat("Question")
+        response = t.runtime.chat("Question")
 
         assert response.text == "Op only"
         assert chat_client.call_count == 1
@@ -316,11 +316,11 @@ class TestCompressUsesOperationClient:
         t.user("Question 2")
         t.assistant("Answer 2")
 
-        log = t.search.log(limit=10)
+        log = t.log(limit=10)
         first_hash = log[-1].commit_hash
         third_hash = log[-3].commit_hash
 
-        result = t.compression.compress(
+        result = t.compress(
             from_commit=first_hash,
             to_commit=third_hash,
             target_tokens=100,
@@ -339,11 +339,11 @@ class TestCompressUsesOperationClient:
         t.user("Question")
         t.assistant("Answer")
 
-        log = t.search.log(limit=10)
+        log = t.log(limit=10)
         first_hash = log[-1].commit_hash
         last_hash = log[0].commit_hash
 
-        result = t.compression.compress(
+        result = t.compress(
             from_commit=first_hash,
             to_commit=last_hash,
             content="Summary of everything",
@@ -406,7 +406,7 @@ class TestMixedOperationClients:
 
         # Chat uses chat_client
         t.system("Hello")
-        response = t.llm.chat("Question")
+        response = t.runtime.chat("Question")
         assert response.text == "Chat reply"
         assert chat_client.call_count == 1
         assert compress_client.call_count == 0
@@ -423,12 +423,12 @@ class TestMixedOperationClients:
 
         # Chat uses operation client
         t.system("Hello")
-        response = t.llm.chat("Question 1")
+        response = t.runtime.chat("Question 1")
         assert response.text == "Chat only"
 
         # Generate (also uses "chat" operation) uses operation client too
         t.user("Question 2")
-        response = t.llm.generate()
+        response = t.runtime.generate()
         assert response.text == "Chat only"
         assert chat_client.call_count == 2
         assert default.call_count == 0

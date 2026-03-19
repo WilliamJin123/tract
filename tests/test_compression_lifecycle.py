@@ -55,12 +55,12 @@ class TestCompressReorderGCLifecycle:
             info = t.commit(DialogueContent(role="user", text=f"Message {i+1}"))
             hashes.append(info.commit_hash)
 
-        t.annotations.set(hashes[2], Priority.PINNED, reason="important")
+        t.annotate(hashes[2], Priority.PINNED, reason="important")
 
         # 2. Compress (creates summary commits, makes originals unreachable)
         mock = MockLLMClient(responses=["Summary group 1", "Summary group 2"])
         t.config.configure_llm(mock)
-        compress_result = t.compression.compress()
+        compress_result = t.compress()
 
         assert isinstance(compress_result, CompressResult)
         assert len(compress_result.source_commits) == 4  # 5 - 1 pinned
@@ -82,7 +82,7 @@ class TestCompressReorderGCLifecycle:
         assert reordered.messages[0].content == compiled.messages[-1].content
 
         # 5. GC to clean up unreachable original commits
-        gc_result = t.compression.gc(orphan_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0)
 
         assert isinstance(gc_result, GCResult)
         assert gc_result.commits_removed > 0  # Original commits removed
@@ -106,7 +106,7 @@ class TestCompressReorderGCLifecycle:
         t.config.configure_llm(mock)
 
         # First compression
-        result1 = t.compression.compress()
+        result1 = t.compress()
         assert isinstance(result1, CompressResult)
 
         # Add more commits
@@ -116,12 +116,12 @@ class TestCompressReorderGCLifecycle:
         # Second compression (compresses new commits + first summary)
         mock2 = MockLLMClient(responses=["Double summary"])
         t.config.configure_llm(mock2)
-        result2 = t.compression.compress()
+        result2 = t.compress()
         assert isinstance(result2, CompressResult)
 
         # GC should clean up originals from both rounds
         # archive_retention_days=0 needed because compressed source commits are archives
-        gc_result = t.compression.gc(orphan_retention_days=0, archive_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0, archive_retention_days=0)
         assert gc_result.commits_removed > 0
 
         # Verify compilation still works
@@ -129,7 +129,7 @@ class TestCompressReorderGCLifecycle:
         assert compiled.commit_count >= 1
 
         # Second GC should find nothing
-        gc_result2 = t.compression.gc(orphan_retention_days=0, archive_retention_days=0)
+        gc_result2 = t.gc(orphan_retention_days=0, archive_retention_days=0)
         assert gc_result2.commits_removed == 0
 
 
@@ -152,24 +152,24 @@ class TestCompressMetadataLifecycle:
             )
 
         # Pin one commit
-        log = t.search.log(limit=10)
+        log = t.log(limit=10)
         pinned_hash = log[1].commit_hash  # pin second-most-recent
-        t.annotations.set(pinned_hash, Priority.PINNED, reason="important data")
+        t.annotate(pinned_hash, Priority.PINNED, reason="important data")
 
         # Get the pinned content text before compression
-        pinned_content = t.search.get_content(t.search.get_commit(pinned_hash))
+        pinned_content = t.get_content(t.get_commit(pinned_hash))
 
         mock = MockLLMClient(responses=["Summary of non-pinned messages."])
         t.config.configure_llm(mock)
 
-        result = t.compression.compress()
+        result = t.compress()
         assert pinned_hash in result.preserved_commits
 
         # Compile before GC to record state
         compiled_before_gc = t.compile()
 
         # GC the originals
-        gc_result = t.compression.gc(orphan_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0)
 
         # After GC, compile should still work and include the pinned content
         compiled_after_gc = t.compile()
@@ -187,11 +187,11 @@ class TestCompressMetadataLifecycle:
         mock = MockLLMClient(responses=["Summary text."])
         t.config.configure_llm(mock)
 
-        result = t.compression.compress()
+        result = t.compress()
 
         # Check summary commits exist and are reachable
         for summary_hash in result.summary_commits:
-            ci = t.search.get_commit(summary_hash)
+            ci = t.get_commit(summary_hash)
             assert ci is not None
 
 
@@ -211,7 +211,7 @@ class TestMultipleCompressions:
 
         mock1 = MockLLMClient(responses=["Round 1 summary."])
         t.config.configure_llm(mock1)
-        result1 = t.compression.compress()
+        result1 = t.compress()
         compiled1 = t.compile()
 
         # Round 2: add 4 more
@@ -220,7 +220,7 @@ class TestMultipleCompressions:
 
         mock2 = MockLLMClient(responses=["Combined summary of rounds 1 and 2."])
         t.config.configure_llm(mock2)
-        result2 = t.compression.compress()
+        result2 = t.compress()
         compiled2 = t.compile()
 
         # After second compression, we should have fewer commits
@@ -237,7 +237,7 @@ class TestMultipleCompressions:
             t.commit(DialogueContent(role="user", text=f"Msg {i+1}"))
 
         # First: manual compression
-        result1 = t.compression.compress(content="Manual summary of first 4 messages.")
+        result1 = t.compress(content="Manual summary of first 4 messages.")
         compiled1 = t.compile()
 
         # Add more commits
@@ -247,7 +247,7 @@ class TestMultipleCompressions:
         # Second: LLM compression
         mock = MockLLMClient(responses=["Full summary including manual and new."])
         t.config.configure_llm(mock)
-        result2 = t.compression.compress()
+        result2 = t.compress()
         compiled2 = t.compile()
 
         assert compiled2.commit_count >= 1
@@ -266,7 +266,7 @@ class TestCompressWithBranches:
         t.commit(DialogueContent(role="user", text="Shared message 2"))
 
         # Create feature branch
-        t.branches.create("feature")
+        t.branch("feature")
 
         # Add commits on feature
         t.commit(DialogueContent(role="user", text="Feature msg 1"))
@@ -276,11 +276,11 @@ class TestCompressWithBranches:
         # Compress on feature branch
         mock = MockLLMClient(responses=["Feature summary."])
         t.config.configure_llm(mock)
-        result = t.compression.compress()
+        result = t.compress()
         feature_compiled = t.compile()
 
         # Switch back to main
-        t.branches.switch("main")
+        t.switch("main")
         main_compiled = t.compile()
 
         # Main should still have the original shared commits
@@ -304,7 +304,7 @@ class TestCompressWithBranches:
         main_head_before = t.head
 
         # Feature branch
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="Feature msg 1"))
         t.commit(DialogueContent(role="user", text="Feature msg 2"))
         t.commit(DialogueContent(role="user", text="Feature msg 3"))
@@ -312,10 +312,10 @@ class TestCompressWithBranches:
         # Compress feature
         mock = MockLLMClient(responses=["Feature branch summary."])
         t.config.configure_llm(mock)
-        t.compression.compress()
+        t.compress()
 
         # Switch to main and merge
-        t.branches.switch("main")
+        t.switch("main")
         merge_result = t.merge("feature")
 
         # After merge, main should include the compressed feature content
@@ -366,7 +366,7 @@ class TestCompressToolCallsThenRange:
         )
         t.config.configure_llm(mock1)
 
-        result1 = t.compression.compress_tool_calls()
+        result1 = t._compression_mgr.compress_tool_calls()
         assert isinstance(result1, ToolCompactResult)
         assert len(result1.edit_commits) == 2
 
@@ -378,7 +378,7 @@ class TestCompressToolCallsThenRange:
         # Step 2: Range-compress the whole conversation
         mock2 = MockLLMClient(responses=["Full conversation summary."])
         t.config.configure_llm(mock2)
-        result2 = t.compression.compress()
+        result2 = t.compress()
         assert isinstance(result2, CompressResult)
 
         # Should still compile cleanly
@@ -394,7 +394,7 @@ class TestCompressToolCallsThenRange:
         )
         t.config.configure_llm(mock)
 
-        t.compression.compress_tool_calls()
+        t._compression_mgr.compress_tool_calls()
 
         # Tool turns should still be discoverable
         turns = t.tools.find_turns()
@@ -413,7 +413,7 @@ class TestCompressEdgeCases:
 
         mock = MockLLMClient(responses=["Summary of single message."])
         t.config.configure_llm(mock)
-        result = t.compression.compress()
+        result = t.compress()
         assert isinstance(result, CompressResult)
 
     def test_compress_with_all_pinned_raises(self):
@@ -427,14 +427,14 @@ class TestCompressEdgeCases:
             hashes.append(info.commit_hash)
 
         for h in hashes:
-            t.annotations.set(h, Priority.PINNED, reason="all important")
+            t.annotate(h, Priority.PINNED, reason="all important")
 
         mock = MockLLMClient(responses=["Summary."])
         t.config.configure_llm(mock)
 
         # When all commits are pinned, nothing to compress
         with pytest.raises(CompressionError, match="pinned or skipped"):
-            t.compression.compress()
+            t.compress()
 
     def test_gc_with_no_compressions(self):
         """GC on a tract with no compressions should remove nothing."""
@@ -442,7 +442,7 @@ class TestCompressEdgeCases:
         for i in range(3):
             t.commit(DialogueContent(role="user", text=f"Msg {i+1}"))
 
-        gc_result = t.compression.gc(orphan_retention_days=0)
+        gc_result = t.gc(orphan_retention_days=0)
         assert isinstance(gc_result, GCResult)
         assert gc_result.commits_removed == 0
 
@@ -455,8 +455,8 @@ class TestCompressEdgeCases:
         mock = MockLLMClient(responses=["Summary of all messages."])
         t.config.configure_llm(mock)
 
-        t.compression.compress()
-        t.compression.gc(orphan_retention_days=0)
+        t.compress()
+        t.gc(orphan_retention_days=0)
 
         compiled = t.compile()
         messages = compiled.to_dicts()

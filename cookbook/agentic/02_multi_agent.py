@@ -150,7 +150,7 @@ def main() -> None:
     for tag_name in ["pro", "con", "risk", "opportunity",
                      "performance", "devex", "business",
                      "consensus", "disagreement", "recommendation"]:
-        coordinator.tags.register(tag_name)
+        coordinator.register_tag(tag_name)
 
     print("Coordinator created, 10 research tags registered")
 
@@ -180,10 +180,10 @@ def main() -> None:
         analyst = entry["analyst"]
 
         response = child.llm.chat(analyst["prompt"], max_tokens=600)
-        child.tags.add(response.commit_info.commit_hash, analyst["name"])
+        child.tag(response.commit_info.commit_hash, analyst["name"])
 
         preview = (response.text or "(no response)")[:200].replace("\n", "\n    ")
-        status = child.search.status()
+        status = child.status()
         print(f"\n  {analyst['title']}: {status.token_count} tokens")
         print(f"    {preview}...")
 
@@ -210,7 +210,7 @@ def main() -> None:
         collapse_results[name] = result
 
         if result.parent_commit_hash:
-            coordinator.tags.add(result.parent_commit_hash, analyst["name"])
+            coordinator.tag(result.parent_commit_hash, analyst["name"])
 
         print(f"  {analyst['title']}: "
               f"{result.source_tokens} -> {result.summary_tokens} tokens")
@@ -234,12 +234,12 @@ def main() -> None:
         print(f"    {line}")
 
     # 6. Tag the recommendation
-    coordinator.tags.add(response.commit_info.commit_hash, "recommendation")
-    coordinator.tags.add(response.commit_info.commit_hash, "consensus")
+    coordinator.tag(response.commit_info.commit_hash, "recommendation")
+    coordinator.tag(response.commit_info.commit_hash, "consensus")
 
     # Final state
     print("\n--- Final State ---")
-    status = coordinator.search.status()
+    status = coordinator.status()
     print(f"  Coordinator: {status.token_count} tokens, "
           f"{status.commit_count} commits")
 
@@ -247,7 +247,7 @@ def main() -> None:
     print(f"  Session tracts: {len(tracts)}")
 
     print(f"\n  Coordinator log (last 8):")
-    for ci in coordinator.search.log()[-8:]:
+    for ci in coordinator.log()[-8:]:
         tags_str = f" [{', '.join(ci.tags)}]" if ci.tags else ""
         msg = (ci.message or "")[:45]
         print(f"    {ci.commit_hash[:8]}  {ci.content_type:12s}{tags_str}  {msg}")

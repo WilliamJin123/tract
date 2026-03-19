@@ -8,7 +8,7 @@ Sections:
   1. Graveyard Pattern -- tombstones on dead branches, query before retrying
   2. Graveyard-Aware Agent Loop -- pre_commit middleware auto-warns on repeats
 
-Demonstrates: t.tags.register(), t.search.find(tag=...), t.branches.create/switch(),
+Demonstrates: t.register_tag(), t.find(tag=...), t.branches.create/switch(),
               t.commit() with metadata, t.middleware.add(), t.directive(),
               t.llm.run(), t.llm.chat(), pre_commit middleware
 
@@ -44,8 +44,8 @@ def section_1_graveyard_pattern() -> None:
     log = StepLogger()
 
     with Tract.open(**llm.tract_kwargs(MODEL_ID), auto_message=llm.small) as t:
-        t.tags.register("dead")
-        t.tags.register("solution")
+        t.register_tag("dead")
+        t.register_tag("solution")
         t.system("You are a systems architect designing a distributed rate limiter.")
 
         t.commit(
@@ -57,7 +57,7 @@ def section_1_graveyard_pattern() -> None:
 
         # --- Approach A: token bucket with single Redis ---
         print("  --- Approach A: Token Bucket + Single Redis ---\n")
-        t.branches.create("approach/token-bucket-redis", switch=True)
+        t.branch("approach/token-bucket-redis", switch=True)
         t.llm.run(
             "Design a token bucket rate limiter backed by a single Redis node. "
             "Consider the multi-region requirement. Commit your design.",
@@ -83,22 +83,22 @@ def section_1_graveyard_pattern() -> None:
                       "keywords": "redis, token_bucket, single_node, cross_region"},
         )
         print(f"\n  Tombstone committed on: {t.current_branch}")
-        t.branches.switch("main")
+        t.switch("main")
 
         # --- Query graveyard before Approach B ---
         print("\n  --- Querying Graveyard ---")
         graveyard: list[str] = []
-        for b in t.branches.list():
+        for b in t.list_branches():
             if not b.name.startswith("approach/"):
                 continue
-            for ts in t.search.find(tag="dead", branch=b.name, limit=10):
+            for ts in t.find(tag="dead", branch=b.name, limit=10):
                 approach = (ts.metadata or {}).get("approach", "?")
                 graveyard.append(f"- [{approach}] {ts.message}")
                 print(f"    {graveyard[-1]}")
 
         # --- Approach B: avoids graveyard pitfalls ---
         print("\n  --- Approach B: Sliding Window + Local Counters ---\n")
-        t.branches.create("approach/sliding-window-local", switch=True)
+        t.branch("approach/sliding-window-local", switch=True)
         t.directive("graveyard-context",
                     "GRAVEYARD -- these approaches FAILED:\n"
                     + "\n".join(graveyard)
@@ -111,13 +111,13 @@ def section_1_graveyard_pattern() -> None:
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )
 
-        top = t.search.log(limit=1)
+        top = t.log(limit=1)
         if top:
             t.tags.apply(top[0].commit_hash, ["solution"])
-        t.branches.switch("main")
+        t.switch("main")
         t.merge("approach/sliding-window-local", message="merge: sliding window")
 
-        print(f"\n  Branches: {[b.name for b in t.branches.list()]}")
+        print(f"\n  Branches: {[b.name for b in t.list_branches()]}")
         print(f"  Context: {t.compile().token_count} tokens")
         t.compile().pprint(style="chat")
 
@@ -136,7 +136,7 @@ def section_2_graveyard_middleware() -> None:
     warnings_fired: list[str] = []
 
     with Tract.open(**llm.tract_kwargs(MODEL_ID), auto_message=llm.small) as t:
-        t.tags.register("dead")
+        t.register_tag("dead")
         t.system("You are researching database connection pooling strategies.")
 
         # Seed tombstones on dead branches (simulating prior failed work)
@@ -157,19 +157,19 @@ def section_2_graveyard_middleware() -> None:
              "global_pool, shared, noisy_neighbor"),
         ]
         for branch, text, msg, approach, reason, kw in tombstones:
-            t.branches.create(branch, switch=True)
+            t.branch(branch, switch=True)
             t.commit(content={"content_type": "freeform", "text": text},
                      message=msg, tags=["dead"],
                      metadata={"tombstone": True, "approach": approach,
                                "reason": reason, "keywords": kw})
-            t.branches.switch("main")
+            t.switch("main")
 
         # Build keyword index from tombstones
         tomb_index: list[dict] = []
-        for b in t.branches.list():
+        for b in t.list_branches():
             if not b.name.startswith("dead/"):
                 continue
-            for ts in t.search.find(tag="dead", branch=b.name, limit=10):
+            for ts in t.find(tag="dead", branch=b.name, limit=10):
                 meta = ts.metadata or {}
                 tomb_index.append({
                     "approach": meta.get("approach", "?"),
@@ -219,7 +219,7 @@ def section_2_graveyard_middleware() -> None:
             )
             print(f"\n  Phase 2: {r2.status}")
 
-        print(f"\n  Main: {len(t.search.log(limit=20))} commits, "
+        print(f"\n  Main: {len(t.log(limit=20))} commits, "
               f"{t.compile().token_count} tokens")
         for i, w in enumerate(warnings_fired, 1):
             print(f"  Warning {i}: {w}")

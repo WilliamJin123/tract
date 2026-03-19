@@ -113,7 +113,7 @@ def pattern_2_quality_gate():
         workers = {}
         for approach_name, description in approaches.items():
             branch_name = f"approach-{approach_name}"
-            supervisor.branches.create(branch_name, switch=False)
+            supervisor.branch(branch_name, switch=False)
 
             worker = s.spawn(
                 supervisor,

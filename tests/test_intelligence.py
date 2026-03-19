@@ -16,6 +16,8 @@ from tract.intelligence import (
     _build_intelligence_manifest,
     _parse_cherry_pick_response,
     _parse_dedup_response,
+    acherry_pick,
+    adeduplicate,
     cherry_pick,
     deduplicate,
 )
@@ -377,7 +379,7 @@ class TestDeduplicate:
             assert result.actions_taken == 1
 
             # Verify the older commit (hash[0]) got SKIP
-            log_entries = t.search.log(limit=50)
+            log_entries = t.log(limit=50)
             for entry in log_entries:
                 if entry.commit_hash == hashes[0]:
                     assert entry.effective_priority == "skip"
@@ -446,7 +448,7 @@ class TestDeduplicate:
 
 class TestTractAPIIntegration:
     def test_t_cherry_pick(self):
-        """t.intelligence.cherry_pick() delegates to intelligence.cherry_pick."""
+        """cherry_pick(t, ) delegates to intelligence.cherry_pick."""
         with Tract.open() as t:
             hashes = _seed_commits(t, 3)
             h0_short = hashes[0][:8]
@@ -456,14 +458,14 @@ class TestTractAPIIntegration:
             }))
             t.config.configure_llm(mock)
 
-            result = t.intelligence.cherry_pick("Find something", limit=5)
+            result = cherry_pick(t, "Find something", limit=5)
 
             assert isinstance(result, CherryPickResult)
             assert len(result.selected_hashes) == 1
             assert hashes[0] in result.selected_hashes
 
     def test_t_deduplicate(self):
-        """t.intelligence.deduplicate() delegates to intelligence.deduplicate."""
+        """deduplicate(t) delegates to intelligence.deduplicate."""
         with Tract.open() as t:
             _seed_commits(t, 3)
             mock = MockLLMClient(json.dumps({
@@ -472,13 +474,13 @@ class TestTractAPIIntegration:
             }))
             t.config.configure_llm(mock)
 
-            result = t.intelligence.deduplicate()
+            result = deduplicate(t)
 
             assert isinstance(result, DedupResult)
             assert result.duplicate_groups == ()
 
     def test_t_cherry_pick_passes_llm_kwargs(self):
-        """t.intelligence.cherry_pick() passes model/temperature/max_tokens to LLM."""
+        """cherry_pick(t, ) passes model/temperature/max_tokens to LLM."""
         with Tract.open() as t:
             _seed_commits(t, 2)
             mock = MockLLMClient(json.dumps({
@@ -487,7 +489,7 @@ class TestTractAPIIntegration:
             }))
             t.config.configure_llm(mock)
 
-            t.intelligence.cherry_pick("query", model="gpt-4o", temperature=0.5, max_tokens=500)
+            cherry_pick(t, "query", model="gpt-4o", temperature=0.5, max_tokens=500)
 
             assert len(mock.calls) == 1
             _, kwargs = mock.calls[0]
@@ -496,7 +498,7 @@ class TestTractAPIIntegration:
             assert kwargs.get("max_tokens") == 500
 
     def test_t_deduplicate_passes_llm_kwargs(self):
-        """t.intelligence.deduplicate() passes model/temperature/max_tokens to LLM."""
+        """deduplicate(t) passes model/temperature/max_tokens to LLM."""
         with Tract.open() as t:
             _seed_commits(t, 2)
             mock = MockLLMClient(json.dumps({
@@ -505,7 +507,7 @@ class TestTractAPIIntegration:
             }))
             t.config.configure_llm(mock)
 
-            t.intelligence.deduplicate(model="gpt-4o-mini", temperature=0.2)
+            deduplicate(t, model="gpt-4o-mini", temperature=0.2)
 
             assert len(mock.calls) == 1
             _, kwargs = mock.calls[0]
@@ -517,14 +519,14 @@ class TestTractAPIIntegration:
         t = Tract.open()
         t.close()
         with pytest.raises(Exception):  # ClosedError
-            t.intelligence.cherry_pick("query")
+            cherry_pick(t, "query")
 
     def test_t_deduplicate_closed_tract_raises(self):
         """deduplicate on a closed tract raises ClosedError."""
         t = Tract.open()
         t.close()
         with pytest.raises(Exception):  # ClosedError
-            t.intelligence.deduplicate()
+            deduplicate(t)
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +546,7 @@ class TestAsyncIntelligence:
             }))
             t.config.configure_llm(mock)
 
-            result = await t.intelligence.acherry_pick("query", limit=2)
+            result = await acherry_pick(t, "query", limit=2)
 
             assert isinstance(result, CherryPickResult)
             assert hashes[0] in result.selected_hashes
@@ -560,7 +562,7 @@ class TestAsyncIntelligence:
             }))
             t.config.configure_llm(mock)
 
-            result = await t.intelligence.adeduplicate()
+            result = await adeduplicate(t)
 
             assert isinstance(result, DedupResult)
             assert result.duplicate_groups == ()
@@ -574,7 +576,7 @@ class TestEdgeCases:
     def test_cherry_pick_with_tags(self):
         """cherry_pick works correctly with tagged commits."""
         with Tract.open() as t:
-            t.tags.register("important", "Important tag")
+            t.register_tag("important", "Important tag")
             info = t.commit(
                 {"content_type": "dialogue", "role": "user", "text": "Tagged content"},
                 tags=["important"],

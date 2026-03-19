@@ -71,7 +71,7 @@ class TestSendMessage:
         )
 
         # Find the message in child's log
-        log = child.search.log(limit=5)
+        log = child.log(limit=5)
         # The most recent commit should be the agent message
         found = False
         for entry in log:
@@ -94,9 +94,9 @@ class TestSendMessage:
         )
 
         # Check that the commit has the expected tags
-        log = child.search.log(limit=1)
+        log = child.log(limit=1)
         assert len(log) == 1
-        tags = child.tags.get(log[0].commit_hash)
+        tags = child.get_tags(log[0].commit_hash)
         assert "agent_message" in tags
         assert "urgent" in tags
         assert "priority" in tags
@@ -247,29 +247,29 @@ class TestContextBudget:
 
 
 class TestTractLevelAPI:
-    """Tests for Tract.send_to_child()."""
+    """Tests for Session.send_message()."""
 
-    def test_tract_send_to_child(self, tmp_path):
-        """t.spawn.send_to_child() creates message in child tract."""
+    def test_session_send_to_child(self, tmp_path):
+        """session.send_message() creates message in child tract."""
         session, parent = _create_session_with_parent(tmp_path)
         child = session.spawn(parent, purpose="send test")
 
-        commit_hash = parent.spawn.send_to_child(
-            child.tract_id, "Instructions for you."
+        commit_hash = session.send_message(
+            parent.tract_id, child.tract_id, "Instructions for you."
         )
         assert commit_hash is not None
 
         # Verify the message is in child via find()
-        messages = child.search.find(tag="agent_message")
+        messages = child.find(tag="agent_message")
         assert len(messages) == 1
         assert messages[0].metadata["from_tract_id"] == parent.tract_id
 
-    def test_tract_send_to_child_no_session_raises(self, tmp_path):
-        """t.spawn.send_to_child() without session raises SessionError."""
+    def test_send_message_requires_session(self, tmp_path):
+        """Sending a message requires a valid session with tracts."""
         from tract import Tract
 
         t = Tract.open()
         t.commit(InstructionContent(text="standalone"))
-        with pytest.raises(SessionError):
-            t.spawn.send_to_child("some-child-id", "hello")
+        # Without a session, there is no send_to_child on the tract
+        assert not hasattr(t, "send_to_child")
         t.close()

@@ -182,7 +182,7 @@ def _build_rebase_manifest(tract: Tract) -> str:
     current = tract.current_branch or "(detached)"
     head = tract.head
     head_short = head[:8] if head else "(empty)"
-    branches = tract.branches.list()
+    branches = tract.list_branches()
 
     lines = [
         "=== BRANCH STATE ===",
@@ -195,7 +195,7 @@ def _build_rebase_manifest(tract: Tract) -> str:
         bh = b.commit_hash[:8] if b.commit_hash else "(empty)"
         lines.append(f"  {b.name}{marker} -> {bh}")
 
-    entries = tract.search.log(limit=10)
+    entries = tract.log(limit=10)
     if entries:
         lines.append("")
         lines.append("RECENT COMMITS (current branch):")
@@ -213,7 +213,7 @@ def _build_branch_manifest(tract: Tract, context: str = "") -> str:
     current = tract.current_branch or "(detached)"
     head = tract.head
     head_short = head[:8] if head else "(empty)"
-    branches = tract.branches.list()
+    branches = tract.list_branches()
 
     lines = [
         "=== BRANCH STATE ===",
@@ -225,7 +225,7 @@ def _build_branch_manifest(tract: Tract, context: str = "") -> str:
         marker = " *" if b.is_current else ""
         lines.append(f"  {b.name}{marker}")
 
-    entries = tract.search.log(limit=10)
+    entries = tract.log(limit=10)
     if entries:
         lines.append("")
         lines.append("RECENT COMMITS:")
@@ -236,14 +236,14 @@ def _build_branch_manifest(tract: Tract, context: str = "") -> str:
             )
 
     try:
-        directive_commits = tract.search.find(
+        directive_commits = tract.find(
             content_type="instruction", limit=20,
         )
         if directive_commits:
             lines.append("")
             lines.append("ACTIVE DIRECTIVES:")
             for dc in directive_commits:
-                text = tract.search.get_content(dc) or ""
+                text = tract.get_content(dc) or ""
                 label = dc.message or dc.commit_hash[:8]
                 lines.append(f"  {label}: {str(text)[:80]}...")
     except Exception:
@@ -420,7 +420,7 @@ def _auto_split_core(
     )
 
     try:
-        content = tract.search.get_content(commit_hash)
+        content = tract.get_content(commit_hash)
         if content is None:
             return fail_result
         content_str = (
@@ -474,7 +474,7 @@ async def _aauto_split_core(
     )
 
     try:
-        content = tract.search.get_content(commit_hash)
+        content = tract.get_content(commit_hash)
         if content is None:
             return fail_result
         content_str = (
@@ -610,7 +610,7 @@ def _execute_split(
         )
 
     try:
-        tract.annotations.set(
+        tract.annotate(
             original_hash, Priority.SKIP,
             reason="Split into smaller commits",
         )
@@ -691,7 +691,7 @@ def _auto_rebase_core(
 ) -> AutoRebaseResult:
     """Core auto_rebase implementation using Judgment."""
     manifest = _build_rebase_manifest(tract)
-    entries = tract.search.log(limit=10)
+    entries = tract.log(limit=10)
     consulted = tuple(e.commit_hash for e in entries) if entries else ()
     prompt_override = tract.config.get_prompt("rebase")
 
@@ -719,7 +719,7 @@ async def _aauto_rebase_core(
 ) -> AutoRebaseResult:
     """Async core auto_rebase implementation using Judgment."""
     manifest = _build_rebase_manifest(tract)
-    entries = tract.search.log(limit=10)
+    entries = tract.log(limit=10)
     consulted = tuple(e.commit_hash for e in entries) if entries else ()
     prompt_override = tract.config.get_prompt("rebase")
 
@@ -866,7 +866,7 @@ def _auto_branch_core(
 ) -> AutoBranchResult:
     """Core auto_branch implementation using Judgment."""
     manifest = _build_branch_manifest(tract, context)
-    entries = tract.search.log(limit=10)
+    entries = tract.log(limit=10)
     consulted = tuple(e.commit_hash for e in entries) if entries else ()
     prompt_override = tract.config.get_prompt("branch")
 
@@ -895,7 +895,7 @@ async def _aauto_branch_core(
 ) -> AutoBranchResult:
     """Async core auto_branch implementation using Judgment."""
     manifest = _build_branch_manifest(tract, context)
-    entries = tract.search.log(limit=10)
+    entries = tract.log(limit=10)
     consulted = tuple(e.commit_hash for e in entries) if entries else ()
     prompt_override = tract.config.get_prompt("branch")
 
@@ -960,7 +960,7 @@ def _finalize_branch(
         )
 
     try:
-        tract.branches.create(branch_name)
+        tract.branch(branch_name)
         return AutoBranchResult(
             branched=True,
             branch_name=branch_name,

@@ -100,7 +100,7 @@ class TestDirectiveAPI:
         """directive() passes tags to the commit."""
         with Tract.open() as t:
             # Register tags first (strict mode is default)
-            t.tags.register("policy", "Policy directives")
+            t.register_tag("policy", "Policy directives")
             info = t.directive("safety", "Never share secrets", tags=["policy"])
             # If tags are stored, the commit should have them
             assert info is not None
@@ -246,7 +246,7 @@ class TestDirectiveBranchOverride:
             t.user("Setup")
 
             # Create a feature branch and switch to it
-            t.branches.create("feature", switch=True)
+            t.branch("feature", switch=True)
 
             # Override on feature branch
             t.directive("protocol", "Feature protocol")
@@ -262,11 +262,11 @@ class TestDirectiveBranchOverride:
             t.directive("protocol", "Main protocol")
             t.user("Setup")
 
-            t.branches.create("feature", switch=True)
+            t.branch("feature", switch=True)
             t.directive("protocol", "Feature protocol")
 
             # Switch back to main
-            t.branches.switch("main")
+            t.switch("main")
             compiled = t.compile()
             texts = [m.content for m in compiled.messages]
             assert any("Main protocol" in txt for txt in texts)

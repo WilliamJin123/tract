@@ -74,7 +74,7 @@ class TestPrefixMatching:
         t = make_tract()
         hashes = populate_tract(t, 1)
         prefix = hashes[0][:prefix_len]
-        resolved = t.branches.resolve(prefix)
+        resolved = t.resolve(prefix)
         assert resolved == hashes[0]
 
     def test_resolve_prefix_too_short(self):
@@ -82,13 +82,13 @@ class TestPrefixMatching:
         t = make_tract()
         populate_tract(t, 1)
         with pytest.raises(CommitNotFoundError):
-            t.branches.resolve("abc")
+            t.resolve("abc")
 
     def test_resolve_by_branch_name(self):
         """Branch name resolves to its commit."""
         t = make_tract()
         hashes = populate_tract(t, 2)
-        resolved = t.branches.resolve("main")
+        resolved = t.resolve("main")
         assert resolved == hashes[-1]
 
     def test_resolve_nonexistent(self):
@@ -96,7 +96,7 @@ class TestPrefixMatching:
         t = make_tract()
         populate_tract(t, 1)
         with pytest.raises(CommitNotFoundError):
-            t.branches.resolve("nonexistent_branch")
+            t.resolve("nonexistent_branch")
 
     def test_prefix_ambiguous_error(self):
         """AmbiguousPrefixError propagates through resolve_commit."""
@@ -113,7 +113,7 @@ class TestPrefixMatching:
             side_effect=AmbiguousPrefixError("abcd", ["abcd1111", "abcd2222"]),
         ):
             with pytest.raises(AmbiguousPrefixError) as exc_info:
-                t.branches.resolve("abcdef")  # 6-char prefix triggers step 3
+                t.resolve("abcdef")  # 6-char prefix triggers step 3
             assert exc_info.value.prefix == "abcd"
             assert len(exc_info.value.candidates) == 2
 
@@ -137,7 +137,7 @@ class TestReset:
     def test_reset_moves_head(self, mode):
         t = make_tract()
         hashes = populate_tract(t, 3)
-        result = t.branches.reset(hashes[0], mode=mode)
+        result = t.reset(hashes[0], mode=mode)
         assert result == hashes[0]
         assert t.head == hashes[0]
 
@@ -147,7 +147,7 @@ class TestReset:
         hashes = populate_tract(t, 3)
         old_head = t.head
 
-        t.branches.reset(hashes[0])
+        t.reset(hashes[0])
         orig = t._ref_repo.get_ref(t.tract_id, "ORIG_HEAD")
         assert orig == old_head
 
@@ -156,7 +156,7 @@ class TestReset:
         t = make_tract()
         hashes = populate_tract(t, 3)
 
-        t.branches.reset(hashes[0])
+        t.reset(hashes[0])
         assert not t.is_detached
         assert t.current_branch == "main"
 
@@ -166,7 +166,7 @@ class TestReset:
         hashes = populate_tract(t, 3)
 
         prefix = hashes[0][:8]
-        result = t.branches.reset(prefix)
+        result = t.reset(prefix)
         assert result == hashes[0]
         assert t.head == hashes[0]
 
@@ -175,7 +175,7 @@ class TestReset:
         t = make_tract()
         hashes = populate_tract(t, 3)
 
-        t.branches.reset(hashes[0])
+        t.reset(hashes[0])
         info = t.commit(DialogueContent(role="user", text="After reset"))
         assert info.parent_hash == hashes[0]
 
@@ -192,7 +192,7 @@ class TestCheckout:
         t = make_tract()
         hashes = populate_tract(t, 3)
 
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         assert t.is_detached
         assert t.current_branch is None
         assert t.head == hashes[0]
@@ -203,11 +203,11 @@ class TestCheckout:
         hashes = populate_tract(t, 3)
 
         # Detach first
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         assert t.is_detached
 
         # Re-attach to main
-        t.branches.checkout("main")
+        t.checkout("main")
         assert not t.is_detached
         assert t.current_branch == "main"
         assert t.head == hashes[-1]
@@ -219,11 +219,11 @@ class TestCheckout:
         original_head = t.head
 
         # Checkout an old commit
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         assert t.head == hashes[0]
 
         # Return via "-"
-        t.branches.checkout("-")
+        t.checkout("-")
         assert t.head == original_head
 
     def test_checkout_dash_no_prev_head_raises(self):
@@ -231,7 +231,7 @@ class TestCheckout:
         t = make_tract()
         populate_tract(t, 1)
         with pytest.raises(TraceError, match="No previous position"):
-            t.branches.checkout("-")
+            t.checkout("-")
 
     def test_checkout_by_prefix(self):
         """Checkout accepts a hash prefix."""
@@ -239,7 +239,7 @@ class TestCheckout:
         hashes = populate_tract(t, 3)
 
         prefix = hashes[0][:8]
-        result = t.branches.checkout(prefix)
+        result = t.checkout(prefix)
         assert result == hashes[0]
         assert t.is_detached
 
@@ -249,7 +249,7 @@ class TestCheckout:
         hashes = populate_tract(t, 3)
         old_head = t.head
 
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         prev = t._ref_repo.get_ref(t.tract_id, "PREV_HEAD")
         assert prev == old_head
 
@@ -261,11 +261,11 @@ class TestCheckout:
         assert t.current_branch == "main"
 
         # Checkout a specific commit (detach)
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         assert t.is_detached
 
         # Return via "-" should re-attach to main
-        t.branches.checkout("-")
+        t.checkout("-")
         assert not t.is_detached
         assert t.current_branch == "main"
         assert t.head == hashes[-1]
@@ -277,7 +277,7 @@ class TestCheckout:
 
         full_hash = hashes[1]
         assert len(full_hash) == 64  # SHA-256 hex
-        result = t.branches.checkout(full_hash)
+        result = t.checkout(full_hash)
         assert result == full_hash
         assert t.is_detached
         assert t.head == full_hash
@@ -288,7 +288,7 @@ class TestCheckout:
         hashes = populate_tract(t, 1)
 
         prefix = hashes[0][:4]
-        result = t.branches.checkout(prefix)
+        result = t.checkout(prefix)
         assert result == hashes[0]
         assert t.is_detached
 
@@ -296,16 +296,16 @@ class TestCheckout:
         """Checkout a feature branch attaches HEAD to that branch."""
         t = make_tract()
         populate_tract(t, 2)
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="On feature"))
         feature_head = t.head
 
         # Switch to main
-        t.branches.checkout("main")
+        t.checkout("main")
         assert t.current_branch == "main"
 
         # Switch back to feature
-        t.branches.checkout("feature")
+        t.checkout("feature")
         assert t.current_branch == "feature"
         assert not t.is_detached
         assert t.head == feature_head
@@ -315,22 +315,22 @@ class TestCheckout:
         t = make_tract()
         populate_tract(t, 1)
 
-        t.branches.create("alpha")
+        t.branch("alpha")
         t.commit(DialogueContent(role="user", text="On alpha"))
         alpha_head = t.head
 
-        t.branches.checkout("main")
-        t.branches.create("beta")
+        t.checkout("main")
+        t.branch("beta")
         t.commit(DialogueContent(role="user", text="On beta"))
         beta_head = t.head
 
         # Switch from beta to alpha
-        t.branches.checkout("alpha")
+        t.checkout("alpha")
         assert t.current_branch == "alpha"
         assert t.head == alpha_head
 
         # Switch back to beta
-        t.branches.checkout("beta")
+        t.checkout("beta")
         assert t.current_branch == "beta"
         assert t.head == beta_head
 
@@ -343,35 +343,35 @@ class TestCheckout:
         pos_a = t.head
 
         # Position B: hashes[0] (detached)
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         pos_b = t.head
         assert pos_b == hashes[0]
 
         # First dash: back to A
-        t.branches.checkout("-")
+        t.checkout("-")
         assert t.head == pos_a
 
         # Second dash: back to B
-        t.branches.checkout("-")
+        t.checkout("-")
         assert t.head == pos_b
 
     def test_checkout_dash_between_two_branches(self):
         """Dash toggles between two branches, restoring attachment each time."""
         t = make_tract()
         populate_tract(t, 1)
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="On feature"))
         feature_head = t.head
 
-        main_head = t.branches.checkout("main")
+        main_head = t.checkout("main")
 
         # Dash back to feature
-        t.branches.checkout("-")
+        t.checkout("-")
         assert t.current_branch == "feature"
         assert t.head == feature_head
 
         # Dash back to main
-        t.branches.checkout("-")
+        t.checkout("-")
         assert t.current_branch == "main"
         assert t.head == main_head
 
@@ -381,15 +381,15 @@ class TestCheckout:
         hashes = populate_tract(t, 3)
 
         # Detach at hashes[0]
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         assert t.is_detached
 
         # Detach at hashes[1]
-        t.branches.checkout(hashes[1])
+        t.checkout(hashes[1])
         assert t.is_detached
 
         # Dash: back to hashes[0], still detached
-        t.branches.checkout("-")
+        t.checkout("-")
         assert t.head == hashes[0]
         assert t.is_detached
 
@@ -400,7 +400,7 @@ class TestCheckout:
         assert t.current_branch == "main"
 
         old_head = t.head
-        result = t.branches.checkout("main")
+        result = t.checkout("main")
         assert result == old_head
         assert t.current_branch == "main"
         assert not t.is_detached
@@ -410,21 +410,21 @@ class TestCheckout:
         t = make_tract()
         populate_tract(t, 1)
         with pytest.raises(CommitNotFoundError):
-            t.branches.checkout("no_such_branch")
+            t.checkout("no_such_branch")
 
     def test_checkout_nonexistent_hash(self):
         """Checkout a hash that doesn't match any commit raises CommitNotFoundError."""
         t = make_tract()
         populate_tract(t, 1)
         with pytest.raises(CommitNotFoundError):
-            t.branches.checkout("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+            t.checkout("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 
     def test_checkout_nonexistent_short_prefix(self):
         """Checkout a 4+ char prefix that matches nothing raises CommitNotFoundError."""
         t = make_tract()
         populate_tract(t, 1)
         with pytest.raises(CommitNotFoundError):
-            t.branches.checkout("zzzz")
+            t.checkout("zzzz")
 
 
 # ==================================================================
@@ -440,7 +440,7 @@ class TestPrevHeadTracking:
         populate_tract(t, 2)
         assert t.current_branch == "main"
 
-        t.branches.checkout(t.head)  # detach from main
+        t.checkout(t.head)  # detach from main
         prev_branch = t._ref_repo.get_symbolic_ref(t.tract_id, "PREV_BRANCH")
         assert prev_branch == "refs/heads/main"
 
@@ -450,11 +450,11 @@ class TestPrevHeadTracking:
         hashes = populate_tract(t, 3)
 
         # Go to detached state
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         assert t.is_detached
 
         # Go to another detached state
-        t.branches.checkout(hashes[1])
+        t.checkout(hashes[1])
 
         # PREV_BRANCH should be None since we left a detached position
         prev_branch = t._ref_repo.get_symbolic_ref(t.tract_id, "PREV_BRANCH")
@@ -469,7 +469,7 @@ class TestPrevHeadTracking:
         # Walk through several checkouts and verify PREV_HEAD at each step
         for target_hash in [hashes[0], hashes[2], hashes[4], hashes[1]]:
             positions.append(t.head)
-            t.branches.checkout(target_hash)
+            t.checkout(target_hash)
             prev = t._ref_repo.get_ref(t.tract_id, "PREV_HEAD")
             assert prev == positions[-1]
 
@@ -482,7 +482,7 @@ class TestPrevHeadTracking:
         # Clear PREV_HEAD if it exists
         # After first checkout, PREV_HEAD should be set to the old HEAD
         old_head = t.head
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         prev = t._ref_repo.get_ref(t.tract_id, "PREV_HEAD")
         assert prev == old_head
 
@@ -490,16 +490,16 @@ class TestPrevHeadTracking:
         """Switching branches updates PREV_BRANCH to the departed branch."""
         t = make_tract()
         populate_tract(t, 1)
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="Feature work"))
 
         # Switch from feature to main
-        t.branches.checkout("main")
+        t.checkout("main")
         prev_branch = t._ref_repo.get_symbolic_ref(t.tract_id, "PREV_BRANCH")
         assert prev_branch == "refs/heads/feature"
 
         # Switch from main to feature
-        t.branches.checkout("feature")
+        t.checkout("feature")
         prev_branch = t._ref_repo.get_symbolic_ref(t.tract_id, "PREV_BRANCH")
         assert prev_branch == "refs/heads/main"
 
@@ -510,11 +510,11 @@ class TestPrevHeadTracking:
         main_head = t.head
 
         # Detach at hashes[0]
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         assert t.is_detached
 
         # Dash back to main
-        t.branches.checkout("-")
+        t.checkout("-")
         assert t.current_branch == "main"
         # PREV_HEAD should now point to hashes[0] (where we just were)
         prev = t._ref_repo.get_ref(t.tract_id, "PREV_HEAD")
@@ -536,7 +536,7 @@ class TestDetachedHeadGuard:
         t = make_tract()
         hashes = populate_tract(t, 3)
 
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         assert t.is_detached
 
         with pytest.raises(DetachedHeadError):
@@ -548,11 +548,11 @@ class TestDetachedHeadGuard:
         hashes = populate_tract(t, 3)
 
         # Detach
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         assert t.is_detached
 
         # Re-attach
-        t.branches.checkout("main")
+        t.checkout("main")
         assert not t.is_detached
 
         # Commit should work
@@ -577,12 +577,12 @@ class TestCacheNavigation:
         assert result1.commit_count == 3
 
         # Checkout old commit, compile there
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         result_old = t.compile()
         assert result_old.commit_count == 1
 
         # Checkout back to main
-        t.branches.checkout("main")
+        t.checkout("main")
         # Cache should have the snapshot from before
         result2 = t.compile()
         assert result2.commit_count == 3
@@ -597,7 +597,7 @@ class TestCacheNavigation:
         t.compile()
 
         # Reset to first commit
-        t.branches.reset(hashes[0])
+        t.reset(hashes[0])
 
         # The cache entry for the old HEAD is still there (not cleared)
         # but compile() now compiles at the new HEAD
@@ -609,7 +609,7 @@ class TestCacheNavigation:
         t = make_tract()
         hashes = populate_tract(t, 3)
 
-        t.branches.checkout(hashes[1])
+        t.checkout(hashes[1])
         assert t.is_detached
 
         result = t.compile()
@@ -629,7 +629,7 @@ class TestNavigationEdgeCases:
         hashes = populate_tract(t, 2)
         current = t.head
 
-        t.branches.reset(current)
+        t.reset(current)
         assert t.head == current
         orig = t._ref_repo.get_ref(t.tract_id, "ORIG_HEAD")
         assert orig == current
@@ -639,11 +639,11 @@ class TestNavigationEdgeCases:
         t = make_tract()
         hashes = populate_tract(t, 3)
 
-        t.branches.checkout(hashes[0])
+        t.checkout(hashes[0])
         prev1 = t._ref_repo.get_ref(t.tract_id, "PREV_HEAD")
         assert prev1 == hashes[2]
 
-        t.branches.checkout(hashes[1])
+        t.checkout(hashes[1])
         prev2 = t._ref_repo.get_ref(t.tract_id, "PREV_HEAD")
         assert prev2 == hashes[0]
 
@@ -654,7 +654,7 @@ class TestNavigationEdgeCases:
         old_head = t.head
 
         # Checkout "main" while already on main
-        t.branches.checkout("main")
+        t.checkout("main")
         prev = t._ref_repo.get_ref(t.tract_id, "PREV_HEAD")
         assert prev == old_head
 
@@ -664,30 +664,30 @@ class TestNavigationEdgeCases:
         populate_tract(t, 1)
 
         # Create three branches
-        t.branches.create("b1")
+        t.branch("b1")
         t.commit(DialogueContent(role="user", text="b1 work"))
         b1_head = t.head
 
-        t.branches.checkout("main")
-        t.branches.create("b2")
+        t.checkout("main")
+        t.branch("b2")
         t.commit(DialogueContent(role="user", text="b2 work"))
         b2_head = t.head
 
-        t.branches.checkout("main")
-        t.branches.create("b3")
+        t.checkout("main")
+        t.branch("b3")
         t.commit(DialogueContent(role="user", text="b3 work"))
         b3_head = t.head
 
         # Now switch: b3 -> b1 -> b2 -> main
-        t.branches.checkout("b1")
+        t.checkout("b1")
         assert t.current_branch == "b1"
         assert t.head == b1_head
 
-        t.branches.checkout("b2")
+        t.checkout("b2")
         assert t.current_branch == "b2"
         assert t.head == b2_head
 
-        t.branches.checkout("main")
+        t.checkout("main")
         assert t.current_branch == "main"
 
         # PREV_HEAD should track b2's head
@@ -695,7 +695,7 @@ class TestNavigationEdgeCases:
         assert prev == b2_head
 
         # Dash goes back to b2
-        t.branches.checkout("-")
+        t.checkout("-")
         assert t.current_branch == "b2"
         assert t.head == b2_head
 
@@ -705,15 +705,15 @@ class TestNavigationEdgeCases:
         hashes = populate_tract(t, 3)
 
         # Branch checkout returns branch tip
-        result = t.branches.checkout("main")
+        result = t.checkout("main")
         assert result == hashes[-1]
 
         # Hash checkout returns resolved hash
-        result = t.branches.checkout(hashes[0])
+        result = t.checkout(hashes[0])
         assert result == hashes[0]
 
         # Prefix checkout returns full hash
-        result = t.branches.checkout(hashes[1][:6])
+        result = t.checkout(hashes[1][:6])
         assert result == hashes[1]
 
     def test_resolve_commit_prefers_exact_hash_over_branch(self):
@@ -721,7 +721,7 @@ class TestNavigationEdgeCases:
         t = make_tract()
         hashes = populate_tract(t, 1)
         # Resolve by full hash should work even if a branch with same name existed
-        resolved = t.branches.resolve(hashes[0])
+        resolved = t.resolve(hashes[0])
         assert resolved == hashes[0]
 
     @pytest.mark.parametrize("op", ["checkout", "reset"])
@@ -729,7 +729,7 @@ class TestNavigationEdgeCases:
         t = make_tract()
         populate_tract(t, 1)
         with pytest.raises(CommitNotFoundError):
-            getattr(t.branches, op)("nonexistent")
+            getattr(t, op)("nonexistent")
 
     def test_detached_head_error_message(self):
         """DetachedHeadError has descriptive message."""

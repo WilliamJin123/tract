@@ -183,7 +183,7 @@ class TestAchat:
     async def test_achat_basic(self, tract_with_client):
         t = tract_with_client
         t.system("You are helpful.")
-        result = await t.llm.achat("Hello")
+        result = await t._llm_mgr.achat("Hello")
         assert result.text == "Hello!"
         assert result.prompt == "Hello"
         assert result.usage is not None
@@ -196,13 +196,13 @@ class TestAchat:
         t1 = Tract.open()
         t1.config.configure_llm(MockLLMClient())
         t1.system("You are helpful.")
-        sync_result = t1.llm.chat("Hello")
+        sync_result = t1._llm_mgr.chat("Hello")
 
         # Async
         t2 = Tract.open()
         t2.config.configure_llm(MockLLMClient())
         t2.system("You are helpful.")
-        async_result = await t2.llm.achat("Hello")
+        async_result = await t2._llm_mgr.achat("Hello")
 
         assert sync_result.text == async_result.text
         assert sync_result.usage == async_result.usage
@@ -212,7 +212,7 @@ class TestAchat:
         """achat() should work with sync-only clients via to_thread fallback."""
         t = tract_with_sync_client
         t.system("You are helpful.")
-        result = await t.llm.achat("Hello")
+        result = await t._llm_mgr.achat("Hello")
         assert result.text == "Hello!"
 
 
@@ -224,7 +224,7 @@ class TestAgenerate:
         t = tract_with_client
         t.system("You are helpful.")
         t.user("Hello")
-        result = await t.llm.agenerate()
+        result = await t._llm_mgr.agenerate()
         assert result.text == "Hello!"
 
     @pytest.mark.asyncio
@@ -246,7 +246,7 @@ class TestAgenerate:
                 return (True, None)
             return (False, "not good enough")
 
-        result = await t.llm.agenerate(validator=validator, max_retries=3)
+        result = await t._llm_mgr.agenerate(validator=validator, max_retries=3)
         assert result.text == "good answer"
 
 
@@ -260,7 +260,7 @@ class TestArun:
         t = Tract.open()
         t.config.configure_llm(client)
         t.system("You are a helpful agent.")
-        result = await t.llm.arun(task="Do something")
+        result = await t._llm_mgr.arun(task="Do something")
         assert result.status == "completed"
         assert result.final_response == "Done!"
         assert result.steps == 1
@@ -282,7 +282,7 @@ class TestArun:
         def check_handler():
             return "ok"
 
-        result = await t.llm.arun(
+        result = await t._llm_mgr.arun(
             task="Check status",
             tools=[{
                 "type": "function",
@@ -314,7 +314,7 @@ class TestArun:
 
         t = Tract.open()
         t.config.configure_llm(client)
-        result = await t.llm.arun(
+        result = await t._llm_mgr.arun(
             task="Use tool",
             tools=[{
                 "type": "function",
@@ -339,7 +339,7 @@ class TestArunNewParams:
         t = Tract.open()
         t.config.configure_llm(client)
         t.system("You are helpful.")
-        result = await t.llm.arun(task="Do something", step_budget=100)
+        result = await t._llm_mgr.arun(task="Do something", step_budget=100)
         assert result.status == "completed"
         assert result.steps == 1
 
@@ -359,7 +359,7 @@ class TestArunNewParams:
         t.config.configure_llm(client)
         t.system("You manage context.")
 
-        result = await t.llm.arun(
+        result = await t._llm_mgr.arun(
             task="Keep going",
             max_steps=50,
             step_budget=20,
@@ -396,7 +396,7 @@ class TestArunNewParams:
                 return (False, "tool blocked by validator")
             return (True, None)
 
-        result = await t.llm.arun(
+        result = await t._llm_mgr.arun(
             task="Do something",
             tool_validator=validator,
             tools=[{
@@ -419,7 +419,7 @@ class TestArunNewParams:
         t = Tract.open()
         t.config.configure_llm(client)
         t.system("You are helpful.")
-        result = await t.llm.arun(
+        result = await t._llm_mgr.arun(
             task="Do something",
             auto_compress_threshold=0.8,
         )
@@ -439,7 +439,7 @@ class TestAcompress:
         t.user("Message 2")
         t.assistant("Response 2")
 
-        result = await t.compression.acompress(content="Summary of conversation.")
+        result = await t.acompress(content="Summary of conversation.")
         assert result.compressed_tokens > 0
 
     @pytest.mark.asyncio
@@ -454,7 +454,7 @@ class TestAcompress:
         t.user("Message 2")
         t.assistant("Response 2")
 
-        result = await t.compression.acompress()
+        result = await t.acompress()
         assert result.compressed_tokens > 0
 
 
@@ -468,7 +468,7 @@ class TestArevise:
         t = Tract.open()
         t.config.configure_llm(client)
         original = t.assistant("Original text.")
-        result = await t.llm.arevise(original.commit_hash, "Make it better")
+        result = await t._llm_mgr.arevise(original.commit_hash, "Make it better")
         assert result.text == "Improved text."
         # The commit should be an EDIT
         assert result.commit_info is not None

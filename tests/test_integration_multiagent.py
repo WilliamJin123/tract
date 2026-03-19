@@ -74,7 +74,7 @@ class TestFullMultiagentWorkflow:
             assert result.summary_tokens > 0
 
             # Verify parent has spawn + collapse commits
-            parent_log = parent.search.log(limit=10)
+            parent_log = parent.log(limit=10)
             messages = [c.message for c in parent_log if c.message]
             assert any("spawn:" in m for m in messages)
             assert any("collapse:" in m for m in messages)
@@ -90,11 +90,11 @@ class TestFullMultiagentWorkflow:
             assert child.tract_id in tract_ids
 
             # Verify spawn pointers
-            children_list = parent.spawn.children()
+            children_list = parent.spawn_children()
             assert len(children_list) == 1
             assert children_list[0].child_tract_id == child.tract_id
 
-            parent_info = child.spawn.parent()
+            parent_info = child.spawn_parent()
             assert parent_info is not None
             assert parent_info.parent_tract_id == parent.tract_id
 
@@ -123,8 +123,8 @@ class TestRecursiveSpawn:
             )
 
             # Verify pointer chain
-            assert child.spawn.parent().parent_tract_id == parent.tract_id
-            assert grandchild.spawn.parent().parent_tract_id == child.tract_id
+            assert child.spawn_parent().parent_tract_id == parent.tract_id
+            assert grandchild.spawn_parent().parent_tract_id == child.tract_id
 
             # Timeline includes all 3 tracts
             tl = session.timeline()
@@ -178,7 +178,7 @@ class TestMultipleCollapse:
             assert r2.parent_commit_hash is not None
 
             # Parent should have 2 collapse commits
-            parent_log = parent.search.log(limit=20)
+            parent_log = parent.log(limit=20)
             collapse_commits = [c for c in parent_log if c.message and "collapse:" in c.message]
             assert len(collapse_commits) == 2
 
@@ -472,8 +472,8 @@ class TestBackwardCompatibility:
             assert compiled.commit_count == 2
 
             # No spawn relationships
-            assert t.spawn.parent() is None
-            assert t.spawn.children() == []
+            assert t.spawn_parent() is None
+            assert t.spawn_children() == []
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +497,7 @@ class TestSpawnWithDisplayName:
             child.commit(DialogueContent(role="assistant", text="Research data"))
 
             # SpawnInfo has display_name
-            child_info = child.spawn.parent()
+            child_info = child.spawn_parent()
             assert child_info is not None
             assert child_info.display_name == "researcher"
 

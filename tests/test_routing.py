@@ -368,32 +368,31 @@ class TestSemanticRouter:
 
 class TestTractRoutingIntegration:
     def test_add_and_remove_route(self):
-        t = Tract.open()
-        t.routing.add("feature", "Feature branch", "branch",
+        table = RoutingTable()
+        table.add_route("feature", "Feature branch", "branch",
                      keywords=["feature", "new"])
-        result = t.routing.route("new feature")
-        assert result.route.target == "feature"
+        results = table.match("new feature")
+        assert results[0].target == "feature"
 
-        t.routing.remove("feature")
-        result = t.routing.route("new feature")
+        table.remove_route("feature")
+        results = table.match("new feature")
         # After removal, should not match "feature" anymore
-        assert result.route.target != "feature" or result.route.confidence == 0.0
+        assert len(results) == 0 or results[0].target != "feature"
 
     def test_route_fuzzy_no_router(self):
-        """t.routing.route() without a router should use fuzzy matching on default table."""
-        t = Tract.open()
-        t.routing.add("design", "Design phase", "stage",
+        """RoutingTable.match() should use fuzzy matching."""
+        table = RoutingTable()
+        table.add_route("design", "Design phase", "stage",
                      keywords=["design", "plan"])
-        t.routing.add("build", "Build phase", "stage",
+        table.add_route("build", "Build phase", "stage",
                      keywords=["build", "implement"])
 
-        result = t.routing.route("let's plan the design")
-        assert isinstance(result, RoutingResult)
-        assert result.method == "fuzzy"
-        assert result.route.target == "design"
+        results = table.match("let's plan the design")
+        assert len(results) > 0
+        assert results[0].target == "design"
 
     def test_route_with_semantic_router(self):
-        """t.routing.route() with a SemanticRouter should use LLM."""
+        """SemanticRouter.route() with a tract should use LLM."""
         t = Tract.open()
         table = RoutingTable()
         table.add_route("alpha", "Alpha branch", "branch",
@@ -408,32 +407,33 @@ class TestTractRoutingIntegration:
         t.config.configure_llm(mock)
 
         router = SemanticRouter(name="r", routes=table)
-        result = t.routing.route("go to alpha", router=router)
+        result = router.route("go to alpha", t)
 
         assert result.route.target == "alpha"
         assert result.method == "semantic"
 
-    def test_route_empty_table_returns_zero_confidence(self):
-        """Route with empty table should return confidence 0."""
-        t = Tract.open()
-        result = t.routing.route("anything at all")
-        assert result.route.confidence == 0.0
-        assert result.route.target == ""
+    def test_route_empty_table_returns_no_matches(self):
+        """Route with empty table should return no matches."""
+        table = RoutingTable()
+        results = table.match("anything at all")
+        assert len(results) == 0
 
     def test_remove_route_no_table_raises(self):
         """Removing a route before any routes are added should raise."""
-        t = Tract.open()
+        table = RoutingTable()
         with pytest.raises(ValueError, match="not found"):
-            t.routing.remove("nonexistent")
+            table.remove_route("nonexistent")
 
     def test_aroute_async(self):
         """Async route should work."""
         t = Tract.open()
-        t.routing.add("research", "Research", "branch",
+        table = RoutingTable()
+        table.add_route("research", "Research", "branch",
                      keywords=["research"])
 
+        router = SemanticRouter(name="test", routes=table)
         result = asyncio.run(
-            t.routing.aroute("research topic")
+            router.aroute("research topic", t)
         )
         assert result.method == "fuzzy"
         assert result.route.target == "research"

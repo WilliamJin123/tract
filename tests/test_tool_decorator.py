@@ -1,4 +1,4 @@
-"""Tests for @t.toolkit.tool decorator and callable_to_tool conversion."""
+"""Tests for @t.runtime.tools.tool decorator and callable_to_tool conversion."""
 
 from __future__ import annotations
 
@@ -290,46 +290,46 @@ class TestParseParamDocs:
 
 
 # ---------------------------------------------------------------------------
-# @t.toolkit.tool decorator integration tests
+# @t.runtime.tools.tool decorator integration tests
 # ---------------------------------------------------------------------------
 
 
 class TestToolDecorator:
-    """Tests for the @t.toolkit.tool decorator on Tract instances."""
+    """Tests for the @t.runtime.tools.tool decorator on Tract instances."""
 
     def test_basic_registration(self):
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def greet(name: str) -> str:
                 """Say hello."""
                 return f"Hello, {name}!"
 
-            assert "greet" in t.toolkit.custom_tools
-            assert t.toolkit.custom_tools["greet"].name == "greet"
+            assert "greet" in t.runtime.tools.custom_tools
+            assert t.runtime.tools.custom_tools["greet"].name == "greet"
 
     def test_with_name_override(self):
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool(name="say_hi")
+            @t.runtime.tools.tool(name="say_hi")
             def greet(name: str) -> str:
                 """Say hello."""
                 return f"Hello, {name}!"
 
-            assert "say_hi" in t.toolkit.custom_tools
-            assert "greet" not in t.toolkit.custom_tools
+            assert "say_hi" in t.runtime.tools.custom_tools
+            assert "greet" not in t.runtime.tools.custom_tools
 
     def test_with_description_override(self):
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool(description="Custom desc")
+            @t.runtime.tools.tool(description="Custom desc")
             def greet(name: str) -> str:
                 """Original desc."""
                 return f"Hello, {name}!"
 
-            assert t.toolkit.custom_tools["greet"].description == "Custom desc"
+            assert t.runtime.tools.custom_tools["greet"].description == "Custom desc"
 
     def test_function_unchanged(self):
         """The original function should be returned unmodified."""
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def add(a: int, b: int) -> str:
                 """Add two numbers."""
                 return str(a + b)
@@ -339,66 +339,66 @@ class TestToolDecorator:
 
     def test_remove_tool(self):
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def temp(x: str) -> str:
                 """Temporary."""
                 return x
 
-            assert "temp" in t.toolkit.custom_tools
-            t.toolkit.remove_tool("temp")
-            assert "temp" not in t.toolkit.custom_tools
+            assert "temp" in t.runtime.tools.custom_tools
+            t.runtime.tools.remove_tool("temp")
+            assert "temp" not in t.runtime.tools.custom_tools
 
     def test_remove_nonexistent_raises(self):
         with Tract.open(":memory:") as t:
             with pytest.raises(KeyError, match="No custom tool 'nope'"):
-                t.toolkit.remove_tool("nope")
+                t.runtime.tools.remove_tool("nope")
 
     def test_multiple_tools(self):
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def tool_a(x: str) -> str:
                 """Tool A."""
                 return x
 
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def tool_b(y: int) -> str:
                 """Tool B."""
                 return str(y)
 
-            assert len(t.toolkit.custom_tools) == 2
-            assert "tool_a" in t.toolkit.custom_tools
-            assert "tool_b" in t.toolkit.custom_tools
+            assert len(t.runtime.tools.custom_tools) == 2
+            assert "tool_a" in t.runtime.tools.custom_tools
+            assert "tool_b" in t.runtime.tools.custom_tools
 
     def test_appears_in_as_tools(self):
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def my_search(query: str) -> str:
                 """Search things."""
                 return ""
 
-            tools = t.toolkit.as_tools(profile="full", format="openai")
+            tools = t.runtime.tools.as_tools(profile="full", format="openai")
             names = [td["function"]["name"] for td in tools]
             assert "my_search" in names
 
     def test_appears_in_as_tools_anthropic(self):
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def my_search(query: str) -> str:
                 """Search things."""
                 return ""
 
-            tools = t.toolkit.as_tools(profile="full", format="anthropic")
+            tools = t.runtime.tools.as_tools(profile="full", format="anthropic")
             names = [td["name"] for td in tools]
             assert "my_search" in names
 
     def test_tool_names_filter_includes_custom(self):
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def my_calc(expr: str) -> str:
                 """Calculate."""
                 return ""
 
-            tools = t.toolkit.as_tools(
+            tools = t.runtime.tools.as_tools(
                 profile="full",
                 tool_names=["commit", "my_calc"],
                 format="openai",
@@ -411,12 +411,12 @@ class TestToolDecorator:
 
     def test_tool_names_filter_excludes_custom(self):
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def excluded(x: str) -> str:
                 """Excluded tool."""
                 return ""
 
-            tools = t.toolkit.as_tools(
+            tools = t.runtime.tools.as_tools(
                 profile="full",
                 tool_names=["commit"],
                 format="openai",
@@ -427,14 +427,14 @@ class TestToolDecorator:
     def test_custom_tools_property_is_copy(self):
         """custom_tools should return a copy, not the internal dict."""
         with Tract.open(":memory:") as t:
-            @t.toolkit.tool
+            @t.runtime.tools.tool
             def my_tool(x: str) -> str:
                 """Tool."""
                 return x
 
-            ct = t.toolkit.custom_tools
+            ct = t.runtime.tools.custom_tools
             ct.clear()  # mutating the copy
-            assert "my_tool" in t.toolkit.custom_tools  # internal still has it
+            assert "my_tool" in t.runtime.tools.custom_tools  # internal still has it
 
     def test_imperative_registration(self):
         """tool() can be called imperatively, not just as decorator."""
@@ -443,5 +443,5 @@ class TestToolDecorator:
                 """My function."""
                 return x
 
-            t.toolkit.tool(my_func)
-            assert "my_func" in t.toolkit.custom_tools
+            t.runtime.tools.tool(my_func)
+            assert "my_func" in t.runtime.tools.custom_tools

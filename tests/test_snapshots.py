@@ -141,7 +141,7 @@ class TestSnapshotMetadata:
         t.persistence.snapshot("check", metadata={"reason": "pre-merge"})
 
         # Verify via log that the metadata commit has our custom field
-        for entry in t.search.log(limit=10):
+        for entry in t.log(limit=10):
             meta = entry.metadata or {}
             if meta.get("snapshot"):
                 assert meta.get("reason") == "pre-merge"

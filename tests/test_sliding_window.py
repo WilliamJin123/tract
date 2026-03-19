@@ -85,7 +85,7 @@ class TestSlidingWindowBasic:
     def test_sliding_window_keeps_last_n(self):
         """Sliding window keeps the last N commits in full detail."""
         t, hashes = make_tract_with_commits(8)
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of older messages",
@@ -105,7 +105,7 @@ class TestSlidingWindowBasic:
     def test_sliding_window_compresses_older(self):
         """Everything before the window gets compressed."""
         t, hashes = make_tract_with_commits(10)
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of first 7 messages",
@@ -120,7 +120,7 @@ class TestSlidingWindowBasic:
         """Window larger than total commits means nothing to compress."""
         t, hashes = make_tract_with_commits(3)
         with pytest.raises(CompressionError, match="Nothing to compress"):
-            t.compression.compress(
+            t.compress(
                 strategy="sliding_window",
                 window_size=10,
                 content="Should not be used",
@@ -130,7 +130,7 @@ class TestSlidingWindowBasic:
         """Window equal to total commits means nothing to compress."""
         t, hashes = make_tract_with_commits(5)
         with pytest.raises(CompressionError, match="Nothing to compress"):
-            t.compression.compress(
+            t.compress(
                 strategy="sliding_window",
                 window_size=5,
                 content="Should not be used",
@@ -139,7 +139,7 @@ class TestSlidingWindowBasic:
     def test_window_of_zero_compresses_everything(self):
         """Window of 0 compresses all commits (except PINNED)."""
         t, hashes = make_tract_with_commits(5)
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=0,
             content="Everything compressed",
@@ -152,7 +152,7 @@ class TestSlidingWindowBasic:
         """Single commit with window=1 means nothing to compress."""
         t, hashes = make_tract_with_commits(1)
         with pytest.raises(CompressionError, match="Nothing to compress"):
-            t.compression.compress(
+            t.compress(
                 strategy="sliding_window",
                 window_size=1,
                 content="Should not be used",
@@ -171,9 +171,9 @@ class TestSlidingWindowPinned:
         """PINNED commits outside the window are preserved verbatim."""
         t, hashes = make_tract_with_commits(8)
         # Pin commit 2 (index 1) -- it's outside window_size=3
-        t.annotations.set(hashes[1], Priority.PINNED, reason="important")
+        t.annotate(hashes[1], Priority.PINNED, reason="important")
 
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of non-pinned older messages",
@@ -189,11 +189,11 @@ class TestSlidingWindowPinned:
         """If all pre-window commits are PINNED, nothing to compress."""
         t, hashes = make_tract_with_commits(5)
         # Pin the first two commits (everything outside window_size=3)
-        t.annotations.set(hashes[0], Priority.PINNED, reason="pin1")
-        t.annotations.set(hashes[1], Priority.PINNED, reason="pin2")
+        t.annotate(hashes[0], Priority.PINNED, reason="pin1")
+        t.annotate(hashes[1], Priority.PINNED, reason="pin2")
 
         with pytest.raises(CompressionError, match="Nothing to compress"):
-            t.compression.compress(
+            t.compress(
                 strategy="sliding_window",
                 window_size=3,
                 content="Should not be used",
@@ -203,9 +203,9 @@ class TestSlidingWindowPinned:
         """PINNED commits inside the window are replayed normally."""
         t, hashes = make_tract_with_commits(8)
         # Pin a commit inside the window (last 3)
-        t.annotations.set(hashes[7], Priority.PINNED, reason="pinned in window")
+        t.annotate(hashes[7], Priority.PINNED, reason="pinned in window")
 
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of older messages",
@@ -228,7 +228,7 @@ class TestSlidingWindowManual:
     def test_manual_content_works(self):
         """Manual content parameter works with sliding window."""
         t, hashes = make_tract_with_commits(10)
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Custom summary of early conversation",
@@ -241,7 +241,7 @@ class TestSlidingWindowManual:
     def test_manual_content_window_zero(self):
         """Manual content with window=0 compresses everything."""
         t, hashes = make_tract_with_commits(5)
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=0,
             content="Full conversation summary",
@@ -268,7 +268,7 @@ class TestSlidingWindowLLM:
         mock = MockLLMClient(responses=["LLM summary of older context."])
         t.config.configure_llm(mock)
 
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=3,
         )
@@ -286,7 +286,7 @@ class TestSlidingWindowLLM:
         """No LLM client and no content raises CompressionError."""
         t, hashes = make_tract_with_commits(8)
         with pytest.raises(CompressionError):
-            t.compression.compress(
+            t.compress(
                 strategy="sliding_window",
                 window_size=3,
             )
@@ -305,7 +305,7 @@ class TestSlidingWindowMultiple:
         t, hashes = make_tract_with_commits(8)
 
         # First compress: window=3 keeps last 3
-        result1 = t.compression.compress(
+        result1 = t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of messages 1-5",
@@ -317,7 +317,7 @@ class TestSlidingWindowMultiple:
             t.commit(DialogueContent(role="user", text=f"Message {i}"))
 
         # Second compress: window=3 keeps last 3 (new ones)
-        result2 = t.compression.compress(
+        result2 = t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of everything before last 3",
@@ -335,7 +335,7 @@ class TestSlidingWindowMultiple:
         t, hashes = make_tract_with_commits(10)
 
         # First compress
-        t.compression.compress(
+        t.compress(
             strategy="sliding_window",
             window_size=5,
             content="First summary",
@@ -346,7 +346,7 @@ class TestSlidingWindowMultiple:
             t.commit(DialogueContent(role="user", text=f"Message {i}"))
 
         # Second compress -- the first summary is now outside the window
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Second summary covering first summary and more",
@@ -372,7 +372,7 @@ class TestSlidingWindowIntegration:
         """Commit 10 items, window=3, verify 7 compressed + 3 full."""
         t, hashes = make_tract_with_commits(10)
 
-        result = t.compression.compress(
+        result = t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of messages 1 through 7",
@@ -392,7 +392,7 @@ class TestSlidingWindowIntegration:
     def test_sliding_window_then_commit(self):
         """Can commit new messages after sliding window compression."""
         t, hashes = make_tract_with_commits(8)
-        t.compression.compress(
+        t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of older messages",
@@ -408,22 +408,22 @@ class TestSlidingWindowIntegration:
     def test_sliding_window_then_branch(self):
         """Can branch after sliding window compression."""
         t, hashes = make_tract_with_commits(8)
-        t.compression.compress(
+        t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of older messages",
         )
 
         # Branch should work
-        t.branches.create("feature")
-        t.branches.checkout("feature")
+        t.branch("feature")
+        t.checkout("feature")
         info = t.commit(DialogueContent(role="user", text="Feature commit"))
         assert info.commit_hash is not None
 
     def test_sliding_window_compile_produces_valid_output(self):
         """Compiled output after sliding window is valid."""
         t, hashes = make_tract_with_commits(8)
-        t.compression.compress(
+        t.compress(
             strategy="sliding_window",
             window_size=3,
             content="Summary of older messages",
@@ -440,7 +440,7 @@ class TestSlidingWindowIntegration:
     def test_default_strategy_unchanged(self):
         """Default strategy still works exactly as before."""
         t, hashes = make_tract_with_commits(5)
-        result = t.compression.compress(
+        result = t.compress(
             content="Default compression summary",
         )
 
@@ -450,7 +450,7 @@ class TestSlidingWindowIntegration:
     def test_explicit_default_strategy(self):
         """Passing strategy='default' explicitly works same as omitting it."""
         t, hashes = make_tract_with_commits(5)
-        result = t.compression.compress(
+        result = t.compress(
             strategy="default",
             content="Default compression summary",
         )

@@ -180,7 +180,7 @@ class TestAutoSplit:
 
         assert result.split_count == 2
         # Verify the original commit got SKIP annotation
-        log_entries = t.search.log(limit=50)
+        log_entries = t.log(limit=50)
         original_entry = None
         for e in log_entries:
             if e.commit_hash == hashes[0]:
@@ -211,21 +211,21 @@ class TestAutoRebase:
         _seed_commits(t, 3)
 
         # Create a feature branch and add a commit
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(
             {"content_type": "dialogue", "role": "user", "text": "Feature work"},
             message="feature commit",
         )
 
         # Go back to main and add a commit
-        t.branches.checkout("main")
+        t.checkout("main")
         t.commit(
             {"content_type": "dialogue", "role": "user", "text": "Main update"},
             message="main update",
         )
 
         # Switch to feature and auto_rebase
-        t.branches.checkout("feature")
+        t.checkout("feature")
         result = auto_rebase(t)
 
         assert isinstance(result, AutoRebaseResult)
@@ -456,7 +456,7 @@ class TestTractIntegration:
     """Tests for Tract API methods that delegate to autonomous module."""
 
     def test_t_auto_split(self):
-        """t.intelligence.auto_split() delegates to auto_split function."""
+        """auto_split(t, ) delegates to auto_split function."""
         split_response = json.dumps({
             "reasoning": "Split content",
             "pieces": [
@@ -469,7 +469,7 @@ class TestTractIntegration:
         t.config.configure_llm(mock)
         hashes = _seed_commits(t, 3)
 
-        result = t.intelligence.auto_split(hashes[1])
+        result = auto_split(t, hashes[1])
 
         assert isinstance(result, AutoSplitResult)
         assert result.split_count == 2
@@ -477,7 +477,7 @@ class TestTractIntegration:
         t.close()
 
     def test_t_auto_rebase(self):
-        """t.intelligence.auto_rebase() delegates to auto_rebase function."""
+        """auto_rebase(t) delegates to auto_rebase function."""
         response = json.dumps({
             "reasoning": "No rebase needed",
             "should_rebase": False,
@@ -488,14 +488,14 @@ class TestTractIntegration:
         t.config.configure_llm(mock)
         _seed_commits(t, 3)
 
-        result = t.intelligence.auto_rebase()
+        result = auto_rebase(t)
 
         assert isinstance(result, AutoRebaseResult)
         assert result.rebased is False
         t.close()
 
     def test_t_auto_branch(self):
-        """t.intelligence.auto_branch() delegates to auto_branch function."""
+        """auto_branch(t, ) delegates to auto_branch function."""
         response = json.dumps({
             "reasoning": "New feature needs isolation",
             "should_branch": True,
@@ -506,7 +506,7 @@ class TestTractIntegration:
         t.config.configure_llm(mock)
         _seed_commits(t, 3)
 
-        result = t.intelligence.auto_branch(context="Starting new feature")
+        result = auto_branch(t, context="Starting new feature")
 
         assert isinstance(result, AutoBranchResult)
         assert result.branched is True

@@ -101,7 +101,7 @@ class TestMockLLMClient:
         mock = MockLLMClient(["I can help with that."])
         with Tract.open(llm_client=mock) as t:
             t.system("You are a test assistant.")
-            r = t.llm.chat("Hello")
+            r = t.runtime.chat("Hello")
             assert r.text == "I can help with that."
             assert mock.call_count == 1
 
@@ -187,7 +187,7 @@ class TestReplayLLMClient:
         replay = ReplayLLMClient(["Replay answer."])
         with Tract.open(llm_client=replay) as t:
             t.system("Test.")
-            r = t.llm.chat("Question")
+            r = t.runtime.chat("Question")
             assert r.text == "Replay answer."
             assert replay.call_count == 1
 
@@ -282,7 +282,7 @@ class TestFunctionLLMClient:
         fn = FunctionLLMClient(lambda msgs, kw: "Function answer.")
         with Tract.open(llm_client=fn) as t:
             t.system("Test.")
-            r = t.llm.chat("Question")
+            r = t.runtime.chat("Question")
             assert r.text == "Function answer."
             assert fn.call_count == 1
 
@@ -298,8 +298,8 @@ class TestTractIntegration:
         mock = MockLLMClient(["Reply 1", "Reply 2"])
         with Tract.open(llm_client=mock) as t:
             t.system("Test system.")
-            r1 = t.llm.chat("Turn 1")
-            r2 = t.llm.chat("Turn 2")
+            r1 = t.runtime.chat("Turn 1")
+            r2 = t.runtime.chat("Turn 2")
             assert r1.text == "Reply 1"
             assert r2.text == "Reply 2"
             # Verify conversation context grows
@@ -309,8 +309,8 @@ class TestTractIntegration:
         replay = ReplayLLMClient(["Answer A", "Answer B"])
         with Tract.open(llm_client=replay) as t:
             t.system("Test.")
-            assert t.llm.chat("Q1").text == "Answer A"
-            assert t.llm.chat("Q2").text == "Answer B"
+            assert t.runtime.chat("Q1").text == "Answer A"
+            assert t.runtime.chat("Q2").text == "Answer B"
 
     def test_function_inspects_context(self):
         """FunctionLLMClient can inspect the compiled messages tract sends."""
@@ -323,7 +323,7 @@ class TestTractIntegration:
         fn = FunctionLLMClient(inspector)
         with Tract.open(llm_client=fn) as t:
             t.system("Sys.")
-            t.llm.chat("First")
-            t.llm.chat("Second")
+            t.runtime.chat("First")
+            t.runtime.chat("Second")
             # Each successive call should have more messages in context
             assert seen_message_counts[1] > seen_message_counts[0]

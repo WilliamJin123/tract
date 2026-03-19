@@ -451,7 +451,7 @@ class TestRetryIntegrationGenerate:
         )
         t.system("You are helpful.")
         t.user("Hello")
-        response = t.llm.generate()
+        response = t._llm_mgr.generate()
         assert response.text == "Mock response"
         assert len(client.calls) == 3  # 2 failures + 1 success
 
@@ -461,7 +461,7 @@ class TestRetryIntegrationGenerate:
         t = Tract.open(llm_client=client)
         t.system("You are helpful.")
         t.user("Hello")
-        response = t.llm.generate(
+        response = t._llm_mgr.generate(
             retry=RetryConfig(max_retries=2, initial_delay=0.001, jitter=False),
         )
         assert response.text == "Mock response"
@@ -474,7 +474,7 @@ class TestRetryIntegrationGenerate:
         t.system("You are helpful.")
         t.user("Hello")
         with pytest.raises(ConnectionError, match="transient failure"):
-            t.llm.generate()
+            t._llm_mgr.generate()
         assert len(client.calls) == 1
 
     def test_generate_retries_exhausted(self):
@@ -487,7 +487,7 @@ class TestRetryIntegrationGenerate:
         t.system("You are helpful.")
         t.user("Hello")
         with pytest.raises(ConnectionError, match="transient failure"):
-            t.llm.generate()
+            t._llm_mgr.generate()
         assert len(client.calls) == 3
 
     def test_chat_with_retry(self):
@@ -498,7 +498,7 @@ class TestRetryIntegrationGenerate:
             retry=RetryConfig(max_retries=2, initial_delay=0.001, jitter=False),
         )
         t.system("You are helpful.")
-        response = t.llm.chat("Hello")
+        response = t._llm_mgr.chat("Hello")
         assert response.text == "Mock response"
         assert len(client.calls) == 2
 
@@ -507,7 +507,7 @@ class TestRetryIntegrationGenerate:
         client = MockLLMClient(fail_count=1)
         t = Tract.open(llm_client=client)
         t.system("You are helpful.")
-        response = t.llm.chat(
+        response = t._llm_mgr.chat(
             "Hello",
             retry=RetryConfig(max_retries=2, initial_delay=0.001, jitter=False),
         )
@@ -526,7 +526,7 @@ class TestRetryIntegrationGenerate:
         t.system("System")
         t.user("Hello")
         with pytest.raises(ContentValidationError):
-            t.llm.generate()
+            t._llm_mgr.generate()
         assert len(client.calls) == 1
 
     def test_blocked_error_not_retried(self):
@@ -542,7 +542,7 @@ class TestRetryIntegrationGenerate:
         t.system("System")
         t.user("Hello")
         with pytest.raises(BlockedError):
-            t.llm.generate()
+            t._llm_mgr.generate()
         assert len(client.calls) == 1
 
     def test_per_call_retry_overrides_tract_level(self):
@@ -555,7 +555,7 @@ class TestRetryIntegrationGenerate:
         t.system("System")
         t.user("Hello")
         # Tract-level allows only 1 retry, but per-call allows 3
-        response = t.llm.generate(
+        response = t._llm_mgr.generate(
             retry=RetryConfig(max_retries=3, initial_delay=0.001, jitter=False),
         )
         assert response.text == "Mock response"

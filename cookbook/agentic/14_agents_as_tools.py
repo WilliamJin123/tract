@@ -238,7 +238,7 @@ def section_1_subagent_as_tool() -> None:
         print(f"    {line}")
 
     # Summary
-    status = coordinator.search.status()
+    status = coordinator.status()
     tracts = session.list_tracts()
     print(f"\n  --- Section 1 Summary ---")
     print(f"  Coordinator: {status.token_count} tokens, {status.commit_count} commits")
@@ -375,7 +375,7 @@ def section_2_parallel_fan_out() -> None:
         print(f"    {line}")
 
     # Summary
-    status = coordinator.search.status()
+    status = coordinator.status()
     tracts = session.list_tracts()
     print(f"\n  --- Section 2 Summary ---")
     print(f"  Coordinator: {status.token_count} tokens, {status.commit_count} commits")
@@ -383,7 +383,7 @@ def section_2_parallel_fan_out() -> None:
     print(f"  Fan-out invocations: {len(REVIEW_TASKS)}")
 
     print(f"\n  Coordinator log:")
-    for ci in coordinator.search.log():
+    for ci in coordinator.log():
         msg = (ci.message or "")[:50]
         print(f"    {ci.commit_hash[:8]}  {ci.content_type:12s}  {msg}")
 

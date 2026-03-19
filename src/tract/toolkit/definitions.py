@@ -879,7 +879,7 @@ def _handle_commit(
 
     # Resolve short hash prefixes to full hashes (LLMs use 8-char prefixes)
     if edit_target:
-        edit_target = tract.branches.resolve(edit_target)
+        edit_target = tract.resolve(edit_target)
 
     # Auto-register unknown tags so commit never fails on unregistered tags
     if tags:
@@ -890,7 +890,7 @@ def _handle_commit(
                     tract._tract_id, tag_name
                 )
             ):
-                tract.tags.register(tag_name)
+                tract.register_tag(tag_name)
 
     op = CommitOperation(operation)
     info = tract.commit(
@@ -921,14 +921,14 @@ def _handle_annotate(
 ) -> str:
     from tract.models.annotations import Priority
 
-    resolved = tract.branches.resolve(target_hash)
+    resolved = tract.resolve(target_hash)
     prio = Priority(priority)
-    annotation = tract.annotations.set(resolved, prio, reason=reason)
+    annotation = tract.annotate(resolved, prio, reason=reason)
     return f"Annotated {resolved[:8]} as {annotation.priority.value}"
 
 
 def _handle_status(tract: Tract) -> str:
-    status = tract.search.status()
+    status = tract.status()
     head_short = status.head_hash[:8] if status.head_hash else "None"
     branch = status.branch_name or "(detached)"
     budget_pct = ""
@@ -945,7 +945,7 @@ def _handle_log(tract: Tract, limit: int, op_filter: str | None) -> str:
     from tract.models.commit import CommitOperation
 
     op = CommitOperation(op_filter) if op_filter else None
-    entries = tract.search.log(limit=limit, op_filter=op)
+    entries = tract.log(limit=limit, op_filter=op)
     if not entries:
         return "No commits found."
     lines = []
@@ -962,10 +962,10 @@ def _handle_log(tract: Tract, limit: int, op_filter: str | None) -> str:
 
 def _handle_diff(tract: Tract, commit_a: str | None, commit_b: str | None) -> str:
     if commit_a is not None:
-        commit_a = tract.branches.resolve(commit_a)
+        commit_a = tract.resolve(commit_a)
     if commit_b is not None:
-        commit_b = tract.branches.resolve(commit_b)
-    result = tract.search.diff(commit_a=commit_a, commit_b=commit_b)
+        commit_b = tract.resolve(commit_b)
+    result = tract.diff(commit_a=commit_a, commit_b=commit_b)
     return (
         f"Diff: {result.stat.messages_added} added, "
         f"{result.stat.messages_removed} removed, "
@@ -984,12 +984,12 @@ def _handle_compress(
     preserve: list[str] | None = None,
 ) -> str:
     if from_commit is not None:
-        from_commit = tract.branches.resolve(from_commit)
+        from_commit = tract.resolve(from_commit)
     if to_commit is not None:
-        to_commit = tract.branches.resolve(to_commit)
+        to_commit = tract.resolve(to_commit)
     if preserve is not None:
-        preserve = [tract.branches.resolve(h) for h in preserve]
-    result = tract.compression.compress(
+        preserve = [tract.resolve(h) for h in preserve]
+    result = tract.compress(
         target_tokens=target_tokens,
         from_commit=from_commit,
         to_commit=to_commit,
@@ -1007,13 +1007,13 @@ def _handle_compress(
 def _handle_branch(
     tract: Tract, name: str, source: str | None, switch: bool
 ) -> str:
-    commit_hash = tract.branches.create(name, source=source, switch=switch)
+    commit_hash = tract.branch(name, source=source, switch=switch)
     action = "Created and switched to" if switch else "Created"
     return f"{action} branch '{name}' at {commit_hash[:8]}"
 
 
 def _handle_switch(tract: Tract, target: str) -> str:
-    commit_hash = tract.branches.switch(target)
+    commit_hash = tract.switch(target)
     return f"Switched to branch '{target}' at {commit_hash[:8]}"
 
 
@@ -1029,12 +1029,12 @@ def _handle_merge(tract: Tract, source: str, message: str | None) -> str:
 
 
 def _handle_reset(tract: Tract, target: str, mode: str) -> str:
-    resolved = tract.branches.reset(target, mode=mode)
+    resolved = tract.reset(target, mode=mode)
     return f"Reset HEAD to {resolved[:8]} (mode={mode})"
 
 
 def _handle_checkout(tract: Tract, target: str) -> str:
-    commit_hash = tract.branches.checkout(target)
+    commit_hash = tract.checkout(target)
     return f"Checked out {commit_hash[:8]}"
 
 
@@ -1044,7 +1044,7 @@ def _handle_gc(
     keep_pinned: bool,
     keep_branches: bool,
 ) -> str:
-    result = tract.compression.gc(orphan_retention_days=max(1, min_age_days))
+    result = tract.gc(orphan_retention_days=max(1, min_age_days))
     return (
         f"GC complete: {result.commits_removed} commits removed, "
         f"{result.blobs_removed} blobs removed"
@@ -1052,7 +1052,7 @@ def _handle_gc(
 
 
 def _handle_list_branches(tract: Tract) -> str:
-    branches = tract.branches.list()
+    branches = tract.list_branches()
     if not branches:
         return "No branches found."
     lines = []
@@ -1063,17 +1063,17 @@ def _handle_list_branches(tract: Tract) -> str:
 
 
 def _handle_get_commit(tract: Tract, commit_hash: str) -> str:
-    commit_hash = tract.branches.resolve(commit_hash)
-    info = tract.search.get_commit(commit_hash)
+    commit_hash = tract.resolve(commit_hash)
+    info = tract.get_commit(commit_hash)
     if info is None:
         return f"Commit {commit_hash} not found."
     # Enrich with effective priority
-    enriched = tract.annotations._enrich_with_priorities([info])
+    enriched = tract._annotations_mgr._enrich_with_priorities([info])
     info = enriched[0] if enriched else info
     priority = info.effective_priority or "normal"
     meta = json.dumps(info.metadata) if info.metadata else "none"
     gen_cfg = json.dumps(info.generation_config.to_dict()) if info.generation_config else "none"
-    tags = tract.tags.get(info.commit_hash)
+    tags = tract.get_tags(info.commit_hash)
     tags_str = ", ".join(tags) if tags else "none"
     return (
         f"Commit {info.commit_hash[:8]}: "
@@ -1132,21 +1132,21 @@ def _handle_configure_model(
 def _handle_register_tag(
     tract: Tract, name: str, description: str | None
 ) -> str:
-    tract.tags.register(name, description)
+    tract.register_tag(name, description)
     desc = f" ({description})" if description else ""
     return f"Registered tag '{name}'{desc}"
 
 
 def _handle_get_tags(tract: Tract, commit_hash: str) -> str:
-    commit_hash = tract.branches.resolve(commit_hash)
-    tags = tract.tags.get(commit_hash)
+    commit_hash = tract.resolve(commit_hash)
+    tags = tract.get_tags(commit_hash)
     if not tags:
         return f"No tags on {commit_hash[:8]}"
     return f"Tags on {commit_hash[:8]}: {', '.join(tags)}"
 
 
 def _handle_list_tags(tract: Tract) -> str:
-    entries = tract.tags.list()
+    entries = tract.list_tags()
     if not entries:
         return "No tags registered."
     lines = []
@@ -1160,21 +1160,21 @@ def _handle_list_tags(tract: Tract) -> str:
 
 
 def _handle_tag(tract: Tract, commit_hash: str, tag: str) -> str:
-    commit_hash = tract.branches.resolve(commit_hash)
-    tract.tags.add(commit_hash, tag)
+    commit_hash = tract.resolve(commit_hash)
+    tract.tag(commit_hash, tag)
     return f"Tagged {commit_hash[:8]} with '{tag}'"
 
 
 def _handle_untag(tract: Tract, commit_hash: str, tag: str) -> str:
-    commit_hash = tract.branches.resolve(commit_hash)
-    removed = tract.tags.remove(commit_hash, tag)
+    commit_hash = tract.resolve(commit_hash)
+    removed = tract.untag(commit_hash, tag)
     if removed:
         return f"Removed tag '{tag}' from {commit_hash[:8]}"
     return f"Tag '{tag}' not found on {commit_hash[:8]}"
 
 
 def _handle_query_by_tags(tract: Tract, tags: list[str], match: str) -> str:
-    results = tract.tags.query(tags, match=match)
+    results = tract._tags_mgr.query(tags, match=match)
     if not results:
         return f"No commits found with tags {tags} (match={match})"
     short = [r.commit_hash[:8] for r in results]

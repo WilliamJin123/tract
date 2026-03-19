@@ -61,7 +61,7 @@ class TestCommitInfoTags:
             tags=["instruction", "observation"],
         )
         # Retrieve via log
-        log_entries = t.search.log(limit=1)
+        log_entries = t.log(limit=1)
         assert len(log_entries) == 1
         assert "instruction" in log_entries[0].tags
         assert "observation" in log_entries[0].tags
@@ -72,7 +72,7 @@ class TestCommitInfoTags:
         info = t.user("hello", tags=["observation"])
         original_tags = list(info.tags)
         # Verify they persist across retrieval
-        log_entries = t.search.log(limit=1)
+        log_entries = t.log(limit=1)
         assert set(log_entries[0].tags) == set(original_tags)
 
     def test_commit_with_empty_tags(self):
@@ -92,50 +92,50 @@ class TestCommitInfoTags:
 
 
 # ---------------------------------------------------------------------------
-# 1b. Mutable annotation tags via t.tags.add() / t.tags.remove() / t.tags.get()
+# 1b. Mutable annotation tags via t.tag() / t.untag() / t.get_tags()
 # ---------------------------------------------------------------------------
 
 class TestMutableTags:
     """Mutable tag annotation CRUD."""
 
     def test_tag_adds_annotation(self):
-        """t.tags.add() adds a tag annotation to a commit."""
+        """t.tag() adds a tag annotation to a commit."""
         t = make_tract()
         info = t.user("hello")
-        t.tags.add(info.commit_hash, "decision")
-        tags = t.tags.get(info.commit_hash)
+        t.tag(info.commit_hash, "decision")
+        tags = t.get_tags(info.commit_hash)
         assert "decision" in tags
 
     def test_untag_removes_annotation(self):
-        """t.tags.remove() removes a tag annotation."""
+        """t.untag() removes a tag annotation."""
         t = make_tract()
         info = t.user("hello")
-        t.tags.add(info.commit_hash, "decision")
-        assert "decision" in t.tags.get(info.commit_hash)
-        result = t.tags.remove(info.commit_hash, "decision")
+        t.tag(info.commit_hash, "decision")
+        assert "decision" in t.get_tags(info.commit_hash)
+        result = t.untag(info.commit_hash, "decision")
         assert result is True
-        assert "decision" not in t.tags.get(info.commit_hash)
+        assert "decision" not in t.get_tags(info.commit_hash)
 
     def test_untag_nonexistent_returns_false(self):
-        """t.tags.remove() returns False if the tag doesn't exist."""
+        """t.untag() returns False if the tag doesn't exist."""
         t = make_tract()
         info = t.user("hello")
-        result = t.tags.remove(info.commit_hash, "nonexistent")
+        result = t.untag(info.commit_hash, "nonexistent")
         assert result is False
 
     def test_tag_invalid_commit_raises(self):
-        """t.tags.add() raises CommitNotFoundError for nonexistent commit."""
+        """t.tag() raises CommitNotFoundError for nonexistent commit."""
         from tract.exceptions import CommitNotFoundError
         t = make_tract()
         with pytest.raises(CommitNotFoundError):
-            t.tags.add("deadbeef" * 8, "instruction")
+            t.tag("deadbeef" * 8, "instruction")
 
     def test_get_tags_combines_immutable_and_mutable(self):
         """get_tags() returns both immutable and mutable tags."""
         t = make_tract()
         info = t.user("hello", tags=["observation"])
-        t.tags.add(info.commit_hash, "decision")
-        tags = t.tags.get(info.commit_hash)
+        t.tag(info.commit_hash, "decision")
+        tags = t.get_tags(info.commit_hash)
         assert "observation" in tags
         assert "decision" in tags
 
@@ -143,17 +143,17 @@ class TestMutableTags:
         """get_tags() doesn't return duplicates if same tag in both sources."""
         t = make_tract()
         info = t.user("hello", tags=["reasoning"])
-        t.tags.add(info.commit_hash, "reasoning")
-        tags = t.tags.get(info.commit_hash)
+        t.tag(info.commit_hash, "reasoning")
+        tags = t.get_tags(info.commit_hash)
         assert tags.count("reasoning") == 1
 
     def test_multiple_annotation_tags(self):
         """Multiple annotation tags can be added to a commit."""
         t = make_tract()
         info = t.user("hello")
-        t.tags.add(info.commit_hash, "decision")
-        t.tags.add(info.commit_hash, "observation")
-        tags = t.tags.get(info.commit_hash)
+        t.tag(info.commit_hash, "decision")
+        t.tag(info.commit_hash, "observation")
+        tags = t.get_tags(info.commit_hash)
         assert "decision" in tags
         assert "observation" in tags
 
@@ -168,7 +168,7 @@ class TestTagRegistry:
     def test_base_tags_pre_seeded(self):
         """Base tags are pre-seeded on open()."""
         t = make_tract()
-        tag_list = t.tags.list()
+        tag_list = t.list_tags()
         tag_names = {entry["name"] for entry in tag_list}
         expected = {
             "instruction", "tool_call", "tool_result", "reasoning",
@@ -179,7 +179,7 @@ class TestTagRegistry:
     def test_base_tags_marked_auto_created(self):
         """Base tags have auto_created=True."""
         t = make_tract()
-        tag_list = t.tags.list()
+        tag_list = t.list_tags()
         for entry in tag_list:
             if entry["name"] in {"instruction", "tool_call", "tool_result", "reasoning"}:
                 assert entry["auto_created"] is True
@@ -187,17 +187,17 @@ class TestTagRegistry:
     def test_register_custom_tag(self):
         """register_tag() adds a custom tag to the registry."""
         t = make_tract()
-        t.tags.register("important-decision", "Marks critical decisions")
-        tag_list = t.tags.list()
+        t.register_tag("important-decision", "Marks critical decisions")
+        tag_list = t.list_tags()
         names = {entry["name"] for entry in tag_list}
         assert "important-decision" in names
 
     def test_register_tag_idempotent(self):
         """register_tag() is idempotent (calling twice doesn't create duplicate)."""
         t = make_tract()
-        t.tags.register("my-tag", "Description 1")
-        t.tags.register("my-tag", "Description 2")
-        tag_list = t.tags.list()
+        t.register_tag("my-tag", "Description 1")
+        t.register_tag("my-tag", "Description 2")
+        tag_list = t.list_tags()
         my_tags = [e for e in tag_list if e["name"] == "my-tag"]
         assert len(my_tags) == 1
         # Description should be updated
@@ -224,11 +224,11 @@ class TestTagRegistry:
         assert "anything-goes" in info.tags
 
     def test_strict_mode_tag_annotation(self):
-        """t.tags.add() also respects strict mode."""
+        """t.tag() also respects strict mode."""
         t = make_tract()
         info = t.user("hello")
         with pytest.raises(TagNotRegisteredError):
-            t.tags.add(info.commit_hash, "unregistered-annotation-tag")
+            t.tag(info.commit_hash, "unregistered-annotation-tag")
 
     def test_list_tags_includes_counts(self):
         """list_tags() includes usage counts."""
@@ -236,7 +236,7 @@ class TestTagRegistry:
         t.user("message 1", tags=["reasoning"])
         t.user("message 2", tags=["reasoning"])
         t.user("message 3", tags=["observation"])
-        tag_list = t.tags.list()
+        tag_list = t.list_tags()
         reasoning_entry = next(e for e in tag_list if e["name"] == "reasoning")
         # Auto-classify may also add reasoning tags, so count >= 2
         assert reasoning_entry["count"] >= 2
@@ -244,8 +244,8 @@ class TestTagRegistry:
     def test_custom_tag_auto_created_false(self):
         """Custom registered tags have auto_created=False."""
         t = make_tract()
-        t.tags.register("custom", "A custom tag")
-        tag_list = t.tags.list()
+        t.register_tag("custom", "A custom tag")
+        tag_list = t.list_tags()
         custom = next(e for e in tag_list if e["name"] == "custom")
         assert custom["auto_created"] is False
 
@@ -339,7 +339,7 @@ class TestTagQueries:
         t.assistant("response 1")
         t.user("message 2", tags=["decision"])
 
-        results = t.tags.query(["observation", "decision"])
+        results = t._tags_mgr.query(["observation", "decision"])
         tag_sets = [set(r.tags) for r in results]
         for ts in tag_sets:
             assert ts & {"observation", "decision"}
@@ -351,7 +351,7 @@ class TestTagQueries:
         t.user("msg2", tags=["observation"])
         t.assistant("response")
 
-        results = t.tags.query(["observation", "decision"], match="all")
+        results = t._tags_mgr.query(["observation", "decision"], match="all")
         for r in results:
             assert "observation" in r.tags
             assert "decision" in r.tags
@@ -360,22 +360,22 @@ class TestTagQueries:
         """query_by_tags with empty list returns empty."""
         t = make_tract()
         t.user("hello")
-        assert t.tags.query([]) == []
+        assert t._tags_mgr.query([]) == []
 
     def test_query_by_tags_limit(self):
         """query_by_tags respects limit."""
         t = make_tract()
         for i in range(10):
             t.user(f"msg {i}", tags=["observation"])
-        results = t.tags.query(["observation"], limit=3)
+        results = t._tags_mgr.query(["observation"], limit=3)
         assert len(results) <= 3
 
     def test_query_by_tags_includes_annotation_tags(self):
         """query_by_tags includes commits with mutable annotation tags."""
         t = make_tract()
         info = t.user("special message")
-        t.tags.add(info.commit_hash, "decision")
-        results = t.tags.query(["decision"])
+        t.tag(info.commit_hash, "decision")
+        results = t._tags_mgr.query(["decision"])
         hashes = [r.commit_hash for r in results]
         assert info.commit_hash in hashes
 
@@ -387,9 +387,9 @@ class TestTagQueries:
         t.assistant("assistant msg")
 
         # Filter for instruction tags only
-        results = t.search.log(tags=["instruction"])
+        results = t.log(tags=["instruction"])
         for r in results:
-            all_tags = t.tags.get(r.commit_hash)
+            all_tags = t.get_tags(r.commit_hash)
             assert "instruction" in all_tags
 
     def test_log_with_tags_any(self):
@@ -399,7 +399,7 @@ class TestTagQueries:
         t.user("usr")
         t.assistant("ast")
 
-        results = t.search.log(tags=["instruction", "reasoning"], tag_match="any")
+        results = t.log(tags=["instruction", "reasoning"], tag_match="any")
         assert len(results) >= 2  # At least system + assistant
 
     def test_log_with_tags_all(self):
@@ -408,7 +408,7 @@ class TestTagQueries:
         info = t.user("tagged message", tags=["observation", "decision"])
         t.user("single tag", tags=["observation"])
 
-        results = t.search.log(tags=["observation", "decision"], tag_match="all")
+        results = t.log(tags=["observation", "decision"], tag_match="all")
         # Only the first message should match
         hashes = [r.commit_hash for r in results]
         assert info.commit_hash in hashes
@@ -419,7 +419,7 @@ class TestTagQueries:
         t.system("sys")
         t.user("usr")
         t.assistant("ast")
-        results = t.search.log(limit=100)
+        results = t.log(limit=100)
         assert len(results) == 3
 
     def test_query_by_tags_combined_sources(self):
@@ -427,9 +427,9 @@ class TestTagQueries:
         t = make_tract()
         info1 = t.user("msg1", tags=["observation"])
         info2 = t.user("msg2")
-        t.tags.add(info2.commit_hash, "observation")
+        t.tag(info2.commit_hash, "observation")
 
-        results = t.tags.query(["observation"])
+        results = t._tags_mgr.query(["observation"])
         hashes = [r.commit_hash for r in results]
         assert info1.commit_hash in hashes
         assert info2.commit_hash in hashes
@@ -439,9 +439,9 @@ class TestTagQueries:
         t = make_tract()
         # This commit has 'observation' immutably and 'decision' added later
         info = t.user("msg", tags=["observation"])
-        t.tags.add(info.commit_hash, "decision")
+        t.tag(info.commit_hash, "decision")
 
-        results = t.tags.query(["observation", "decision"], match="all")
+        results = t._tags_mgr.query(["observation", "decision"], match="all")
         hashes = [r.commit_hash for r in results]
         assert info.commit_hash in hashes
 
@@ -561,16 +561,16 @@ class TestEdgeCases:
         t._strict_tags = False
         info = t.commit(DialogueContent(role="user", text="no tags"), tags=[])
         # May have auto-classified tags, but get_tags should still work
-        tags = t.tags.get(info.commit_hash)
+        tags = t.get_tags(info.commit_hash)
         assert isinstance(tags, list)
 
     def test_get_tags_sorted(self):
         """get_tags returns sorted list."""
         t = make_tract()
         info = t.user("msg")
-        t.tags.add(info.commit_hash, "decision")
-        t.tags.add(info.commit_hash, "observation")
-        tags = t.tags.get(info.commit_hash)
+        t.tag(info.commit_hash, "decision")
+        t.tag(info.commit_hash, "observation")
+        tags = t.get_tags(info.commit_hash)
         assert tags == sorted(tags)
 
     def test_log_tags_filter_with_op_filter(self):
@@ -582,7 +582,7 @@ class TestEdgeCases:
         t.assistant("v2", edit=original.commit_hash)
 
         # Only APPEND commits with instruction tag
-        results = t.search.log(
+        results = t.log(
             tags=["instruction"],
             op_filter=CommitOperation.APPEND,
         )
@@ -612,10 +612,10 @@ class TestEdgeCases:
     def test_tag_count_in_list_tags(self):
         """list_tags() count reflects actual usage."""
         t = make_tract()
-        t.tags.register("custom", "A custom tag")
+        t.register_tag("custom", "A custom tag")
         t._strict_tags = False  # Allow unregistered auto-tags
         info = t.user("msg", tags=["custom"])
-        tag_list = t.tags.list()
+        tag_list = t.list_tags()
         custom = next(e for e in tag_list if e["name"] == "custom")
         assert custom["count"] >= 1
 
@@ -625,7 +625,7 @@ class TestEdgeCases:
         t.user("first", tags=["observation"])
         t.user("second", tags=["observation"])
         t.user("third", tags=["observation"])
-        results = t.tags.query(["observation"])
+        results = t._tags_mgr.query(["observation"])
         # Results should be in reverse chronological order (newest first)
         if len(results) >= 2:
             assert results[0].created_at >= results[1].created_at

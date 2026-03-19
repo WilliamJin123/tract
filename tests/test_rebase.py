@@ -50,7 +50,7 @@ def setup_diverged_branches(
     feature_texts = feature_texts or ["feature 1", "feature 2"]
 
     # Create branch from current HEAD
-    t.branches.create(branch_name)
+    t.branch(branch_name)
 
     # Commit on feature branch
     feature_commits = []
@@ -59,7 +59,7 @@ def setup_diverged_branches(
         feature_commits.append(info)
 
     # Switch back to main and commit
-    t.branches.switch("main")
+    t.switch("main")
     main_commits = []
     for text in main_texts:
         info = t.commit(DialogueContent(role="user", text=text))
@@ -144,7 +144,7 @@ class TestImportCommitAppend:
         """Import-commit preserves message, metadata, generation_config."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
-        t.branches.create("feature")
+        t.branch("feature")
 
         feat1 = t.commit(
             DialogueContent(role="user", text="feature work"),
@@ -153,7 +153,7 @@ class TestImportCommitAppend:
             generation_config={"temperature": 0.7},
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
         result = t.import_commit(feat1.commit_hash)
@@ -190,7 +190,7 @@ class TestImportCommitEdit:
         t = Tract.open()
         base = t.commit(InstructionContent(text="base instruction"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         # Edit the base instruction (which exists on both branches)
         edit = t.commit(
             InstructionContent(text="edited instruction"),
@@ -198,7 +198,7 @@ class TestImportCommitEdit:
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
         # Import-commit the edit -- base commit exists on main
@@ -215,7 +215,7 @@ class TestImportCommitEdit:
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         # Create a commit only on feature branch
         feature_only = t.commit(DialogueContent(role="user", text="feature only"))
         # Edit it
@@ -225,7 +225,7 @@ class TestImportCommitEdit:
             edit_target=feature_only.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
         # Import-commit the edit -- its target doesn't exist on main
@@ -238,7 +238,7 @@ class TestImportCommitEdit:
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         feature_only = t.commit(DialogueContent(role="user", text="feature only"))
         edit = t.commit(
             DialogueContent(role="user", text="edited feature only"),
@@ -246,7 +246,7 @@ class TestImportCommitEdit:
             edit_target=feature_only.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
         result = t.import_commit(edit.commit_hash, resolver=make_approve_resolver())
@@ -261,7 +261,7 @@ class TestImportCommitEdit:
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         feature_only = t.commit(DialogueContent(role="user", text="feature only"))
         edit = t.commit(
             DialogueContent(role="user", text="edited feature only"),
@@ -269,7 +269,7 @@ class TestImportCommitEdit:
             edit_target=feature_only.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
         result = t.import_commit(edit.commit_hash, resolver=make_skip_resolver())
@@ -294,7 +294,7 @@ class TestRebaseSimple:
         branch_name, main_commits, feature_commits = setup_diverged_branches(t)
 
         # Switch to feature and rebase onto main
-        t.branches.switch("feature")
+        t.switch("feature")
         result = t.rebase("main")
 
         assert len(result.replayed_commits) == 2
@@ -322,7 +322,7 @@ class TestRebaseSimple:
         )
 
         # Compile feature before rebase
-        t.branches.switch("feature")
+        t.switch("feature")
         before = t.compile()
         before_texts = [m.content for m in before.messages]
 
@@ -346,7 +346,7 @@ class TestRebaseSimple:
         t.commit(InstructionContent(text="base"))
         branch_name, main_commits, feature_commits = setup_diverged_branches(t)
 
-        t.branches.switch("feature")
+        t.switch("feature")
         result = t.rebase("main")
 
         # Feature branch should point at the new HEAD
@@ -359,7 +359,7 @@ class TestRebaseSimple:
         """Rebase onto target when current is already ahead is noop."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(DialogueContent(role="user", text="feature work"))
 
         # Feature is ahead of main (main hasn't diverged), rebase is noop
@@ -378,7 +378,7 @@ class TestRebaseSafetyChecks:
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         feature_only = t.commit(DialogueContent(role="user", text="feature only"))
         t.commit(
             DialogueContent(role="user", text="edited feature only"),
@@ -386,10 +386,10 @@ class TestRebaseSafetyChecks:
             edit_target=feature_only.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
-        t.branches.switch("feature")
+        t.switch("feature")
         with pytest.raises(SemanticSafetyError, match="safety warning"):
             t.rebase("main")
         t.close()
@@ -399,7 +399,7 @@ class TestRebaseSafetyChecks:
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         feature_only = t.commit(DialogueContent(role="user", text="feature only"))
         t.commit(
             DialogueContent(role="user", text="edited feature only"),
@@ -407,10 +407,10 @@ class TestRebaseSafetyChecks:
             edit_target=feature_only.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
-        t.branches.switch("feature")
+        t.switch("feature")
         result = t.rebase("main", resolver=make_approve_resolver())
 
         assert len(result.replayed_commits) > 0
@@ -423,7 +423,7 @@ class TestRebaseSafetyChecks:
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         feature_only = t.commit(DialogueContent(role="user", text="feature only"))
         t.commit(
             DialogueContent(role="user", text="edited feature only"),
@@ -431,10 +431,10 @@ class TestRebaseSafetyChecks:
             edit_target=feature_only.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
-        t.branches.switch("feature")
+        t.switch("feature")
         with pytest.raises(RebaseError, match="abort"):
             t.rebase("main", resolver=make_abort_resolver())
         t.close()
@@ -444,7 +444,7 @@ class TestRebaseSafetyChecks:
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         feature_only = t.commit(DialogueContent(role="user", text="feature only"))
         t.commit(
             DialogueContent(role="user", text="edited"),
@@ -452,10 +452,10 @@ class TestRebaseSafetyChecks:
             edit_target=feature_only.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main"))
 
-        t.branches.switch("feature")
+        t.switch("feature")
         # No resolver -- should block
         with pytest.raises(SemanticSafetyError):
             t.rebase("main")
@@ -466,7 +466,7 @@ class TestRebaseSafetyChecks:
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         feature_only = t.commit(DialogueContent(role="user", text="feature only"))
         t.commit(
             DialogueContent(role="user", text="edited"),
@@ -474,10 +474,10 @@ class TestRebaseSafetyChecks:
             edit_target=feature_only.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main"))
 
-        t.branches.switch("feature")
+        t.switch("feature")
         result = t.rebase("main", resolver=make_approve_resolver())
         assert result.new_head is not None
         t.close()
@@ -515,12 +515,12 @@ class TestIntegration:
         branch_name, main_commits, feature_commits = setup_diverged_branches(t)
 
         # Rebase feature onto main
-        t.branches.switch("feature")
+        t.switch("feature")
         rebase_result = t.rebase("main")
         assert len(rebase_result.replayed_commits) == 2
 
         # Now merge feature into main -- should fast-forward
-        t.branches.switch("main")
+        t.switch("main")
         merge_result = t.merge("feature")
         assert merge_result.merge_type == "fast_forward"
         t.close()
@@ -531,11 +531,11 @@ class TestIntegration:
         t.commit(InstructionContent(text="system prompt"))
 
         # Create feature branch and diverge
-        t.branches.create("feature")
+        t.branch("feature")
         f1 = t.commit(DialogueContent(role="user", text="feature work 1"))
         f2 = t.commit(DialogueContent(role="user", text="feature work 2"))
 
-        t.branches.switch("main")
+        t.switch("main")
         m1 = t.commit(DialogueContent(role="user", text="main work"))
 
         # Import-commit f1 onto main
@@ -543,12 +543,12 @@ class TestIntegration:
         assert cp.new_commit is not None
 
         # Rebase feature onto main (now main has base + main_work + imported f1)
-        t.branches.switch("feature")
+        t.switch("feature")
         rebase_result = t.rebase("main")
         assert len(rebase_result.replayed_commits) >= 1
 
         # Merge feature into main (should fast-forward)
-        t.branches.switch("main")
+        t.switch("main")
         merge_result = t.merge("feature")
         assert merge_result.merge_type == "fast_forward"
 
@@ -566,7 +566,7 @@ class TestIntegration:
         t.commit(InstructionContent(text="base"))
         branch_name, main_commits, feature_commits = setup_diverged_branches(t)
 
-        t.branches.switch("feature")
+        t.switch("feature")
         result = t.rebase("main")
 
         assert len(result.warnings) == 0
@@ -578,7 +578,7 @@ class TestIntegration:
         t = Tract.open()
         base = t.commit(InstructionContent(text="base"))
 
-        t.branches.create("feature")
+        t.branch("feature")
         # Edit the base commit (which is shared/on both branches)
         t.commit(
             InstructionContent(text="edited base"),
@@ -586,10 +586,10 @@ class TestIntegration:
             edit_target=base.commit_hash,
         )
 
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(DialogueContent(role="user", text="main work"))
 
-        t.branches.switch("feature")
+        t.switch("feature")
         # base commit is on the target branch, so no warnings expected
         result = t.rebase("main")
         assert len(result.warnings) == 0
@@ -618,7 +618,7 @@ class TestIntegration:
         t.commit(InstructionContent(text="base"))
         branch_name, main_commits, feature_commits = setup_diverged_branches(t)
 
-        t.branches.switch("feature")
+        t.switch("feature")
         result = t.rebase("main")
 
         assert isinstance(result, RebaseResult)
@@ -635,7 +635,7 @@ class TestIntegration:
         base = t.commit(InstructionContent(text="base"))
 
         # Detach HEAD
-        t.branches.checkout(base.commit_hash)
+        t.checkout(base.commit_hash)
 
         with pytest.raises(RebaseError, match="detached"):
             t.rebase("main")

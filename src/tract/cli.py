@@ -99,7 +99,7 @@ def cmd_init(args: argparse.Namespace) -> None:
 def cmd_log(args: argparse.Namespace) -> None:
     """Show commit history."""
     t = _open_tract()
-    commits = t.search.log(limit=args.limit)  # type: ignore[attr-defined]
+    commits = t.log(limit=args.limit)  # type: ignore[attr-defined]
 
     if not commits:
         print("No commits.")
@@ -162,15 +162,15 @@ def cmd_show(args: argparse.Namespace) -> None:
     t = _open_tract()
 
     try:
-        full_hash = t.branches.resolve(args.hash)  # type: ignore[attr-defined]
+        full_hash = t.resolve(args.hash)  # type: ignore[attr-defined]
     except Exception:
         _err(f"Commit not found: {args.hash}")
 
-    commit = t.search.get_commit(full_hash)  # type: ignore[attr-defined]
+    commit = t.get_commit(full_hash)  # type: ignore[attr-defined]
     if commit is None:
         _err(f"Commit not found: {args.hash}")
 
-    content = t.search.get_content(full_hash)  # type: ignore[attr-defined]
+    content = t.get_content(full_hash)  # type: ignore[attr-defined]
     content_text = content if isinstance(content, str) else json.dumps(content, indent=2)
 
     priority = commit.effective_priority or "normal"
@@ -198,9 +198,9 @@ def cmd_diff(args: argparse.Namespace) -> None:
     if ref and ".." in ref:
         parts = ref.split("..", 1)
         branch_a, branch_b = parts[0], parts[1]
-        result = t.search.compare(branch_a=branch_a, branch_b=branch_b)  # type: ignore[attr-defined]
+        result = t.compare(branch_a=branch_a, branch_b=branch_b)  # type: ignore[attr-defined]
     else:
-        result = t.search.diff()  # type: ignore[attr-defined]
+        result = t.diff()  # type: ignore[attr-defined]
 
     stat = result.stat
     tokens_added = max(0, stat.total_token_delta)
@@ -228,7 +228,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
 def cmd_branches(args: argparse.Namespace) -> None:
     """List branches."""
     t = _open_tract()
-    branches = t.branches.list()  # type: ignore[attr-defined]
+    branches = t.list_branches()  # type: ignore[attr-defined]
 
     if not branches:
         print("No branches.")
@@ -289,7 +289,7 @@ def cmd_compress(args: argparse.Namespace) -> None:
     if args.target_tokens is not None:
         kwargs["target_tokens"] = args.target_tokens
 
-    result = t.compression.compress(**kwargs)  # type: ignore[attr-defined]
+    result = t.compress(**kwargs)  # type: ignore[attr-defined]
 
     ratio = result.compression_ratio
     print(

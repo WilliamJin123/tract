@@ -440,13 +440,13 @@ def never(_ctx: PolicyContext) -> bool:
 def token_ratio_above(threshold: float) -> Callable[[PolicyContext], bool]:
     """Create a condition that fires when token usage ratio exceeds *threshold*.
 
-    The ratio is ``current_tokens / max_tokens`` from ``t.search.status()``.
+    The ratio is ``current_tokens / max_tokens`` from ``t.status()``.
     Returns False if the ratio cannot be determined.
     """
 
     def check(ctx: PolicyContext) -> bool:
         try:
-            status = ctx.tract.search.status()
+            status = ctx.tract.status()
             if hasattr(status, "token_ratio") and status.token_ratio is not None:
                 return status.token_ratio > threshold
         except Exception:
@@ -461,7 +461,7 @@ def commit_count_above(threshold: int) -> Callable[[PolicyContext], bool]:
 
     def check(ctx: PolicyContext) -> bool:
         try:
-            status = ctx.tract.search.status()
+            status = ctx.tract.status()
             return status.commit_count > threshold
         except Exception:
             return False

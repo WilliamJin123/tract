@@ -51,29 +51,29 @@ def tags_auto_explicit_mutable() -> None:
     with Tract.open() as t:
         # Auto-classification: every commit gets tags based on content type/role
         sys_ci = t.system("You are a research assistant.")
-        print(f"  system()    auto-tags: {t.tags.get(sys_ci.commit_hash)}")
+        print(f"  system()    auto-tags: {t.get_tags(sys_ci.commit_hash)}")
 
         usr_ci = t.user("Summarize the attention paper.")
-        print(f"  user()      auto-tags: {t.tags.get(usr_ci.commit_hash)}")
+        print(f"  user()      auto-tags: {t.get_tags(usr_ci.commit_hash)}")
 
         ast_ci = t.assistant("The Transformer replaces recurrence with self-attention.")
-        print(f"  assistant() auto-tags: {t.tags.get(ast_ci.commit_hash)}")
+        print(f"  assistant() auto-tags: {t.get_tags(ast_ci.commit_hash)}")
 
         # Explicit tags at commit time (merged with auto-tags)
         obs_ci = t.user("Sparse attention scales linearly.", tags=["observation"])
-        print(f"  user(tags=) all tags:  {t.tags.get(obs_ci.commit_hash)}")
+        print(f"  user(tags=) all tags:  {t.get_tags(obs_ci.commit_hash)}")
 
         # Mutable annotation tags (add/remove after the fact)
-        t.tags.add(ast_ci.commit_hash, "decision")
-        print(f"  after add():    {t.tags.get(ast_ci.commit_hash)}")
+        t.tag(ast_ci.commit_hash, "decision")
+        print(f"  after add():    {t.get_tags(ast_ci.commit_hash)}")
 
-        removed = t.tags.remove(ast_ci.commit_hash, "decision")
-        print(f"  after remove(): {t.tags.get(ast_ci.commit_hash)}  (removed={removed})")
+        removed = t.untag(ast_ci.commit_hash, "decision")
+        print(f"  after remove(): {t.get_tags(ast_ci.commit_hash)}  (removed={removed})")
 
         # Tag registry: register custom tags with descriptions
-        t.tags.register("dead_end", "Agent determined this path was unproductive")
+        t.register_tag("dead_end", "Agent determined this path was unproductive")
         ci = t.assistant("Approach A failed.")
-        t.tags.add(ci.commit_hash, "dead_end")
+        t.tag(ci.commit_hash, "dead_end")
         print(f"  registered 'dead_end', applied to {ci.commit_hash[:8]}")
 
     print("  PASSED")
@@ -98,7 +98,7 @@ def tag_queries() -> None:
         print(f"  all-match ('reasoning' AND 'decision'):   {len(all_hits)} commits")
 
         # log(tags=) filters the commit log
-        reasoning_log = t.search.log(tags=["reasoning"])
+        reasoning_log = t.log(tags=["reasoning"])
         print(f"  log(tags=['reasoning']): {len(reasoning_log)} entries")
 
     print("  PASSED")
@@ -118,15 +118,15 @@ def priority_annotations() -> None:
         t.assistant("INT4 cuts memory 4x with <1% accuracy loss.")
 
         # Unpin the system prompt
-        t.annotations.set(sys_ci.commit_hash, Priority.NORMAL, reason="temporary persona")
+        t.annotate(sys_ci.commit_hash, Priority.NORMAL, reason="temporary persona")
 
         # Skip verbose content (hidden from compile, still in history)
-        t.annotations.set(verbose.commit_hash, Priority.SKIP, reason="user narrowed focus")
+        t.annotate(verbose.commit_hash, Priority.SKIP, reason="user narrowed focus")
         ctx = t.compile()
         print(f"  after SKIP: {len(ctx.messages)} messages (verbose hidden)")
 
         # Reset back to normal
-        t.annotations.set(verbose.commit_hash, Priority.NORMAL)
+        t.annotate(verbose.commit_hash, Priority.NORMAL)
         ctx = t.compile()
         print(f"  after reset: {len(ctx.messages)} messages (restored)")
 
@@ -153,7 +153,7 @@ def edit_in_place() -> None:
         print(f"  system edit: {bad.commit_hash[:8]} -> {fix.commit_hash[:8]}")
         print(f"  compiled system: {ctx.messages[0].content}")
 
-        log = t.search.log()
+        log = t.log()
         edit_count = sum(1 for e in log if e.operation.value == "edit")
         print(f"  log: {len(log)} entries, {edit_count} edits")
 
@@ -246,7 +246,7 @@ def reasoning_commits() -> None:
         print(f"  reasoning text:    '{r.message}'")
 
         # Force inclusion via PINNED annotation
-        t.annotations.set(r.commit_hash, Priority.PINNED)
+        t.annotate(r.commit_hash, Priority.PINNED)
         pinned_ctx = t.compile()
         print(f"  after pinning:     {pinned_ctx.commit_count} messages")
 
@@ -280,11 +280,11 @@ def named_checkpoints() -> None:
     _section(8, "Named Checkpoints")
 
     with Tract.open() as t:
-        t.tags.register("checkpoint:start", "Beginning of workflow")
-        t.tags.register("checkpoint:research-done", "All sources analyzed")
+        t.register_tag("checkpoint:start", "Beginning of workflow")
+        t.register_tag("checkpoint:research-done", "All sources analyzed")
 
         sys_ci = t.system("You are a technical writer producing an API guide.")
-        t.tags.add(sys_ci.commit_hash, "checkpoint:start")
+        t.tag(sys_ci.commit_hash, "checkpoint:start")
         print(f"  Checkpoint [start] at {sys_ci.commit_hash[:8]}")
 
         t.user("We need documentation for the authentication module.")
@@ -296,17 +296,17 @@ def named_checkpoints() -> None:
         )
 
         research_head = t.head
-        t.tags.add(research_head, "checkpoint:research-done")
+        t.tag(research_head, "checkpoint:research-done")
         print(f"  Checkpoint [research-done] at {research_head[:8]}")
 
         t.user("Write the first draft.")
         t.assistant("# Authentication Guide\n\nOAuth2, API Keys, JWT sections...")
 
         # Query checkpoints from the log
-        all_entries = t.search.log(limit=50)
+        all_entries = t.log(limit=50)
         checkpoints = []
         for entry in all_entries:
-            entry_tags = t.tags.get(entry.commit_hash)
+            entry_tags = t.get_tags(entry.commit_hash)
             cp_tags = [tg for tg in entry_tags if tg.startswith("checkpoint:")]
             if cp_tags:
                 checkpoints.append((entry, cp_tags))
@@ -335,7 +335,7 @@ def cross_session_persistence() -> None:
         # --- Session 1 ---
         print("  SESSION 1: Starting research project")
         t = Tract.open(path=db_path, tract_id=TRACT_ID)
-        t.tags.register("checkpoint:session-end", "End of session marker")
+        t.register_tag("checkpoint:session-end", "End of session marker")
 
         t.system("You are a market research analyst.")
         t.user("Analyze the enterprise LLM market for 2025.")
@@ -345,10 +345,10 @@ def cross_session_persistence() -> None:
             "2. Top players: OpenAI, Anthropic, Google, Meta\n"
             "3. Enterprise adoption: 67% of Fortune 500"
         )
-        t.tags.add(t.head, "checkpoint:session-end")
+        t.tag(t.head, "checkpoint:session-end")
 
         session1_head = t.head
-        session1_count = len(t.search.log(limit=50))
+        session1_count = len(t.log(limit=50))
         print(f"    HEAD: {session1_head[:8]}, commits: {session1_count}")
 
         t.close()
@@ -360,21 +360,21 @@ def cross_session_persistence() -> None:
         t = Tract.open(path=db_path, tract_id=TRACT_ID)
 
         assert t.head == session1_head, "HEAD should persist"
-        assert len(t.search.log(limit=50)) == session1_count, "Commit count should match"
+        assert len(t.log(limit=50)) == session1_count, "Commit count should match"
         print(f"    HEAD matches: {t.head[:8]}")
 
-        last_content = str(t.search.get_content(t.head) or "")
+        last_content = str(t.get_content(t.head) or "")
         assert "Market size: $47B" in last_content
         print(f"    Content recovered: {last_content[:50]}...")
 
-        head_tags = t.tags.get(t.head)
+        head_tags = t.get_tags(t.head)
         assert "checkpoint:session-end" in head_tags
         print(f"    Tags persisted: {head_tags}")
 
         # Continue work
         t.user("What about the open-source LLM segment?")
         t.assistant("Llama 3 dominates at 45% of OSS deployments.")
-        new_count = len(t.search.log(limit=50))
+        new_count = len(t.log(limit=50))
         assert new_count > session1_count
         print(f"    New commit count: {new_count} (was {session1_count})")
 
@@ -385,7 +385,7 @@ def cross_session_persistence() -> None:
         # --- Session 3: verification ---
         print("  SESSION 3: Final verification")
         t = Tract.open(path=db_path, tract_id=TRACT_ID)
-        assert len(t.search.log(limit=50)) == new_count
+        assert len(t.log(limit=50)) == new_count
         ctx = t.compile()
         text = " ".join((m.content or "") for m in ctx.messages)
         assert "enterprise LLM market" in text
@@ -486,12 +486,12 @@ def context_portability() -> None:
         t.user("Plan the Q1 roadmap.")
         t.assistant("Q1: Auth, API v2, Dashboard redesign.")
 
-        t.branches.create("feature/auth")
+        t.branch("feature/auth")
         t.user("Detail the auth plan.")
         t.assistant("Auth: OAuth2 + PKCE, JWT refresh rotation, SAML 2.0 SSO.")
 
         feature_state = t.persistence.export_state()
-        t.branches.switch("main")
+        t.switch("main")
         main_state = t.persistence.export_state()
 
     assert len(feature_state["commits"]) > len(main_state["commits"])
@@ -618,7 +618,7 @@ def session_metadata_recovery() -> None:
     try:
         # -- Simulate crash after 3/5 sources --
         t = Tract.open(path=db_path, tract_id=TRACT_ID)
-        t.tags.register("workflow:state", "Workflow state checkpoint")
+        t.register_tag("workflow:state", "Workflow state checkpoint")
         t.system("You are a research analyst compiling an industry report.")
 
         for i, source in enumerate(sources[:3]):
@@ -648,10 +648,10 @@ def session_metadata_recovery() -> None:
         print("  RECOVERY: reopening...")
         t = Tract.open(path=db_path, tract_id=TRACT_ID)
 
-        state_commits = t.search.find(metadata_key="workflow", limit=10)
+        state_commits = t.find(metadata_key="workflow", limit=10)
         assert len(state_commits) > 0
         latest = state_commits[0]
-        meta = t.search.get_metadata(latest)
+        meta = t.get_metadata(latest)
         print(f"    Found state at [{latest.commit_hash[:8]}]: {meta['progress']}")
         print(f"    Remaining: {meta['remaining_sources']}")
 
@@ -677,8 +677,8 @@ def session_metadata_recovery() -> None:
             )
             print(f"    Resumed: {source} ({progress})")
 
-        final = t.search.find(metadata_key="workflow", limit=1)[0]
-        final_meta = t.search.get_metadata(final)
+        final = t.find(metadata_key="workflow", limit=1)[0]
+        final_meta = t.get_metadata(final)
         assert final_meta["progress"] == "5/5 sources"
         assert len(final_meta["remaining_sources"]) == 0
         print(f"  Pipeline complete: {final_meta['progress']}")

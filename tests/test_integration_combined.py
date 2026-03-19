@@ -30,7 +30,7 @@ class TestSnapshotAndHealth:
             t.assistant("More responses")
             # Restore via label match
             t.persistence.restore_snapshot("checkpoint_1")
-            report = t.search.health()
+            report = t.health()
             assert report.healthy
 
     def test_health_after_sliding_window(self):
@@ -40,12 +40,12 @@ class TestSnapshotAndHealth:
             for i in range(15):
                 t.user(f"Message {i}")
                 t.assistant(f"Response {i}")
-            t.compression.compress(
+            t.compress(
                 strategy="sliding_window",
                 window_size=5,
                 content="[Summary of early messages]",
             )
-            report = t.search.health()
+            report = t.health()
             assert report.healthy
             assert report.commit_count > 0
 
@@ -65,7 +65,7 @@ class TestSnapshotAndHealth:
 
             # Restore to alpha
             t.persistence.restore_snapshot("alpha")
-            report = t.search.health()
+            report = t.health()
             assert report.healthy
 
 
@@ -79,11 +79,11 @@ class TestConfigAndBranch:
         """Configs on different branches stay isolated."""
         with Tract.open() as t:
             t.config.set(model="gpt-4")
-            t.branches.create("experiment")
-            t.branches.switch("experiment")
+            t.branch("experiment")
+            t.switch("experiment")
             t.config.set(model="claude-3")
             assert t.config.get("model") == "claude-3"
-            t.branches.switch("main")
+            t.switch("main")
             assert t.config.get("model") == "gpt-4"
 
     def test_config_survives_batch(self):
@@ -99,15 +99,15 @@ class TestConfigAndBranch:
         """Branch inherits parent config, override stays branch-local."""
         with Tract.open() as t:
             t.config.set(model="gpt-4", temperature=0.7)
-            t.branches.create("feature")
-            t.branches.switch("feature")
+            t.branch("feature")
+            t.switch("feature")
             # Inherits from main
             assert t.config.get("model") == "gpt-4"
             # Override locally
             t.config.set(temperature=0.0)
             assert t.config.get("temperature") == 0.0
             # Main unchanged
-            t.branches.switch("main")
+            t.switch("main")
             assert t.config.get("temperature") == 0.7
 
 
@@ -132,14 +132,14 @@ class TestBatchAndMiddleware:
         """Batch rolls back all commits on error."""
         with Tract.open() as t:
             t.system("Base")
-            initial_count = len(t.search.log())
+            initial_count = len(t.log())
             try:
                 with t.batch():
                     t.user("Should rollback")
                     raise ValueError("Simulated error")
             except ValueError:
                 pass
-            assert len(t.search.log()) == initial_count
+            assert len(t.log()) == initial_count
 
     def test_batch_with_config_and_middleware(self):
         """Batch containing configure() calls works with middleware."""
@@ -166,11 +166,11 @@ class TestFindAndCompare:
     def test_find_by_tag(self):
         """find() returns commits matching a specific tag."""
         with Tract.open() as t:
-            t.tags.register("critical", description="Critical items")
+            t.register_tag("critical", description="Critical items")
             t.user("Regular message")
             t.user("Important message", tags=["critical"])
             t.user("Also important", tags=["critical"])
-            results = t.search.find(tag="critical")
+            results = t.find(tag="critical")
             assert len(results) == 2
 
     def test_find_by_content(self):
@@ -179,23 +179,23 @@ class TestFindAndCompare:
             t.user("The quick brown fox")
             t.user("The lazy dog")
             t.assistant("Response about animals")
-            results = t.search.find(content="quick brown")
+            results = t.find(content="quick brown")
             assert len(results) == 1
 
     def test_compare_branches_with_configs(self):
         """compare() works on branches with different configs."""
         with Tract.open() as t:
             t.system("Base system prompt")
-            t.branches.create("a")
-            t.branches.switch("a")
+            t.branch("a")
+            t.switch("a")
             t.config.set(model="gpt-4")
             t.user("Branch A message")
-            t.branches.switch("main")
-            t.branches.create("b")
-            t.branches.switch("b")
+            t.switch("main")
+            t.branch("b")
+            t.switch("b")
             t.config.set(model="claude-3")
             t.user("Branch B message")
-            diff = t.search.compare("a", "b")
+            diff = t.compare("a", "b")
             assert diff is not None
             assert diff.commit_a is not None
             assert diff.commit_b is not None
@@ -206,7 +206,7 @@ class TestFindAndCompare:
             t.system("System prompt")
             t.user("User message")
             t.config.set(model="gpt-4")
-            config_results = t.search.find(content_type="config")
+            config_results = t.find(content_type="config")
             assert len(config_results) >= 1
 
     def test_find_by_metadata(self):
@@ -215,7 +215,7 @@ class TestFindAndCompare:
             t.user("First", metadata={"priority": "high"})
             t.user("Second", metadata={"priority": "low"})
             t.user("Third", metadata={"priority": "high"})
-            results = t.search.find(metadata_key="priority", metadata_value="high")
+            results = t.find(metadata_key="priority", metadata_value="high")
             assert len(results) == 2
 
 
@@ -265,7 +265,7 @@ class TestTemplatesAndProfiles:
                 threshold="0.8",
             )
             # The template creates an instruction/directive commit
-            results = t.search.find(content="healthcare")
+            results = t.find(content="healthcare")
             assert len(results) >= 1
 
 
@@ -278,19 +278,19 @@ class TestSnapshotAndFind:
     def test_find_across_snapshot_restore(self):
         """find() results reflect current branch state after restore."""
         with Tract.open() as t:
-            t.tags.register("v1", description="Version 1")
-            t.tags.register("v2", description="Version 2")
+            t.register_tag("v1", description="Version 1")
+            t.register_tag("v2", description="Version 2")
             t.user("First message", tags=["v1"])
             t.persistence.snapshot("s1")
             t.user("Second message", tags=["v2"])
 
             # Before restore: v2 is visible
-            assert len(t.search.find(tag="v2")) == 1
+            assert len(t.find(tag="v2")) == 1
 
             # After restore: we're on a different branch at the snapshot point
             t.persistence.restore_snapshot("s1")
             # The restored branch should not have the v2 commit in its ancestry
-            v2_results = t.search.find(tag="v2")
+            v2_results = t.find(tag="v2")
             assert len(v2_results) == 0
 
     def test_snapshot_preserves_config(self):
@@ -323,13 +323,13 @@ class TestHealthCompressConfig:
                 t.user(f"Q{i}")
                 t.assistant(f"A{i}")
 
-            t.compression.compress(
+            t.compress(
                 content="[Summary of Q&A session]",
                 strategy="sliding_window",
                 window_size=3,
             )
             t.config.set(model="gpt-4o", temperature=0.2)
-            report = t.search.health()
+            report = t.health()
             assert report.healthy
 
     def test_config_find_after_compress(self):
@@ -340,7 +340,7 @@ class TestHealthCompressConfig:
                 t.user(f"Filler message {i}")
                 t.assistant(f"Filler response {i}")
 
-            t.compression.compress(content="[Summary of filler messages]")
+            t.compress(content="[Summary of filler messages]")
 
             # Re-configure after compression (common post-compress pattern)
             t.config.set(model="gpt-4o", temperature=0.2)
@@ -351,11 +351,11 @@ class TestHealthCompressConfig:
             assert t.config.get("temperature") == 0.2
 
             # find() locates the post-compression config commit
-            results = t.search.find(content_type="config")
+            results = t.find(content_type="config")
             assert len(results) >= 1
 
             # find() can locate the post-compression user commit
-            results = t.search.find(content="Post-compression")
+            results = t.find(content="Post-compression")
             assert len(results) == 1
 
 
@@ -386,7 +386,7 @@ class TestMiddlewareConfigFind:
             assert len(config_commits_seen) == 3
 
             # find() also locates config commits
-            found = t.search.find(content_type="config")
+            found = t.find(content_type="config")
             assert len(found) == 3
 
     def test_middleware_with_branch_compare(self):
@@ -401,8 +401,8 @@ class TestMiddlewareConfigFind:
             t.system("Base")
             t.user("Main message")
 
-            t.branches.create("experiment")
-            t.branches.switch("experiment")
+            t.branch("experiment")
+            t.switch("experiment")
             t.user("Experiment message 1")
             t.user("Experiment message 2")
 
@@ -412,7 +412,7 @@ class TestMiddlewareConfigFind:
             assert commit_counts["experiment"] >= 2
 
             # Compare the two branches
-            diff = t.search.compare("main", "experiment")
+            diff = t.compare("main", "experiment")
             assert diff is not None
 
 
@@ -425,12 +425,12 @@ class TestBatchFindSnapshot:
     def test_batch_commits_findable(self):
         """Commits inside batch are findable after batch completes."""
         with Tract.open() as t:
-            t.tags.register("batch_test", description="Batch test tag")
+            t.register_tag("batch_test", description="Batch test tag")
             with t.batch():
                 t.user("Batch item alpha", tags=["batch_test"])
                 t.user("Batch item beta", tags=["batch_test"])
                 t.assistant("Batch response")
-            results = t.search.find(tag="batch_test")
+            results = t.find(tag="batch_test")
             assert len(results) == 2
 
     def test_snapshot_before_batch_error(self):
@@ -439,7 +439,7 @@ class TestBatchFindSnapshot:
             t.system("Initial state")
             t.user("Important data")
             snap_tag = t.persistence.snapshot("pre_batch")
-            initial_log_len = len(t.search.log())
+            initial_log_len = len(t.log())
 
             try:
                 with t.batch():
@@ -450,7 +450,7 @@ class TestBatchFindSnapshot:
                 pass
 
             # After failed batch, log length should be unchanged
-            assert len(t.search.log()) == initial_log_len
+            assert len(t.log()) == initial_log_len
 
             # Snapshot is still valid and restorable
             snapshots = t.persistence.list_snapshots()

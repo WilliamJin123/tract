@@ -566,8 +566,8 @@ class SemanticMaintainer:
         peeked_content: dict[str, str] = {}
         for h in peek_hashes:
             try:
-                full_hash = tract.branches.resolve(h)
-                content = tract.search.get_content(full_hash)
+                full_hash = tract.resolve(h)
+                content = tract.get_content(full_hash)
                 if content is None:
                     peeked_content[h] = "(content not found)"
                 elif isinstance(content, dict):
@@ -733,7 +733,7 @@ class SemanticMaintainer:
 
     @staticmethod
     def _exec_annotate(tract: Tract, action: dict[str, Any]) -> None:
-        """Execute an annotate action: t.annotations.set(hash, priority)."""
+        """Execute an annotate action: t.annotate(hash, priority)."""
         from tract.models.annotations import Priority
 
         target = action.get("target", "")
@@ -752,21 +752,21 @@ class SemanticMaintainer:
                 f"Valid values: {list(priority_map.keys())}"
             )
 
-        full_hash = tract.branches.resolve(target)
+        full_hash = tract.resolve(target)
         reason = action.get("reason")
-        tract.annotations.set(full_hash, priority, reason=reason)
+        tract.annotate(full_hash, priority, reason=reason)
 
     @staticmethod
     def _exec_compress(tract: Tract, action: dict[str, Any]) -> None:
-        """Execute a compress action: t.compression.compress(commits=..., instructions=...)."""
+        """Execute a compress action: t.compress(commits=..., instructions=...)."""
         commits = action.get("commits", [])
         instructions = action.get("instructions")
 
         if not commits:
             raise ValueError("Compress action requires 'commits' list.")
 
-        resolved = [tract.branches.resolve(c) for c in commits]
-        tract.compression.compress(commits=resolved, instructions=instructions)
+        resolved = [tract.resolve(c) for c in commits]
+        tract.compress(commits=resolved, instructions=instructions)
 
     @staticmethod
     def _exec_compress_range(tract: Tract, action: dict[str, Any]) -> None:
@@ -778,9 +778,9 @@ class SemanticMaintainer:
         if not from_hash or not to_hash:
             raise ValueError("compress_range requires 'from' and 'to' commit hashes.")
 
-        resolved_from = tract.branches.resolve(from_hash)
-        resolved_to = tract.branches.resolve(to_hash)
-        tract.compression.compress(
+        resolved_from = tract.resolve(from_hash)
+        resolved_to = tract.resolve(to_hash)
+        tract.compress(
             from_commit=resolved_from,
             to_commit=resolved_to,
             instructions=instructions,
@@ -799,7 +799,7 @@ class SemanticMaintainer:
         if not content:
             raise ValueError("Edit action requires 'content'.")
 
-        full_hash = tract.branches.resolve(target)
+        full_hash = tract.resolve(target)
         tract.commit(
             content={"content_type": "freeform", "text": content},
             operation=CommitOperation.EDIT,
@@ -832,7 +832,7 @@ class SemanticMaintainer:
         tract.directive(name, text)
 
     def _exec_tag(self, tract: Tract, action: dict[str, Any]) -> None:
-        """Execute a tag action: t.tags.add(hash, tag_name)."""
+        """Execute a tag action: t.tag(hash, tag_name)."""
         target = action.get("target", "")
         tag_name = action.get("tag", "")
 
@@ -841,16 +841,16 @@ class SemanticMaintainer:
         if not tag_name:
             raise ValueError("Tag action requires a 'tag'.")
 
-        full_hash = tract.branches.resolve(target)
+        full_hash = tract.resolve(target)
 
         # Auto-register the tag (idempotent -- no-ops if already registered).
-        tract.tags.register(tag_name, f"Auto-registered by maintainer '{self.name}'")
-        tract.tags.add(full_hash, tag_name)
+        tract.register_tag(tag_name, f"Auto-registered by maintainer '{self.name}'")
+        tract.tag(full_hash, tag_name)
 
     @staticmethod
     def _exec_gc(tract: Tract, action: dict[str, Any]) -> None:
-        """Execute a gc action: t.compression.gc()."""
-        tract.compression.gc()
+        """Execute a gc action: t.gc()."""
+        tract.gc()
 
 
 # ---------------------------------------------------------------------------

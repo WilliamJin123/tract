@@ -33,7 +33,7 @@ class TestTransitionBasic:
         with Tract.open() as t:
             t.user("Setup")
             t.transition("feature")
-            branches = {b.name for b in t.branches.list()}
+            branches = {b.name for b in t.list_branches()}
             assert "feature" in branches
 
     def test_transition_switches_to_target(self):
@@ -47,7 +47,7 @@ class TestTransitionBasic:
         """transition() switches to an existing branch without error."""
         with Tract.open() as t:
             t.user("Setup")
-            t.branches.create("feature", switch=False)
+            t.branch("feature", switch=False)
             t.transition("feature")
             assert t.current_branch == "feature"
 

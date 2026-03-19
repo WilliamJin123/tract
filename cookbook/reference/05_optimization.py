@@ -54,21 +54,21 @@ def per_stage_budgets() -> None:
             t.user(data, message=msg)
             t.assistant(f"Recorded: {msg}.")
 
-        s = t.search.status()
+        s = t.status()
         print(f"\n  Research: {s.token_count}/{s.token_budget_max} tokens "
               f"({s.token_count / s.token_budget_max:.0%})")
 
         # Pin critical finding, then compress for next stage
-        for e in t.search.log():
+        for e in t.log():
             if e.message and "Market" in (e.message or ""):
-                t.annotations.set(e.commit_hash, Priority.PINNED)
+                t.annotate(e.commit_hash, Priority.PINNED)
                 break
 
         t.transition("generation")
-        result = t.compression.compress(
+        result = t.compress(
             content="Summary: A ($50M, enterprise), B ($25M, SMB). TAM $15B."
         )
-        gs = t.search.status()
+        gs = t.status()
         print(f"  Generation (post-compress): {gs.token_count} tokens")
     print("PASSED\n")
 
@@ -99,11 +99,11 @@ def auto_compression_threshold() -> None:
         ]:
             t.user(review, message=f"Review: {topic}")
             t.assistant(summary, message=f"Summary: {topic}")
-            s = t.search.status()
+            s = t.status()
             if s.token_count > THRESHOLD and not compressed:
-                r = t.compression.compress(content="Auth P0, Payments P0, API P1.")
+                r = t.compress(content="Auth P0, Payments P0, API P1.")
                 compressed = True
-                a = t.search.status()
+                a = t.status()
                 print(f"    [{topic}] THRESHOLD -- compressed {r.original_tokens}"
                       f" -> {r.compressed_tokens}")
             else:
@@ -136,7 +136,7 @@ def compile_strategies() -> None:
         ctx_r70 = t.compile(strategy="adaptive", recent_ratio=0.7)
 
         baseline = ctx_full.token_count
-        print(f"\n  {len(t.search.log())} commits built")
+        print(f"\n  {len(t.log())} commits built")
         print(f"\n  {'Strategy':<30} {'Tokens':>7} {'Savings':>8}")
         print(f"  {'-' * 47}")
         for label, ctx in [
@@ -180,14 +180,14 @@ def progressive_compression() -> None:
             ci = t.user(finding, message=name)
             t.assistant(f"Ack: {name}.", message=f"Ack: {name}")
             if pin:
-                t.annotations.set(ci.commit_hash, Priority.PINNED)
+                t.annotate(ci.commit_hash, Priority.PINNED)
 
-            s = t.search.status()
+            s = t.status()
             if s.token_count > BUDGET * 0.80:
-                r = t.compression.compress(
+                r = t.compress(
                     content=f"Steps 1-{i+1}: 3 flagged suppliers. Gamma CRITICAL."
                 )
-                a = t.search.status()
+                a = t.status()
                 print(f"    [{name}] {s.token_count}->{a.token_count} tokens "
                       f"({len(r.preserved_commits)} pinned preserved)")
             else:
@@ -195,7 +195,7 @@ def progressive_compression() -> None:
 
         ctx = t.compile()
         pinned = sum(1 for p in ctx.priorities if p == "pinned")
-        print(f"\n  Final: {t.search.status().token_count}/{BUDGET} tokens, "
+        print(f"\n  Final: {t.status().token_count}/{BUDGET} tokens, "
               f"{pinned} pinned in context")
     print("PASSED\n")
 
@@ -256,7 +256,7 @@ def prompt_caching() -> None:
         for q, rev in [(1, "10M"), (2, "11.5M"), (3, "13M")]:
             t.user(f"Q{q} revenue: ${rev}.")
             t.assistant(f"Q{q} noted.")
-        t.compression.compress(content="Revenue: Q1 $10M, Q2 $11.5M, Q3 $13M.")
+        t.compress(content="Revenue: Q1 $10M, Q2 $11.5M, Q3 $13M.")
         t.user("Project Q4.")
         t.assistant("Q4 projected: $14.5-15.5M.")
 

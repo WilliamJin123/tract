@@ -170,7 +170,7 @@ def research_tract():
     """Pre-populated tract for testing research workflows."""
     t = Tract.open()
     t.system("You are a research assistant.")
-    t.tags.register("research", "Research findings")
+    t.register_tag("research", "Research findings")
     t.assistant("AI market: $196B in 2023, 37% CAGR.", tags=["research"])
     t.assistant("72% Fortune 500 using AI. 3.5x ROI.", tags=["research"])
     yield t
@@ -185,11 +185,11 @@ def pytest_fixtures_demo() -> None:
 
     with Tract.open() as t:
         t.system("You are a research assistant.")
-        t.tags.register("research", "Research findings")
+        t.register_tag("research", "Research findings")
         t.assistant("AI market: $196B, 37% CAGR.", tags=["research"])
 
-        assert len(t.search.log()) >= 2
-        t.compression.compress(content="AI market: $196B, 37% CAGR.")
+        assert len(t.log()) >= 2
+        t.compress(content="AI market: $196B, 37% CAGR.")
         ctx = t.compile()
         assert "196B" in " ".join(m.content or "" for m in ctx.messages)
 
@@ -256,17 +256,17 @@ def checkpoint_recovery() -> None:
         t.user("Sales data.")
         t.assistant("Ready.")
 
-        t.tags.register("checkpoint", "Safe rollback")
+        t.register_tag("checkpoint", "Safe rollback")
         cp = t.head
-        t.tags.add(cp, "checkpoint")
+        t.tag(cp, "checkpoint")
 
         # Risky operation
         t.user("Complex regression with polynomial features.")
         t.assistant("Computing...")
-        before = len(t.search.log())
+        before = len(t.log())
 
-        t.branches.reset(cp)  # Reset to checkpoint
-        after = len(t.search.log())
+        t.reset(cp)  # Reset to checkpoint
+        after = len(t.log())
 
         # Retry simply
         t.user("Top 3 sales trends.")
@@ -295,19 +295,19 @@ def branch_isolated_retries() -> None:
         t.assistant("Trying several approaches.")
 
         # Attempt 1 fails
-        t.branches.create("attempt_1", switch=True)
+        t.branch("attempt_1", switch=True)
         t.assistant("Monte Carlo... ERROR: Variance too high.")
-        t.branches.switch("main")
+        t.switch("main")
 
         # Attempt 2 fails
-        t.branches.create("attempt_2", switch=True)
+        t.branch("attempt_2", switch=True)
         t.assistant("Linear regression... ERROR: R-squared 0.23.")
-        t.branches.switch("main")
+        t.switch("main")
 
         # Attempt 3 succeeds
-        t.branches.create("attempt_3", switch=True)
+        t.branch("attempt_3", switch=True)
         t.assistant("3-month moving average: Q4 $2.1M. Robust.")
-        t.branches.switch("main")
+        t.switch("main")
         mr = t.merge("attempt_3")
 
         ctx = t.compile()
@@ -341,7 +341,7 @@ def compression_fallback_chain() -> None:
                                ("summary", "20 weeks, $210k total, 1000 users."),
                                ("aggressive", "$210k revenue, 1000 users.")]:
             try:
-                t.compression.compress(content=content)
+                t.compress(content=content)
                 after = t.compile().token_count
                 print(f"  '{name}': {orig}->{after} ({(1-after/orig)*100:.0f}% saved)")
                 won = name

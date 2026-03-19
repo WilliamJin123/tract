@@ -121,14 +121,14 @@ class TestCompactToolGeneration:
 
 class TestTokenSavings:
     def test_compact_fewer_schemas_than_full(self, tract):
-        full_tools = tract.toolkit.as_tools(profile="full")
-        compact_tools = tract.toolkit.as_tools(profile="compact")
+        full_tools = tract.runtime.tools.as_tools(profile="full")
+        compact_tools = tract.runtime.tools.as_tools(profile="compact")
         assert len(compact_tools) < len(full_tools)
         assert len(compact_tools) == 7
 
     def test_compact_smaller_json_than_full(self, tract):
-        full_json = json.dumps(tract.toolkit.as_tools(profile="full"))
-        compact_json = json.dumps(tract.toolkit.as_tools(profile="compact"))
+        full_json = json.dumps(tract.runtime.tools.as_tools(profile="full"))
+        compact_json = json.dumps(tract.runtime.tools.as_tools(profile="compact"))
         # Compact should be significantly smaller
         assert len(compact_json) < len(full_json) * 0.5
 
@@ -248,7 +248,7 @@ class TestDiscoverTool:
 
 class TestConsumptionPaths:
     def test_as_tools_openai(self, tract):
-        tools = tract.toolkit.as_tools(profile="compact", format="openai")
+        tools = tract.runtime.tools.as_tools(profile="compact", format="openai")
         assert len(tools) == 7
         for tool in tools:
             assert tool["type"] == "function"
@@ -256,14 +256,14 @@ class TestConsumptionPaths:
             assert "name" in tool["function"]
 
     def test_as_tools_anthropic(self, tract):
-        tools = tract.toolkit.as_tools(profile="compact", format="anthropic")
+        tools = tract.runtime.tools.as_tools(profile="compact", format="anthropic")
         assert len(tools) == 7
         for tool in tools:
             assert "name" in tool
             assert "input_schema" in tool
 
     def test_as_callable_tools(self, tract):
-        callables = tract.toolkit.as_callable_tools(profile="compact")
+        callables = tract.runtime.tools.as_callable_tools(profile="compact")
         assert len(callables) == 7
         names = {c.__name__ for c in callables}
         assert "tract_context" in names
@@ -322,7 +322,7 @@ class TestActionNameTranslation:
 
     def test_action_names_resolve_to_domain_tools(self, tract):
         """tool_names=["commit", "status"] should include tract_context."""
-        tools = tract.toolkit.as_tools(
+        tools = tract.runtime.tools.as_tools(
             profile="compact",
             tool_names=["commit", "status"],
         )
@@ -331,7 +331,7 @@ class TestActionNameTranslation:
 
     def test_action_names_across_domains(self, tract):
         """Names from different domains should include all relevant domains."""
-        tools = tract.toolkit.as_tools(
+        tools = tract.runtime.tools.as_tools(
             profile="compact",
             tool_names=["commit", "branch", "tag"],
         )
@@ -342,7 +342,7 @@ class TestActionNameTranslation:
 
     def test_action_names_no_extra_domains(self, tract):
         """Only relevant domains should be included, not all 7."""
-        tools = tract.toolkit.as_tools(
+        tools = tract.runtime.tools.as_tools(
             profile="compact",
             tool_names=["commit", "status"],
         )
@@ -353,7 +353,7 @@ class TestActionNameTranslation:
 
     def test_compact_domain_names_still_work(self, tract):
         """Direct compact names like 'tract_context' should still work."""
-        tools = tract.toolkit.as_tools(
+        tools = tract.runtime.tools.as_tools(
             profile="compact",
             tool_names=["tract_context", "tract_branch"],
         )
@@ -362,7 +362,7 @@ class TestActionNameTranslation:
 
     def test_mixed_action_and_domain_names(self, tract):
         """Mix of action names and compact domain names should work."""
-        tools = tract.toolkit.as_tools(
+        tools = tract.runtime.tools.as_tools(
             profile="compact",
             tool_names=["commit", "tract_branch"],
         )
@@ -372,7 +372,7 @@ class TestActionNameTranslation:
 
     def test_discover_always_excluded_unless_named(self, tract):
         """tract_discover should not appear unless explicitly requested."""
-        tools = tract.toolkit.as_tools(
+        tools = tract.runtime.tools.as_tools(
             profile="compact",
             tool_names=["commit"],
         )
@@ -381,7 +381,7 @@ class TestActionNameTranslation:
 
     def test_empty_tool_names_returns_nothing(self, tract):
         """Empty tool_names list should return no tools."""
-        tools = tract.toolkit.as_tools(
+        tools = tract.runtime.tools.as_tools(
             profile="compact",
             tool_names=[],
         )
@@ -389,7 +389,7 @@ class TestActionNameTranslation:
 
     def test_unrecognized_names_silently_ignored(self, tract):
         """Names that match neither action nor domain are silently skipped."""
-        tools = tract.toolkit.as_tools(
+        tools = tract.runtime.tools.as_tools(
             profile="compact",
             tool_names=["nonexistent_tool"],
         )

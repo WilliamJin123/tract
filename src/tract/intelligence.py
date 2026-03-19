@@ -16,7 +16,7 @@ Example::
 
     result = cherry_pick(t, "Implement the auth module", limit=5)
     for h in result.selected_hashes:
-        print(t.search.get_content(h))
+        print(t.get_content(h))
 
     dedup = deduplicate(t, auto_skip=True)
     print(f"Found {len(dedup.duplicate_groups)} duplicate groups")
@@ -141,7 +141,7 @@ def _build_intelligence_manifest(
         Tuple of (manifest_text, commit_entries) where commit_entries is
         a list of dicts with commit metadata for result resolution.
     """
-    entries = tract.search.log(limit=max_log_entries)
+    entries = tract.log(limit=max_log_entries)
     if not entries:
         return "=== CONTEXT MANIFEST ===\n(no commits)", []
 
@@ -175,7 +175,7 @@ def _build_intelligence_manifest(
 
         if include_content_preview:
             try:
-                content = tract.search.get_content(entry.commit_hash)
+                content = tract.get_content(entry.commit_hash)
                 if content is not None:
                     preview = str(content)[:preview_length]
                     if len(str(content)) > preview_length:
@@ -743,7 +743,7 @@ def _apply_skip_annotations(
         # Keep the newest (first), skip the rest
         for h in sorted_group[1:]:
             try:
-                tract.annotations.set(
+                tract.annotate(
                     h,
                     Priority.SKIP,
                     reason="Duplicate content detected by deduplicate()",

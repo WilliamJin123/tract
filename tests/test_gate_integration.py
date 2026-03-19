@@ -62,7 +62,7 @@ class ErrorLLMClient:
 
 def _seed_commits(t: Tract, n: int = 3, tag: str = "research") -> None:
     """Add *n* commits tagged with *tag*."""
-    t.tags.register(tag, f"Auto-registered for test")
+    t.register_tag(tag, f"Auto-registered for test")
     for i in range(n):
         t.commit(
             {"content_type": "dialogue", "role": "user", "text": f"Finding {i + 1}"},
@@ -156,7 +156,7 @@ class TestGateBlocksTransition:
             _seed_commits(t, n=2, tag="research")
 
             # Create the target branch before gating
-            t.branches.create("synthesis", switch=False)
+            t.branch("synthesis", switch=False)
 
             # Register the gate
             t.middleware.gate(
@@ -181,7 +181,7 @@ class TestGateBlocksTransition:
             t.config.configure_llm(mock)
 
             _seed_commits(t, n=1)
-            t.branches.create("next-stage", switch=False)
+            t.branch("next-stage", switch=False)
 
             t.middleware.gate(
                 "analysis-gate",
@@ -209,7 +209,7 @@ class TestGatePassesTransition:
             _seed_commits(t, n=3, tag="research")
 
             # Create the target branch
-            t.branches.create("synthesis", switch=False)
+            t.branch("synthesis", switch=False)
 
             t.middleware.gate(
                 "research-complete",
@@ -233,7 +233,7 @@ class TestGatePassesTransition:
             t.config.configure_llm(mock)
 
             _seed_commits(t, n=2, tag="finding")
-            t.branches.create("analysis", switch=False)
+            t.branch("analysis", switch=False)
 
             t.middleware.gate("check", event="pre_transition", check="Has findings")
             t.transition("analysis")
@@ -257,7 +257,7 @@ class TestGateWithCondition:
             t.config.configure_llm(mock)
 
             _seed_commits(t, n=1)
-            t.branches.create("other_branch", switch=False)
+            t.branch("other_branch", switch=False)
 
             # Gate only fires when target is "synthesis"
             t.middleware.gate(
@@ -281,7 +281,7 @@ class TestGateWithCondition:
             t.config.configure_llm(mock)
 
             _seed_commits(t, n=1)
-            t.branches.create("synthesis", switch=False)
+            t.branch("synthesis", switch=False)
 
             t.middleware.gate(
                 "synthesis-gate",
@@ -304,8 +304,8 @@ class TestGateWithCondition:
             t.config.configure_llm(mock)
 
             _seed_commits(t, n=1)
-            t.branches.create("drafts", switch=False)
-            t.branches.create("synthesis", switch=False)
+            t.branch("drafts", switch=False)
+            t.branch("synthesis", switch=False)
 
             t.middleware.gate(
                 "synth-only",
@@ -320,7 +320,7 @@ class TestGateWithCondition:
             assert len(mock.calls) == 0
 
             # Switch back
-            t.branches.switch("main")
+            t.switch("main")
 
             # Synthesis: blocks (condition=True, LLM returns FAIL)
             with pytest.raises(BlockedError):
@@ -340,7 +340,7 @@ class TestGateFailOpenOnLLMError:
             t.config.configure_llm(error_client)
 
             _seed_commits(t, n=2)
-            t.branches.create("next", switch=False)
+            t.branch("next", switch=False)
 
             t.middleware.gate(
                 "fragile-gate",
@@ -361,7 +361,7 @@ class TestGateFailOpenOnLLMError:
             t.config.configure_llm(error_client)
 
             _seed_commits(t, n=1)
-            t.branches.create("dest", switch=False)
+            t.branch("dest", switch=False)
 
             t.middleware.gate("warn-gate", event="pre_transition", check="criterion")
 
@@ -483,7 +483,7 @@ class TestMultipleGates:
             t.config.configure_llm(seq_mock)
 
             _seed_commits(t, n=2)
-            t.branches.create("target", switch=False)
+            t.branch("target", switch=False)
 
             t.middleware.gate("gate-a", event="pre_transition", check="Check A")
             t.middleware.gate("gate-b", event="pre_transition", check="Check B")
@@ -606,7 +606,7 @@ class TestGateFailThenPass:
             t.config.configure_llm(toggle)
 
             _seed_commits(t, n=2)
-            t.branches.create("synthesis", switch=False)
+            t.branch("synthesis", switch=False)
 
             t.middleware.gate(
                 "depth-check",
@@ -674,12 +674,12 @@ class TestGatePostEventValidation:
 
 
 class TestManifestMethod:
-    """Tests for t.search.manifest() — the public API for build_manifest."""
+    """Tests for t.manifest() — the public API for build_manifest."""
 
     def test_manifest_returns_string(self):
         with Tract.open() as t:
             t.system("Hello")
-            m = t.search.manifest()
+            m = t.manifest()
             assert isinstance(m, str)
             assert "CONTEXT MANIFEST" in m
 
@@ -687,21 +687,21 @@ class TestManifestMethod:
         with Tract.open() as t:
             t.system("System prompt")
             t.user("User message")
-            m = t.search.manifest()
+            m = t.manifest()
             assert "COMMIT LOG" in m
             assert "Commits shown: 2" in m
 
     def test_manifest_contains_config(self):
         with Tract.open() as t:
             t.config.set(stage="research")
-            m = t.search.manifest()
+            m = t.manifest()
             assert "research" in m
 
     def test_manifest_max_log_entries(self):
         with Tract.open() as t:
             for i in range(10):
                 t.user(f"Message {i}")
-            m = t.search.manifest(max_log_entries=3)
+            m = t.manifest(max_log_entries=3)
             assert "Commits shown: 3" in m
 
     def test_manifest_safe_from_middleware(self):
@@ -716,6 +716,6 @@ class TestManifestMethod:
         with Tract.open() as t:
             t.middleware.add("pre_compile", spy)
             t.system("Hello")
-            _ = t.search.manifest()
+            _ = t.manifest()
             # pre_compile should NOT have been called by manifest()
             assert "pre_compile" not in calls

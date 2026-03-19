@@ -583,7 +583,7 @@ class TestIntegrationWithTract:
         t = Tract.open(str(tmp_path / "test.db"))
         t.system("You are a helpful assistant.")
         t.user("Hello!")
-        log = t.search.log()
+        log = t.log()
         assert len(log) >= 1
 
         # __str__
@@ -600,7 +600,7 @@ class TestIntegrationWithTract:
         t = Tract.open(str(tmp_path / "test.db"))
         t.system("You are a helpful assistant.")
         t.user("Hello!")
-        status = t.search.status()
+        status = t.status()
 
         # __str__
         s = str(status)

@@ -130,7 +130,7 @@ class TestBranchCreation:
     def test_create_from_head(self, tract):
         """Create a branch from HEAD, auto-switch."""
         head_before = tract.head
-        result = tract.branches.create("feature")
+        result = tract.branch("feature")
         assert result == head_before
         assert tract.current_branch == "feature"
 
@@ -138,41 +138,41 @@ class TestBranchCreation:
         """Create branch from a specific commit hash."""
         first_hash = tract.head
         tract.commit(InstructionContent(text="second"), message="second")
-        result = tract.branches.create("from-first", source=first_hash, switch=False)
+        result = tract.branch("from-first", source=first_hash, switch=False)
         assert result == first_hash
         # Should still be on main since switch=False
         assert tract.current_branch == "main"
 
     def test_create_with_auto_switch(self, tract):
         """Default: switch to new branch."""
-        tract.branches.create("feature")
+        tract.branch("feature")
         assert tract.current_branch == "feature"
 
     def test_create_without_switch(self, tract):
         """Create branch without switching."""
-        tract.branches.create("feature", switch=False)
+        tract.branch("feature", switch=False)
         assert tract.current_branch == "main"
 
     def test_duplicate_name_error(self, tract):
         """Duplicate branch name raises BranchExistsError."""
-        tract.branches.create("feature", switch=False)
+        tract.branch("feature", switch=False)
         with pytest.raises(BranchExistsError, match="feature"):
-            tract.branches.create("feature")
+            tract.branch("feature")
 
     def test_create_main_duplicate_error(self, tract):
         """Cannot create 'main' when it already exists."""
         with pytest.raises(BranchExistsError, match="main"):
-            tract.branches.create("main")
+            tract.branch("main")
 
     def test_create_no_commits_error(self, empty_tract):
         """Cannot create branch with no commits."""
         with pytest.raises(TraceError, match="no commits"):
-            empty_tract.branches.create("feature")
+            empty_tract.branch("feature")
 
     def test_invalid_name_error(self, tract):
         """Invalid branch name raises InvalidBranchNameError."""
         with pytest.raises(InvalidBranchNameError):
-            tract.branches.create("feat..bar")
+            tract.branch("feat..bar")
 
 
 # ---------------------------------------------------------------------------
@@ -182,39 +182,39 @@ class TestBranchCreation:
 class TestBranchSwitching:
     def test_switch_to_branch(self, tract):
         """Switch to an existing branch."""
-        tract.branches.create("feature")
-        tract.branches.switch("main")
+        tract.branch("feature")
+        tract.switch("main")
         assert tract.current_branch == "main"
 
     def test_switch_back_and_forth(self, tract):
         """Switch between branches maintains state."""
-        tract.branches.create("feature")
-        tract.branches.switch("main")
-        tract.branches.switch("feature")
+        tract.branch("feature")
+        tract.switch("main")
+        tract.switch("feature")
         assert tract.current_branch == "feature"
 
     def test_switch_nonexistent_raises(self, tract):
         """Switching to nonexistent branch raises BranchNotFoundError."""
         with pytest.raises(BranchNotFoundError, match="nonexistent"):
-            tract.branches.switch("nonexistent")
+            tract.switch("nonexistent")
 
     def test_switch_rejects_commit_hash(self, tract):
         """switch() only accepts branch names, not commit hashes."""
         commit_hash = tract.head
         with pytest.raises(BranchNotFoundError):
-            tract.branches.switch(commit_hash)
+            tract.switch(commit_hash)
 
     def test_independent_histories(self, tract):
         """Commits on different branches produce different HEADs."""
         initial_head = tract.head
 
         # Create feature branch and commit
-        tract.branches.create("feature")
+        tract.branch("feature")
         tract.commit(InstructionContent(text="on feature"), message="feature commit")
         feature_head = tract.head
 
         # Switch to main and commit
-        tract.branches.switch("main")
+        tract.switch("main")
         assert tract.head == initial_head  # Main hasn't moved
         tract.commit(InstructionContent(text="on main"), message="main commit")
         main_head = tract.head
@@ -224,7 +224,7 @@ class TestBranchSwitching:
         assert main_head != initial_head
 
         # Switch back to feature -- head is still feature's head
-        tract.branches.switch("feature")
+        tract.switch("feature")
         assert tract.head == feature_head
 
 
@@ -235,17 +235,17 @@ class TestBranchSwitching:
 class TestBranchListing:
     def test_list_single_branch(self, tract):
         """Only main branch after initial commit."""
-        branches = tract.branches.list()
+        branches = tract.list_branches()
         assert len(branches) == 1
         assert branches[0].name == "main"
         assert branches[0].is_current is True
 
     def test_list_multiple_branches(self, tract):
         """List all branches with current flag."""
-        tract.branches.create("feature", switch=False)
-        tract.branches.create("develop", switch=False)
+        tract.branch("feature", switch=False)
+        tract.branch("develop", switch=False)
 
-        branches = tract.branches.list()
+        branches = tract.list_branches()
         names = {b.name for b in branches}
         assert names == {"main", "feature", "develop"}
 
@@ -256,20 +256,20 @@ class TestBranchListing:
 
     def test_list_branches_current_after_switch(self, tract):
         """Current branch flag updates after switch."""
-        tract.branches.create("feature")  # auto-switch
-        branches = tract.branches.list()
+        tract.branch("feature")  # auto-switch
+        branches = tract.list_branches()
         current = [b for b in branches if b.is_current]
         assert len(current) == 1
         assert current[0].name == "feature"
 
     def test_list_empty_before_commits(self, empty_tract):
         """No branches before any commits."""
-        branches = empty_tract.branches.list()
+        branches = empty_tract.list_branches()
         assert branches == []
 
     def test_branch_info_has_commit_hash(self, tract):
         """BranchInfo includes the commit hash."""
-        branches = tract.branches.list()
+        branches = tract.list_branches()
         assert branches[0].commit_hash == tract.head
 
 
@@ -280,49 +280,49 @@ class TestBranchListing:
 class TestBranchDeletion:
     def test_delete_non_current_branch(self, tract):
         """Can delete a branch that is not current."""
-        tract.branches.create("feature", switch=False)
-        tract.branches.delete("feature")
-        branches = tract.branches.list()
+        tract.branch("feature", switch=False)
+        tract.delete_branch("feature")
+        branches = tract.list_branches()
         names = {b.name for b in branches}
         assert "feature" not in names
 
     def test_delete_current_branch_blocked(self, tract):
         """Cannot delete the current branch."""
-        tract.branches.create("feature")  # switches to feature
+        tract.branch("feature")  # switches to feature
         with pytest.raises(TraceError, match="Cannot delete the current branch"):
-            tract.branches.delete("feature")
+            tract.delete_branch("feature")
 
     def test_delete_nonexistent_raises(self, tract):
         """Deleting nonexistent branch raises BranchNotFoundError."""
         with pytest.raises(BranchNotFoundError, match="ghost"):
-            tract.branches.delete("ghost")
+            tract.delete_branch("ghost")
 
     def test_delete_merged_branch(self, tract):
         """Delete a branch whose tip is reachable from current (merged)."""
         # Branch from initial commit -- same tip as main
-        tract.branches.create("feature", switch=False)
+        tract.branch("feature", switch=False)
         # feature tip == main tip, so it's "merged"
-        tract.branches.delete("feature")
-        branches = tract.branches.list()
+        tract.delete_branch("feature")
+        branches = tract.list_branches()
         assert len(branches) == 1
 
     def test_delete_unmerged_branch_blocked(self, tract):
         """Block deletion of branch with unmerged commits."""
-        tract.branches.create("feature")  # switch to feature
+        tract.branch("feature")  # switch to feature
         tract.commit(InstructionContent(text="unmerged work"), message="unmerged")
-        tract.branches.switch("main")
+        tract.switch("main")
 
         with pytest.raises(UnmergedBranchError, match="feature"):
-            tract.branches.delete("feature")
+            tract.delete_branch("feature")
 
     def test_force_delete_unmerged(self, tract):
         """Force delete bypasses unmerged check."""
-        tract.branches.create("feature")
+        tract.branch("feature")
         tract.commit(InstructionContent(text="unmerged work"), message="unmerged")
-        tract.branches.switch("main")
+        tract.switch("main")
 
-        tract.branches.delete("feature", force=True)
-        branches = tract.branches.list()
+        tract.delete_branch("feature", force=True)
+        branches = tract.list_branches()
         names = {b.name for b in branches}
         assert "feature" not in names
 
@@ -360,7 +360,7 @@ class TestFindMergeBase:
         main_head = tract.head
 
         # Create feature from fork point and commit
-        tract.branches.create("feature", source=fork_point)
+        tract.branch("feature", source=fork_point)
         tract.commit(InstructionContent(text="feature work"), message="feature work")
         feature_head = tract.head
 
@@ -424,7 +424,7 @@ class TestIsAncestor:
         tract.commit(InstructionContent(text="main"), message="main")
         main_head = tract.head
 
-        tract.branches.create("feature", source=fork)
+        tract.branch("feature", source=fork)
         tract.commit(InstructionContent(text="feature"), message="feature")
         feature_head = tract.head
 
@@ -507,12 +507,12 @@ class TestCompilerMultiParent:
         main_head = tract.head
 
         # Create feature from fork and commit
-        tract.branches.create("feature", source=fork)
+        tract.branch("feature", source=fork)
         tract.commit(InstructionContent(text="feature-only"), message="feature work")
         feature_head = tract.head
 
         # Switch back to main
-        tract.branches.switch("main")
+        tract.switch("main")
 
         # Manually create a merge commit that points at both parents
         # First, create the merge commit content
@@ -553,13 +553,13 @@ class TestBranchIntegration:
         base_hash = t.head
 
         # Create feature branch
-        t.branches.create("feature")
+        t.branch("feature")
         assert t.current_branch == "feature"
         t.commit(InstructionContent(text="on feature"), message="feat 1")
         feature_head = t.head
 
         # Switch to main and commit
-        t.branches.switch("main")
+        t.switch("main")
         assert t.current_branch == "main"
         assert t.head == base_hash  # Main unchanged
         t.commit(InstructionContent(text="on main"), message="main 1")
@@ -576,7 +576,7 @@ class TestBranchIntegration:
         assert merge_base == base_hash
 
         # List branches
-        branches = t.branches.list()
+        branches = t.list_branches()
         assert len(branches) == 2
         names = {b.name for b in branches}
         assert names == {"main", "feature"}
@@ -594,11 +594,11 @@ class TestBranchIntegration:
         t.commit(InstructionContent(text="base"), message="base")
         base = t.head
 
-        t.branches.create("feature-a", switch=False)
-        t.branches.create("feature-b", switch=False)
-        t.branches.create("feature-c", switch=False)
+        t.branch("feature-a", switch=False)
+        t.branch("feature-b", switch=False)
+        t.branch("feature-c", switch=False)
 
-        branches = t.branches.list()
+        branches = t.list_branches()
         assert len(branches) == 4  # main + 3 features
 
         # All point at base
@@ -613,7 +613,7 @@ class TestBranchIntegration:
         t.commit(InstructionContent(text="base"), message="base")
 
         # Feature branch with its own commit
-        t.branches.create("feature")
+        t.branch("feature")
         t.commit(InstructionContent(text="feature content"), message="feat")
 
         # Compile on feature should include both
@@ -621,7 +621,7 @@ class TestBranchIntegration:
         assert len(feature_result.messages) == 2
 
         # Switch to main -- compile should only have base
-        t.branches.switch("main")
+        t.switch("main")
         main_result = t.compile()
         assert len(main_result.messages) == 1
 
@@ -632,11 +632,11 @@ class TestBranchIntegration:
         t = Tract.open()
         t.commit(InstructionContent(text="base"), message="base")
 
-        t.branches.create("temp")
-        t.branches.switch("main")
-        t.branches.delete("temp")
+        t.branch("temp")
+        t.switch("main")
+        t.delete_branch("temp")
 
-        branches = t.branches.list()
+        branches = t.list_branches()
         assert len(branches) == 1
         assert branches[0].name == "main"
 
@@ -646,11 +646,11 @@ class TestBranchIntegration:
         """The exact smoke test from the plan's verification section."""
         t = Tract.open()
         t.commit(InstructionContent(text="base"))
-        t.branches.create("feature")  # Creates and switches
+        t.branch("feature")  # Creates and switches
         t.commit(InstructionContent(text="on feature"))
-        t.branches.switch("main")
+        t.switch("main")
         t.commit(InstructionContent(text="on main"))
         assert t.head != t._ref_repo.get_branch(t.tract_id, "feature")
-        branches = t.branches.list()
+        branches = t.list_branches()
         assert len(branches) == 2
         t.close()

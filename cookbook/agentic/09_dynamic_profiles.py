@@ -108,10 +108,10 @@ def stage_based_switching() -> None:
 
         # Set up stage branches
         for stage in ["research", "implementation", "review"]:
-            t.branches.create(stage, switch=True)
+            t.branch(stage, switch=True)
             t.config.set(stage=stage)
-            t.branches.switch("main")
-        t.branches.switch("research")
+            t.switch("main")
+        t.switch("research")
 
         # Middleware: swap profile on stage transition
         def profile_switcher(ctx: MiddlewareContext):
@@ -207,7 +207,7 @@ def progressive_discovery() -> None:
 
         # Middleware: unlock tools based on demonstrated progress
         def progressive_unlock(ctx: MiddlewareContext):
-            entries = ctx.tract.search.log(limit=50)
+            entries = ctx.tract.log(limit=50)
 
             # After 3 commits -> unlock branching
             if len(entries) >= 3 and not unlocked["branching"]:
@@ -218,17 +218,17 @@ def progressive_discovery() -> None:
 
             # After creating a branch and committing there -> unlock merge
             if unlocked["branching"] and not unlocked["merging"]:
-                branches = ctx.tract.branches.list()
+                branches = ctx.tract.list_branches()
                 non_main = [b for b in branches if b.name != "main"]
                 for branch in non_main:
-                    ctx.tract.branches.switch(branch.name)
-                    if len(ctx.tract.search.log(limit=10)) >= 1:
+                    ctx.tract.switch(branch.name)
+                    if len(ctx.tract.log(limit=10)) >= 1:
                         for tool in ["merge", "compress"]:
                             ctx.tract.toolkit.unlock_tool(tool)
                         unlocked["merging"] = True
                         print("\n  >> UNLOCKED: merge, compress")
                         break
-                ctx.tract.branches.switch(ctx.tract.current_branch)
+                ctx.tract.switch(ctx.tract.current_branch)
 
         t.middleware.add("post_commit", progressive_unlock)
 
@@ -245,7 +245,7 @@ def progressive_discovery() -> None:
         )
         result.pprint()
 
-        entries = t.search.log(limit=20)
+        entries = t.log(limit=20)
         print(f"\n  Commits: {len(entries)}, Branching unlocked: {unlocked['branching']}")
 
         # --- Phase 2: Branching unlocked ---
@@ -263,7 +263,7 @@ def progressive_discovery() -> None:
             )
             result.pprint()
 
-            print(f"\n  Branches: {[b.name for b in t.branches.list()]}")
+            print(f"\n  Branches: {[b.name for b in t.list_branches()]}")
             print(f"  Merging unlocked: {unlocked['merging']}")
 
         # --- Phase 3: Full access ---

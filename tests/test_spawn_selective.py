@@ -338,7 +338,7 @@ class TestSelectiveInstructionPreservation:
         )
 
         # instruction + config = 2 (config is not compilable, but is committed)
-        log = child.search.log(limit=10)
+        log = child.log(limit=10)
         types = {c.content_type for c in log}
         assert "instruction" in types
         assert "config" in types
@@ -493,7 +493,7 @@ class TestSelectiveEdgeCases:
             include_tags=["keep"],
         )
 
-        children = parent.spawn.children()
+        children = parent.spawn_children()
         assert len(children) == 1
         info = children[0]
         assert isinstance(info, SpawnInfo)
@@ -512,7 +512,7 @@ class TestSelectiveEdgeCases:
             DialogueContent(role="user", text="annotated"),
             tags=["keep"],
         )
-        parent.annotations.set(info.commit_hash, Priority.IMPORTANT, reason="key data")
+        parent.annotate(info.commit_hash, Priority.IMPORTANT, reason="key data")
 
         child = session.spawn(
             parent,
@@ -522,9 +522,9 @@ class TestSelectiveEdgeCases:
             include_instructions=False,
         )
 
-        child_log = child.search.log(limit=10)
+        child_log = child.log(limit=10)
         assert len(child_log) == 1
-        child_annotations = child.annotations.get(child_log[0].commit_hash)
+        child_annotations = child.get_annotation(child_log[0].commit_hash)
         important = [a for a in child_annotations if a.priority == Priority.IMPORTANT]
         assert len(important) >= 1
 

@@ -302,9 +302,9 @@ def _build_inspect_tool(
 
 def _inspect_dashboard(tract: Tract) -> str:
     """Combined dashboard: the most useful state at a glance."""
-    status = tract.search.status()
-    branches = tract.branches.list()
-    all_recent = tract.search.log(limit=50)
+    status = tract.status()
+    branches = tract.list_branches()
+    all_recent = tract.log(limit=50)
     recent = all_recent[:5]
 
     lines = ["=== Tract Dashboard ==="]
@@ -357,7 +357,7 @@ def _inspect_dashboard(tract: Tract) -> str:
 
 def _inspect_branches(tract: Tract) -> str:
     """List all branches with HEAD info."""
-    branches = tract.branches.list()
+    branches = tract.list_branches()
     if not branches:
         return "No branches."
     lines = ["Branches:"]
@@ -369,7 +369,7 @@ def _inspect_branches(tract: Tract) -> str:
 
 def _inspect_log(tract: Tract) -> str:
     """Recent commit log (last 10)."""
-    entries = tract.search.log(limit=10)
+    entries = tract.log(limit=10)
     if not entries:
         return "No commits found."
     lines = ["Commit log (last 10):"]
@@ -398,7 +398,7 @@ def _inspect_config(tract: Tract) -> str:
 
 def _inspect_tags(tract: Tract) -> str:
     """Registered tags with counts."""
-    tags = tract.tags.list()
+    tags = tract.list_tags()
     if not tags:
         return "No tags registered."
     lines = ["Registered tags:"]
@@ -410,7 +410,7 @@ def _inspect_tags(tract: Tract) -> str:
 
 def _inspect_directives(tract: Tract) -> str:
     """Active directives (instruction-type commits)."""
-    entries = tract.search.log(limit=50)
+    entries = tract.log(limit=50)
     directives = [e for e in entries if e.content_type == "instruction"]
     if not directives:
         return "No active directives."

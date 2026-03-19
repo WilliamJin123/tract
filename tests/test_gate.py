@@ -91,7 +91,7 @@ def _make_tract_mock(
 ) -> MagicMock:
     """Create a mock Tract with search/config/llm methods wired up."""
     mock = MagicMock()
-    mock.search.log.return_value = commits or []
+    mock.log.return_value = commits or []
     mock.config.get_all.return_value = config or {}
     mock.current_branch = "main"
     mock.head = "a" * 40

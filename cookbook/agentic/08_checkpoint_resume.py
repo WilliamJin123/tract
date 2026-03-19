@@ -8,8 +8,8 @@ Sections:
   1. Checkpoint Before Risky Operation  -- branch snapshot, reset on failure
   2. Resume From Last-Known-Good State  -- tag-based checkpoints, find + reset
 
-Demonstrates: t.branches.create(), t.branches.reset(), t.branches.switch(),
-              t.search.find(), t.search.log(), t.search.status(),
+Demonstrates: t.branch(), t.reset(), t.switch(),
+              t.find(), t.log(), t.status(),
               tag-based checkpoint discovery, DAG isolation of failed work
 """
 
@@ -54,11 +54,11 @@ def section_checkpoint_before_risky_op() -> None:
             max_steps=8, max_tokens=1024,
             on_step=log.on_step, on_tool_result=log.on_tool_result,
         )
-        print(f"\n  Main: {t.search.status().commit_count} commits")
+        print(f"\n  Main: {t.status().commit_count} commits")
 
         # Step 2: Experimental work on a side branch
         print("\n  --- Step 2: Experiment branch ---\n")
-        t.branches.create("experiment", switch=True)
+        t.branch("experiment", switch=True)
         t.llm.run(
             "Take a contrarian position: argue that a single-node SQLite "
             "database is sufficient. Be bold, commit your argument.",
@@ -68,22 +68,22 @@ def section_checkpoint_before_risky_op() -> None:
 
         # Step 3: Checkpoint before risky merge
         print("\n  --- Step 3: Checkpoint + risky merge ---\n")
-        t.branches.switch("main")
+        t.switch("main")
 
         # Save checkpoint BEFORE the merge
-        cp_hash = t.branches.create("checkpoint/pre-merge", switch=False)
+        cp_hash = t.branch("checkpoint/pre-merge", switch=False)
         print(f"  Checkpoint: checkpoint/pre-merge -> {cp_hash[:8]}")
 
         merge_result = t.merge("experiment", strategy="theirs")
         print(f"  Merged experiment (type: {merge_result.merge_type})")
-        print(f"  Post-merge: {t.search.status().token_count} tokens")
+        print(f"  Post-merge: {t.status().token_count} tokens")
 
         # Step 4: Bad merge -- reset to checkpoint
         print("\n  --- Step 4: Reset to checkpoint ---\n")
         print("  Contrarian SQLite argument contaminated main research.")
-        reset_hash = t.branches.reset(target="checkpoint/pre-merge")
+        reset_hash = t.reset(target="checkpoint/pre-merge")
         print(f"  HEAD reset to: {reset_hash[:8]}")
-        print(f"  Restored: {t.search.status().commit_count} commits")
+        print(f"  Restored: {t.status().commit_count} commits")
 
         # Step 5: Retry with better approach
         print("\n  --- Step 5: Retry ---\n")
@@ -96,10 +96,10 @@ def section_checkpoint_before_risky_op() -> None:
 
         # Final DAG state
         print("\n  --- Final DAG ---")
-        for b in t.branches.list():
+        for b in t.list_branches():
             marker = "*" if b.is_current else " "
             print(f"    {marker} {b.name}")
-        print(f"  Main: {t.search.status().commit_count} commits")
+        print(f"  Main: {t.status().commit_count} commits")
         print("  checkpoint/pre-merge: preserved | experiment: isolated")
 
 
@@ -121,7 +121,7 @@ def section_resume_from_checkpoint() -> None:
             "research, analysis, synthesis. Commit your work at each step."
         )
         for tag in ["checkpoint", "research", "analysis", "synthesis"]:
-            t.tags.register(tag)
+            t.register_tag(tag)
         log = StepLogger()
 
         # Stage 1: Research
@@ -173,22 +173,22 @@ def section_resume_from_checkpoint() -> None:
             message="synthesis: continued bad output",
             metadata={"stage": "synthesis", "quality": "failed"},
         )
-        print(f"  After failure: {t.search.status().commit_count} commits "
+        print(f"  After failure: {t.status().commit_count} commits "
               f"(2 garbage commits polluting context)")
 
         # Recovery: find last checkpoint and reset
         print("\n  --- Recovery ---\n")
-        checkpoints = t.search.find(tag="checkpoint", limit=10)
+        checkpoints = t.find(tag="checkpoint", limit=10)
         print(f"  Found {len(checkpoints)} checkpoint(s):")
         for cp in checkpoints:
             stage = (cp.metadata or {}).get("stage", "?")
             print(f"    {cp.commit_hash[:8]}  {stage}")
 
         latest = checkpoints[0]
-        t.branches.reset(target=latest.commit_hash)
+        t.reset(target=latest.commit_hash)
         print(f"\n  Reset to {latest.commit_hash[:8]} "
               f"({(latest.metadata or {}).get('stage')})")
-        print(f"  Restored: {t.search.status().commit_count} commits")
+        print(f"  Restored: {t.status().commit_count} commits")
 
         # Retry synthesis from clean state
         print("\n  --- Retry synthesis ---\n")
@@ -202,12 +202,12 @@ def section_resume_from_checkpoint() -> None:
 
         # Verify garbage is gone
         print("\n  --- Final State ---\n")
-        final_log = t.search.log(limit=10)
+        final_log = t.log(limit=10)
         for entry in final_log:
             tags_str = f" [{', '.join(entry.tags)}]" if entry.tags else ""
             print(f"    {entry.commit_hash[:8]}  {(entry.message or '')[:50]}{tags_str}")
 
-        garbage = t.search.find(
+        garbage = t.find(
             metadata_key="quality", metadata_value="failed", limit=10
         )
         print(f"\n  Failed commits reachable from HEAD: {len(garbage)}")

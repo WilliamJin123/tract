@@ -134,10 +134,10 @@ class TestAutoCompress:
             t.assistant(f"Response {i} " * 20)
 
         # Patch compress to raise
-        original_compress = t.compression.compress
+        original_compress = t.compress
         def bad_compress(**kw):
             raise RuntimeError("Compress broken")
-        t.compression.compress = bad_compress
+        t.compress = bad_compress
 
         client = MockLLMClient([_text_resp("done")])
         result = run_loop(t, config=LoopConfig(
@@ -146,7 +146,7 @@ class TestAutoCompress:
         ), llm_client=client)
         # Should complete despite compress failure
         assert result.status == "completed"
-        t.compression.compress = original_compress
+        t.compress = original_compress
 
 
 # ---------------------------------------------------------------------------

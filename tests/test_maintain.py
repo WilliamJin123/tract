@@ -94,7 +94,7 @@ def _make_tract_mock(
 ) -> MagicMock:
     """Create a mock Tract with search/config/llm methods wired up."""
     mock = MagicMock()
-    mock.search.log.return_value = commits or []
+    mock.log.return_value = commits or []
     mock.config.get_all.return_value = config or {}
     mock.current_branch = "main"
     mock.head = "a" * 40
@@ -446,7 +446,7 @@ class TestActionExecution:
         from tract.models.annotations import Priority
 
         tract_mock = MagicMock()
-        tract_mock.branches.resolve.return_value = "a" * 40
+        tract_mock.resolve.return_value = "a" * 40
 
         SemanticMaintainer._exec_annotate(tract_mock, {
             "type": "annotate",
@@ -454,8 +454,8 @@ class TestActionExecution:
             "priority": "skip",
         })
 
-        tract_mock.branches.resolve.assert_called_once_with("a1b2c3d4")
-        tract_mock.annotations.set.assert_called_once_with(
+        tract_mock.resolve.assert_called_once_with("a1b2c3d4")
+        tract_mock.annotate.assert_called_once_with(
             "a" * 40, Priority.SKIP, reason=None,
         )
 
@@ -463,7 +463,7 @@ class TestActionExecution:
         from tract.models.annotations import Priority
 
         tract_mock = MagicMock()
-        tract_mock.branches.resolve.return_value = "b" * 40
+        tract_mock.resolve.return_value = "b" * 40
 
         SemanticMaintainer._exec_annotate(tract_mock, {
             "type": "annotate",
@@ -472,13 +472,13 @@ class TestActionExecution:
             "reason": "This is crucial",
         })
 
-        tract_mock.annotations.set.assert_called_once_with(
+        tract_mock.annotate.assert_called_once_with(
             "b" * 40, Priority.IMPORTANT, reason="This is crucial",
         )
 
     def test_annotate_invalid_priority_raises(self):
         tract_mock = MagicMock()
-        tract_mock.branches.resolve.return_value = "a" * 40
+        tract_mock.resolve.return_value = "a" * 40
 
         with pytest.raises(ValueError, match="Invalid priority"):
             SemanticMaintainer._exec_annotate(tract_mock, {
@@ -489,7 +489,7 @@ class TestActionExecution:
 
     def test_compress_action(self):
         tract_mock = MagicMock()
-        tract_mock.branches.resolve.side_effect = lambda x: x + "0" * (40 - len(x))
+        tract_mock.resolve.side_effect = lambda x: x + "0" * (40 - len(x))
 
         SemanticMaintainer._exec_compress(tract_mock, {
             "type": "compress",
@@ -497,9 +497,9 @@ class TestActionExecution:
             "instructions": "Summarize these findings",
         })
 
-        assert tract_mock.branches.resolve.call_count == 2
-        tract_mock.compression.compress.assert_called_once()
-        call_kwargs = tract_mock.compression.compress.call_args
+        assert tract_mock.resolve.call_count == 2
+        tract_mock.compress.assert_called_once()
+        call_kwargs = tract_mock.compress.call_args
         assert call_kwargs[1]["instructions"] == "Summarize these findings"
 
     def test_compress_no_commits_raises(self):
@@ -561,7 +561,7 @@ class TestActionExecution:
 
     def test_tag_action(self):
         tract_mock = MagicMock()
-        tract_mock.branches.resolve.return_value = "c" * 40
+        tract_mock.resolve.return_value = "c" * 40
 
         m = SemanticMaintainer(name="tagger", instructions="x", actions=["tag"])
         m._exec_tag(tract_mock, {
@@ -570,11 +570,11 @@ class TestActionExecution:
             "tag": "key-finding",
         })
 
-        tract_mock.branches.resolve.assert_called_once_with("c1c2c3")
-        tract_mock.tags.register.assert_called_once_with(
+        tract_mock.resolve.assert_called_once_with("c1c2c3")
+        tract_mock.register_tag.assert_called_once_with(
             "key-finding", "Auto-registered by maintainer 'tagger'"
         )
-        tract_mock.tags.add.assert_called_once_with("c" * 40, "key-finding")
+        tract_mock.tag.assert_called_once_with("c" * 40, "key-finding")
 
     def test_tag_no_target_raises(self):
         tract_mock = MagicMock()
@@ -601,7 +601,7 @@ class TestActionExecution:
 
         SemanticMaintainer._exec_gc(tract_mock, {"type": "gc"})
 
-        tract_mock.compression.gc.assert_called_once()
+        tract_mock.gc.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -648,7 +648,7 @@ class TestMaintainerCall:
         assert m.last_result.actions_requested == 1
         assert m.last_result.actions_executed == 1
         assert m.last_result.actions_failed == 0
-        tract_mock.compression.gc.assert_called_once()
+        tract_mock.gc.assert_called_once()
 
     def test_disallowed_action_filtered(self):
         """Actions not in the allowed list are silently skipped."""
@@ -671,9 +671,9 @@ class TestMaintainerCall:
         assert m.last_result is not None
         assert m.last_result.actions_requested == 1  # only gc counted
         assert m.last_result.actions_executed == 1
-        tract_mock.compression.gc.assert_called_once()
+        tract_mock.gc.assert_called_once()
         # annotate should NOT have been called
-        tract_mock.annotations.set.assert_not_called()
+        tract_mock.annotate.assert_not_called()
 
     def test_action_failure_collected(self):
         """If an action raises, it's captured in errors but doesn't crash."""
@@ -684,7 +684,7 @@ class TestMaintainerCall:
         client = FakeLLMClient(response)
         tract_mock = _make_tract_mock(client=client)
         # Make gc() raise
-        tract_mock.compression.gc.side_effect = RuntimeError("GC not available")
+        tract_mock.gc.side_effect = RuntimeError("GC not available")
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(
@@ -855,13 +855,13 @@ class TestEdgeCases:
             ("pinned", Priority.PINNED),
         ]:
             tract_mock = MagicMock()
-            tract_mock.branches.resolve.return_value = "x" * 40
+            tract_mock.resolve.return_value = "x" * 40
             SemanticMaintainer._exec_annotate(tract_mock, {
                 "type": "annotate",
                 "target": "xabc",
                 "priority": prio_str,
             })
-            tract_mock.annotations.set.assert_called_once_with(
+            tract_mock.annotate.assert_called_once_with(
                 "x" * 40, prio_enum, reason=None,
             )
 
@@ -1232,8 +1232,8 @@ class TestPeekingFlow:
         )
         tract_mock = _make_tract_mock(client=client)
         # Set up resolve_commit and get_content for peeking
-        tract_mock.branches.resolve.return_value = hash1
-        tract_mock.search.get_content.return_value = "This is the content"
+        tract_mock.resolve.return_value = hash1
+        tract_mock.get_content.return_value = "This is the content"
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(
@@ -1250,7 +1250,7 @@ class TestPeekingFlow:
         assert m.last_result.peeks_requested == 1
         assert m.last_result.peeks_performed == 1
         assert m.last_result.actions_executed == 1
-        tract_mock.compression.gc.assert_called_once()
+        tract_mock.gc.assert_called_once()
 
     def test_peeking_direct_actions(self):
         """LLM can skip peeking and return actions directly in pass 1."""
@@ -1272,7 +1272,7 @@ class TestPeekingFlow:
         assert m.last_result.peeks_requested == 0
         assert m.last_result.peeks_performed == 0
         assert m.last_result.actions_executed == 1
-        tract_mock.compression.gc.assert_called_once()
+        tract_mock.gc.assert_called_once()
 
     def test_peeking_capped_at_max(self):
         """Peek requests exceeding max_peeks are capped."""
@@ -1283,8 +1283,8 @@ class TestPeekingFlow:
             actions_response=actions_resp,
         )
         tract_mock = _make_tract_mock(client=client)
-        tract_mock.branches.resolve.side_effect = lambda x: x + "0" * (40 - len(x))
-        tract_mock.search.get_content.return_value = "content"
+        tract_mock.resolve.side_effect = lambda x: x + "0" * (40 - len(x))
+        tract_mock.get_content.return_value = "content"
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(
@@ -1298,7 +1298,7 @@ class TestPeekingFlow:
         assert m.last_result.peeks_requested == 5
         assert m.last_result.peeks_performed == 2
         # Only 2 resolve_commit calls (capped)
-        assert tract_mock.branches.resolve.call_count == 2
+        assert tract_mock.resolve.call_count == 2
 
     def test_peeking_content_retrieval(self):
         """Peeked content appears in pass-2 messages."""
@@ -1308,8 +1308,8 @@ class TestPeekingFlow:
             actions_response=actions_resp,
         )
         tract_mock = _make_tract_mock(client=client)
-        tract_mock.branches.resolve.return_value = "abc123" + "0" * 34
-        tract_mock.search.get_content.return_value = "Interesting commit content"
+        tract_mock.resolve.return_value = "abc123" + "0" * 34
+        tract_mock.get_content.return_value = "Interesting commit content"
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(
@@ -1337,8 +1337,8 @@ class TestPeekingFlow:
             actions_response=actions_resp,
         )
         tract_mock = _make_tract_mock(client=client)
-        tract_mock.branches.resolve.return_value = "abc" + "0" * 37
-        tract_mock.search.get_content.return_value = long_content
+        tract_mock.resolve.return_value = "abc" + "0" * 37
+        tract_mock.get_content.return_value = long_content
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(
@@ -1364,8 +1364,8 @@ class TestPeekingFlow:
             actions_response=actions_resp,
         )
         tract_mock = _make_tract_mock(client=client)
-        tract_mock.branches.resolve.return_value = "abc" + "0" * 37
-        tract_mock.search.get_content.return_value = {"key": "value", "nested": [1, 2, 3]}
+        tract_mock.resolve.return_value = "abc" + "0" * 37
+        tract_mock.get_content.return_value = {"key": "value", "nested": [1, 2, 3]}
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(
@@ -1389,8 +1389,8 @@ class TestPeekingFlow:
             actions_response=actions_resp,
         )
         tract_mock = _make_tract_mock(client=client)
-        tract_mock.branches.resolve.return_value = "abc" + "0" * 37
-        tract_mock.search.get_content.return_value = None
+        tract_mock.resolve.return_value = "abc" + "0" * 37
+        tract_mock.get_content.return_value = None
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(
@@ -1413,7 +1413,7 @@ class TestPeekingFlow:
             actions_response=actions_resp,
         )
         tract_mock = _make_tract_mock(client=client)
-        tract_mock.branches.resolve.side_effect = RuntimeError("No such commit")
+        tract_mock.resolve.side_effect = RuntimeError("No such commit")
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(
@@ -1438,8 +1438,8 @@ class TestPeekingFlow:
             actions_response=actions_resp,
         )
         tract_mock = _make_tract_mock(client=client)
-        tract_mock.branches.resolve.side_effect = lambda x: x + "0" * (40 - len(x))
-        tract_mock.search.get_content.return_value = "content"
+        tract_mock.resolve.side_effect = lambda x: x + "0" * (40 - len(x))
+        tract_mock.get_content.return_value = "content"
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(
@@ -1498,8 +1498,8 @@ class TestPeekingFlow:
 
         client = FailOnSecondCallClient()
         tract_mock = _make_tract_mock(client=client)
-        tract_mock.branches.resolve.return_value = "abc" + "0" * 37
-        tract_mock.search.get_content.return_value = "content"
+        tract_mock.resolve.return_value = "abc" + "0" * 37
+        tract_mock.get_content.return_value = "content"
         ctx = _make_ctx(tract_mock)
 
         m = SemanticMaintainer(

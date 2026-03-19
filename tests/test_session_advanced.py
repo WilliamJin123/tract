@@ -359,7 +359,7 @@ class TestSessionEdgeCases:
                 display_name="research-worker",
             )
 
-            children = parent.spawn.children()
+            children = parent.spawn_children()
             assert len(children) >= 1
             child_info = [
                 c for c in children if c.child_tract_id == child.tract_id

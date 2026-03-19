@@ -286,7 +286,7 @@ class TestShorthandMethods:
         try:
             info = t.assistant("resp", generation_config={"model": "gpt-4"})
             # Verify via get_commit
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             from tract import LLMConfig
             assert commit.generation_config == LLMConfig(model="gpt-4")
@@ -345,7 +345,7 @@ class TestAutoMessage:
         t = Tract.open()
         try:
             info = t.commit(InstructionContent(text="Be helpful"))
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             assert commit.message == "Be helpful"
         finally:
@@ -359,7 +359,7 @@ class TestAutoMessage:
         t = Tract.open()
         try:
             info = t.commit(DialogueContent(role="user", text="Hello world"))
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             assert commit.message == "Hello world"
         finally:
@@ -372,7 +372,7 @@ class TestAutoMessage:
         t = Tract.open()
         try:
             info = t.system("Be helpful")
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             assert commit.message == "Be helpful"
         finally:
@@ -386,7 +386,7 @@ class TestAutoMessage:
         try:
             long_text = "A" * 600
             info = t.system(long_text)
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             assert len(commit.message) <= 500
             assert commit.message.endswith("...")
@@ -401,7 +401,7 @@ class TestAutoMessage:
         try:
             text = "A" * 200
             info = t.system(text)
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             assert commit.message == text
         finally:
@@ -415,7 +415,7 @@ class TestAutoMessage:
         t = Tract.open()
         try:
             info = t.commit(InstructionContent(text="Be helpful"), message="")
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             assert commit.message == ""
         finally:
@@ -429,7 +429,7 @@ class TestAutoMessage:
         t = Tract.open()
         try:
             info = t.commit(InstructionContent(text="Be helpful"), message="custom")
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             assert commit.message == "custom"
         finally:
@@ -442,7 +442,7 @@ class TestAutoMessage:
         t = Tract.open()
         try:
             info = t.commit({"content_type": "instruction", "text": "Be helpful"})
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             assert commit.message == "Be helpful"
         finally:
@@ -455,7 +455,7 @@ class TestAutoMessage:
         t = Tract.open()
         try:
             info = t.user("Hello\nworld\nfoo")
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             assert "\n" not in commit.message
             assert "Hello world foo" in commit.message
@@ -470,7 +470,7 @@ class TestAutoMessage:
         t = Tract.open()
         try:
             info = t.commit(FreeformContent(payload={"key": "value"}))
-            commit = t.search.get_commit(info.commit_hash)
+            commit = t.get_commit(info.commit_hash)
             assert commit is not None
             # FreeformContent extract_text returns JSON string of payload
             assert commit.message.startswith("{")  # JSON preview, no type prefix

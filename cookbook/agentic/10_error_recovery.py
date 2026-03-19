@@ -54,13 +54,13 @@ def section_rollback() -> None:
         """Post-commit guard: revert if commit contains a forbidden pattern."""
         if not ctx.commit:
             return
-        content = ctx.tract.search.get_content(ctx.commit)
+        content = ctx.tract.get_content(ctx.commit)
         if content and "DEPRECATED_PATTERN" in str(content):
             # Walk log to find parent -- log returns newest-first
-            history = ctx.tract.search.log(limit=2)
+            history = ctx.tract.log(limit=2)
             if len(history) >= 2:
                 parent_hash = history[1].commit_hash
-                ctx.tract.branches.reset(target=parent_hash)
+                ctx.tract.reset(target=parent_hash)
                 msg = f"Rolled back {ctx.commit.commit_hash[:8]} -> {parent_hash[:8]}"
                 rollback_log.append(msg)
                 print(f"  >> {msg}")
@@ -133,7 +133,7 @@ def section_rollback() -> None:
 
         # The log from HEAD shows only good commits
         print("\n  Commit log (reachable from HEAD):")
-        pprint_log(t.search.log(limit=10))
+        pprint_log(t.log(limit=10))
 
         print()
 
@@ -178,7 +178,7 @@ def section_branch_retry() -> None:
 
         for attempt in range(1, 4):
             branch_name = f"trial/{attempt}"
-            t.branches.create(branch_name, switch=True)
+            t.branch(branch_name, switch=True)
             print(f"  --- Trial {attempt} (branch: {branch_name}) ---")
 
             # Add progressively better guidance on each retry
@@ -222,12 +222,12 @@ def section_branch_retry() -> None:
 
             if passed:
                 winning_branch = branch_name
-                t.branches.switch("main")
+                t.switch("main")
                 t.merge(branch_name, strategy="theirs")
                 print(f"\n  Trial {attempt} PASSED -- merged to main.\n")
                 break
             else:
-                t.branches.switch("main")
+                t.switch("main")
                 print(f"  Trial {attempt} FAILED verification "
                       f"(verdict: {verdict}). Abandoned.\n")
 
@@ -238,7 +238,7 @@ def section_branch_retry() -> None:
 
         # --- Show final branch topology ---
         print("\n  Branch topology:")
-        for b in t.branches.list():
+        for b in t.list_branches():
             marker = " (merged)" if b.name == winning_branch else ""
             marker = marker if b.name != "main" else " (current)"
             # Check if branch was abandoned (not merged)
@@ -247,11 +247,11 @@ def section_branch_retry() -> None:
             print(f"    - {b.name}{marker}")
 
         # --- Final compiled context (main only) ---
-        status = t.search.status()
+        status = t.status()
         print(f"\n  Main branch: {status.commit_count} commits, "
               f"{status.token_count} tokens")
         print("\n  Final log (main):")
-        pprint_log(t.search.log(limit=10))
+        pprint_log(t.log(limit=10))
 
         print()
 

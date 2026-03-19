@@ -77,7 +77,7 @@ class TestAutonomousMode:
         mock = MockLLMClient()
         t.config.configure_llm(mock)
 
-        result = t.compression.compress()
+        result = t.compress()
 
         assert isinstance(result, CompressResult)
         assert len(result.summary_commits) >= 1
@@ -90,7 +90,7 @@ class TestAutonomousMode:
         """PINNED commits survive compression verbatim."""
         t, hashes = make_tract_with_commits(5)
         # Pin commit 3 (index 2)
-        t.annotations.set(hashes[2], Priority.PINNED, reason="important")
+        t.annotate(hashes[2], Priority.PINNED, reason="important")
 
         mock = MockLLMClient(responses=[
             "Summary of first group",
@@ -98,7 +98,7 @@ class TestAutonomousMode:
         ])
         t.config.configure_llm(mock)
 
-        result = t.compression.compress()
+        result = t.compress()
 
         assert isinstance(result, CompressResult)
         assert len(result.preserved_commits) == 1
@@ -113,12 +113,12 @@ class TestAutonomousMode:
         """SKIP commits are excluded from compression entirely."""
         t, hashes = make_tract_with_commits(5)
         # Skip commit 2 (index 1)
-        t.annotations.set(hashes[1], Priority.SKIP, reason="not needed")
+        t.annotate(hashes[1], Priority.SKIP, reason="not needed")
 
         mock = MockLLMClient()
         t.config.configure_llm(mock)
 
-        result = t.compression.compress()
+        result = t.compress()
 
         assert isinstance(result, CompressResult)
         # Source commits should not include the skipped one
@@ -133,7 +133,7 @@ class TestAutonomousMode:
         mock = MockLLMClient()
         t.config.configure_llm(mock)
 
-        result = t.compression.compress(from_commit=hashes[2], to_commit=hashes[5])
+        result = t.compress(from_commit=hashes[2], to_commit=hashes[5])
 
         assert isinstance(result, CompressResult)
         # Should compress commits 3-6 (indices 2-5)
@@ -149,7 +149,7 @@ class TestAutonomousMode:
         t.config.configure_llm(mock)
 
         target = [hashes[0], hashes[2], hashes[4]]
-        result = t.compression.compress(commits=target)
+        result = t.compress(commits=target)
 
         assert isinstance(result, CompressResult)
         assert len(result.source_commits) == 3
@@ -163,7 +163,7 @@ class TestAutonomousMode:
         mock = MockLLMClient()
         t.config.configure_llm(mock)
 
-        result = t.compression.compress(target_tokens=100)
+        result = t.compress(target_tokens=100)
 
         assert isinstance(result, CompressResult)
         # Verify the LLM was called with structural length hint
@@ -178,7 +178,7 @@ class TestAutonomousMode:
         mock = MockLLMClient()
         t.config.configure_llm(mock)
 
-        result = t.compression.compress(instructions="focus on code decisions")
+        result = t.compress(instructions="focus on code decisions")
 
         assert isinstance(result, CompressResult)
         assert mock.last_messages is not None
@@ -198,7 +198,7 @@ class TestManualMode:
         """Manual summary text is used directly."""
         t, hashes = make_tract_with_commits(5)
 
-        result = t.compression.compress(content="My manual summary of the conversation")
+        result = t.compress(content="My manual summary of the conversation")
 
         assert isinstance(result, CompressResult)
         assert len(result.summary_commits) >= 1
@@ -213,7 +213,7 @@ class TestManualMode:
         t, hashes = make_tract_with_commits(3)
         # Do NOT call configure_llm()
 
-        result = t.compression.compress(content="Manual summary without LLM")
+        result = t.compress(content="Manual summary without LLM")
 
         assert isinstance(result, CompressResult)
         assert len(result.summary_commits) >= 1
@@ -223,9 +223,9 @@ class TestManualMode:
         t, hashes = make_tract_with_commits(5)
         # Pin the LAST commit -- creates only 1 group of NORMAL (first 4),
         # so manual mode is valid (no interleaving).
-        t.annotations.set(hashes[4], Priority.PINNED, reason="keep this")
+        t.annotate(hashes[4], Priority.PINNED, reason="keep this")
 
-        result = t.compression.compress(content="Manual summary")
+        result = t.compress(content="Manual summary")
 
         assert isinstance(result, CompressResult)
         assert len(result.preserved_commits) == 1
@@ -249,7 +249,7 @@ class TestProvenance:
         """CompressionRecord exists in DB with correct data."""
         t, hashes = make_tract_with_commits(5)
 
-        result = t.compression.compress(content="Summary for provenance test")
+        result = t.compress(content="Summary for provenance test")
 
         assert isinstance(result, CompressResult)
         assert result.compression_id
@@ -265,7 +265,7 @@ class TestProvenance:
         t, hashes = make_tract_with_commits(5)
         old_hashes = set(hashes)
 
-        result = t.compression.compress(content="Summary")
+        result = t.compress(content="Summary")
 
         # Original commits still exist in DB
         for h in old_hashes:
@@ -273,7 +273,7 @@ class TestProvenance:
             assert row is not None, f"Original commit {h} should still exist"
 
         # But they are not in the current chain
-        log = t.search.log(limit=100)
+        log = t.log(limit=100)
         current_hashes = {c.commit_hash for c in log}
         assert not old_hashes.intersection(current_hashes), \
             "Original commits should not be in current chain"
@@ -282,7 +282,7 @@ class TestProvenance:
         """Query source commits from compression record."""
         t, hashes = make_tract_with_commits(5)
 
-        result = t.compression.compress(content="Summary")
+        result = t.compress(content="Summary")
 
         sources = t._event_repo.get_commits(result.compression_id, "source")
         source_hashes = {s.commit_hash for s in sources}
@@ -294,7 +294,7 @@ class TestProvenance:
         """Query result commits from compression record."""
         t, hashes = make_tract_with_commits(5)
 
-        result = t.compression.compress(content="Summary")
+        result = t.compress(content="Summary")
 
         results = t._event_repo.get_commits(result.compression_id, "result")
         result_hashes = {r.commit_hash for r in results}
@@ -316,14 +316,14 @@ class TestEdgeCases:
         t = Tract.open()
 
         with pytest.raises((CompressionError, TraceError)):
-            t.compression.compress(content="Summary")
+            t.compress(content="Summary")
 
     def test_compress_no_llm_no_content_raises(self):
         """compress() without LLM or content raises CompressionError."""
         t, hashes = make_tract_with_commits(3)
 
         with pytest.raises(CompressionError, match="No LLM client"):
-            t.compression.compress()
+            t.compress()
 
     def test_compress_all_pinned_raises(self):
         """All commits pinned raises CompressionError."""
@@ -333,7 +333,7 @@ class TestEdgeCases:
         h2 = t.commit(InstructionContent(text="System prompt 2"))
 
         with pytest.raises(CompressionError, match="Nothing to compress"):
-            t.compression.compress(content="Summary")
+            t.compress(content="Summary")
 
     def test_compress_clears_cache(self):
         """Compile cache is cleared after compression."""
@@ -344,7 +344,7 @@ class TestEdgeCases:
         assert before.commit_count == 5
 
         # Compress
-        result = t.compression.compress(content="Summary of all messages")
+        result = t.compress(content="Summary of all messages")
         assert isinstance(result, CompressResult)
 
         # Compile again -- should be different (from the new chain)
@@ -355,7 +355,7 @@ class TestEdgeCases:
         """After compression, compile() returns coherent messages."""
         t, hashes = make_tract_with_commits(5)
 
-        t.compression.compress(content="This is a summary of messages 1-5")
+        t.compress(content="This is a summary of messages 1-5")
 
         compiled = t.compile()
         assert len(compiled.messages) >= 1
@@ -378,8 +378,8 @@ class TestMultiPinnedInterleaving:
         Expected output: [summary_1, pinned_2, summary_2, pinned_4, summary_3]
         """
         t, hashes = make_tract_with_commits(5)
-        t.annotations.set(hashes[1], Priority.PINNED, reason="pin2")
-        t.annotations.set(hashes[3], Priority.PINNED, reason="pin4")
+        t.annotate(hashes[1], Priority.PINNED, reason="pin2")
+        t.annotate(hashes[3], Priority.PINNED, reason="pin4")
 
         mock = MockLLMClient(responses=[
             "Summary of group 1",
@@ -388,7 +388,7 @@ class TestMultiPinnedInterleaving:
         ])
         t.config.configure_llm(mock)
 
-        result = t.compression.compress()
+        result = t.compress()
 
         assert isinstance(result, CompressResult)
         assert len(result.preserved_commits) == 2
@@ -417,13 +417,13 @@ class TestMultiPinnedInterleaving:
     def test_pinned_at_boundaries(self):
         """Pin first and last commit in range."""
         t, hashes = make_tract_with_commits(5)
-        t.annotations.set(hashes[0], Priority.PINNED, reason="first")
-        t.annotations.set(hashes[4], Priority.PINNED, reason="last")
+        t.annotate(hashes[0], Priority.PINNED, reason="first")
+        t.annotate(hashes[4], Priority.PINNED, reason="last")
 
         mock = MockLLMClient(responses=["Summary of middle 3"])
         t.config.configure_llm(mock)
 
-        result = t.compression.compress()
+        result = t.compress()
 
         assert isinstance(result, CompressResult)
         assert len(result.preserved_commits) == 2
@@ -464,7 +464,7 @@ class TestLLMErrorPaths:
         t.config.configure_llm(MalformedLLM())
 
         with pytest.raises(CompressionError, match="Invalid LLM response structure"):
-            t.compression.compress()
+            t.compress()
 
     def test_empty_response_raises(self):
         """LLM returning empty content raises CompressionError."""
@@ -480,7 +480,7 @@ class TestLLMErrorPaths:
         t.config.configure_llm(EmptyLLM())
 
         with pytest.raises(CompressionError, match="empty summary"):
-            t.compression.compress()
+            t.compress()
 
     def test_missing_choices_key_raises(self):
         """LLM response without 'choices' key raises CompressionError."""
@@ -496,7 +496,7 @@ class TestLLMErrorPaths:
         t.config.configure_llm(NoChoicesLLM())
 
         with pytest.raises(CompressionError):
-            t.compression.compress()
+            t.compress()
 
 
 # ===========================================================================
@@ -511,9 +511,9 @@ class TestManualModeWithPinned:
         """Manual content with PINNED interleaving absorbs all groups."""
         t, hashes = make_tract_with_commits(5)
         # Pin the middle commit -> creates 2 groups: [0,1] and [3,4]
-        t.annotations.set(hashes[2], Priority.PINNED, reason="important")
+        t.annotate(hashes[2], Priority.PINNED, reason="important")
 
-        result = t.compression.compress(content="my summary of everything")
+        result = t.compress(content="my summary of everything")
 
         assert isinstance(result, CompressResult)
         # One summary commit (group 0), group 1 absorbed
@@ -533,10 +533,10 @@ class TestManualModeWithPinned:
         """Manual content with multiple PINNED commits creates 3+ groups."""
         t, hashes = make_tract_with_commits(7)
         # Pin commits 1 and 4 -> groups: [0], [2,3], [5,6]
-        t.annotations.set(hashes[1], Priority.PINNED)
-        t.annotations.set(hashes[4], Priority.PINNED)
+        t.annotate(hashes[1], Priority.PINNED)
+        t.annotate(hashes[4], Priority.PINNED)
 
-        result = t.compression.compress(content="single manual summary")
+        result = t.compress(content="single manual summary")
 
         assert len(result.summary_commits) == 1
         assert len(result.preserved_commits) == 2
@@ -554,7 +554,7 @@ class TestManualModeWithPinned:
         """Manual content + preserve= (runtime PINNED) absorbs groups."""
         t, hashes = make_tract_with_commits(5)
 
-        result = t.compression.compress(
+        result = t.compress(
             content="my summary",
             preserve=[hashes[2]],
         )
@@ -571,7 +571,7 @@ class TestManualModeWithPinned:
         t, hashes = make_tract_with_commits(5)
         # No pinned commits -- single group, manual mode should work
 
-        result = t.compression.compress(content="my summary")
+        result = t.compress(content="my summary")
 
         assert isinstance(result, CompressResult)
         assert len(result.summary_commits) >= 1
@@ -591,7 +591,7 @@ class TestStackedCompression:
         t, hashes = make_tract_with_commits(5)
 
         # First compression
-        result1 = t.compression.compress(content="Summary of first 5 messages")
+        result1 = t.compress(content="Summary of first 5 messages")
         assert isinstance(result1, CompressResult)
         head_after_first = t.head
 
@@ -601,7 +601,7 @@ class TestStackedCompression:
         h8 = t.commit(DialogueContent(role="user", text="New message 8"))
 
         # Second compression -- compresses the summary + new messages
-        result2 = t.compression.compress(content="Summary of everything so far")
+        result2 = t.compress(content="Summary of everything so far")
         assert isinstance(result2, CompressResult)
         assert result2.new_head != head_after_first
 
@@ -615,7 +615,7 @@ class TestStackedCompression:
         t, hashes = make_tract_with_commits(5)
 
         # First compression
-        result1 = t.compression.compress(content="Summary of first batch")
+        result1 = t.compress(content="Summary of first batch")
         assert isinstance(result1, CompressResult)
 
         # The current chain now has the summary commit(s)
@@ -627,7 +627,7 @@ class TestStackedCompression:
         t.commit(DialogueContent(role="assistant", text="Response after compress"))
 
         # Re-compress everything (including the previous summary)
-        result2 = t.compression.compress(content="Re-compressed summary of all")
+        result2 = t.compress(content="Re-compressed summary of all")
         assert isinstance(result2, CompressResult)
 
         compiled_final = t.compile()
@@ -728,7 +728,7 @@ class TestCompressToolCalls:
         ])
         t.config.configure_llm(mock)
 
-        result = t.compression.compress_tool_calls(target_tokens=50)
+        result = t._compression_mgr.compress_tool_calls(target_tokens=50)
 
         assert isinstance(result, ToolCompactResult)
         assert len(result.edit_commits) == 1
@@ -759,7 +759,7 @@ class TestCompressToolCalls:
         mock = MockLLMClient(responses=[json.dumps(["Summary."])])
         t.config.configure_llm(mock)
 
-        t.compression.compress_tool_calls()
+        t._compression_mgr.compress_tool_calls()
 
         assert mock.last_messages is not None
         system_msg = mock.last_messages[0]
@@ -776,7 +776,7 @@ class TestCompressToolCalls:
         t.config.configure_llm(mock)
 
         custom = "You are a custom compactor."
-        t.compression.compress_tool_calls(system_prompt=custom)
+        t._compression_mgr.compress_tool_calls(system_prompt=custom)
 
         system_msg = mock.last_messages[0]
         assert system_msg["content"] == custom
@@ -790,10 +790,10 @@ class TestCompressToolCalls:
         mock = MockLLMClient(responses=[json.dumps(["Compacted result."])])
         t.config.configure_llm(mock)
 
-        result = t.compression.compress_tool_calls()
+        result = t._compression_mgr.compress_tool_calls()
 
         # Check the edit commit preserves metadata
-        edited_ci = t.search.get_commit(result.edit_commits[0])
+        edited_ci = t.get_commit(result.edit_commits[0])
         assert edited_ci is not None
         meta = edited_ci.metadata or {}
         assert meta.get("tool_call_id") == "call_1"
@@ -809,7 +809,7 @@ class TestCompressToolCalls:
         mock = MockLLMClient(responses=[json.dumps(["Compacted."])])
         t.config.configure_llm(mock)
 
-        t.compression.compress_tool_calls()
+        t._compression_mgr.compress_tool_calls()
 
         # Tool turns should still be discoverable
         turns = t.tools.find_turns()
@@ -835,7 +835,7 @@ class TestCompressToolCalls:
         t.config.configure_llm(mock)
 
         from tract.models.compression import ToolCompactResult
-        result = t.compression.compress_tool_calls()
+        result = t._compression_mgr.compress_tool_calls()
         assert isinstance(result, ToolCompactResult)
         assert result.turn_count == 1
 
@@ -871,7 +871,7 @@ class TestToolResultEdit:
                 "call_1", "grep", "concise",
                 edit=original.commit_hash,
             )
-            ci = t.search.get_commit(edited.commit_hash)
+            ci = t.get_commit(edited.commit_hash)
             assert ci.metadata["tool_call_id"] == "call_1"
             assert ci.metadata["name"] == "grep"
 
@@ -897,11 +897,11 @@ class TestToolResultEdit:
                 "call_1", "grep", "concise",
                 edit=original.commit_hash,
             )
-            log_entries = t.search.log(limit=10)
+            log_entries = t.log(limit=10)
             hashes = [e.commit_hash for e in log_entries]
             assert edited.commit_hash in hashes
             # Original should be accessible via get_commit even if not in the main chain
-            orig_ci = t.search.get_commit(original.commit_hash)
+            orig_ci = t.get_commit(original.commit_hash)
             assert orig_ci is not None
 
 
@@ -926,7 +926,7 @@ class TestCompressToolCallsAutoDetect:
             tr = t.tool_result("c1", "grep", "verbose grep output " * 20)
             t.assistant("The answer is 42.")
             # Auto-detect: no commits arg
-            result = t.compression.compress_tool_calls()
+            result = t._compression_mgr.compress_tool_calls()
             assert isinstance(result, ToolCompactResult)
             assert result.source_commits == (tr.commit_hash,)
             assert len(result.edit_commits) == 1
@@ -953,7 +953,7 @@ class TestCompressToolCallsAutoDetect:
             )
             read_result = t.tool_result("c2", "read_file", "file content " * 20)
             # Only compact grep turns
-            result = t.compression.compress_tool_calls(name="grep")
+            result = t._compression_mgr.compress_tool_calls(name="grep")
             assert isinstance(result, ToolCompactResult)
             # source_commits should only contain the grep tool result hash
             assert result.source_commits == (grep_result.commit_hash,)
@@ -975,7 +975,7 @@ class TestCompressToolCallsAutoDetect:
             )
             tr = t.tool_result("c1", "grep", "verbose " * 20)
             answer = t.assistant("answer")
-            result = t.compression.compress_tool_calls(
+            result = t._compression_mgr.compress_tool_calls(
                 [asst.commit_hash, tr.commit_hash, answer.commit_hash],
             )
             assert isinstance(result, ToolCompactResult)
@@ -1157,7 +1157,7 @@ class TestTargetTokensEnforcement:
         mock = MockLLMClient(responses=[short_response])
         t.config.configure_llm(mock)
 
-        result = t.compression.compress(target_tokens=200)
+        result = t.compress(target_tokens=200)
 
         assert isinstance(result, CompressResult)
         assert mock._call_count == 1

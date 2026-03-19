@@ -261,8 +261,8 @@ class TestToolExecutor:
 
     def test_execute_commit_with_tags(self, tract):
         """Commit tool accepts and passes through tags."""
-        tract.tags.register("important")
-        tract.tags.register("v1")
+        tract.register_tag("important")
+        tract.register_tag("v1")
         executor = ToolExecutor(tract)
         result = executor.execute("commit", {
             "content": {
@@ -334,7 +334,7 @@ class TestToolExecutor:
         t.commit(DialogueContent(role="user", text="First"))
         t.commit(DialogueContent(role="user", text="Second"))
         t.commit(DialogueContent(role="user", text="Third"))
-        entries = list(t.search.log(limit=10))
+        entries = list(t.log(limit=10))
         # entries: [Third, Second, First] -- preserve the middle
         middle_hash = entries[1].commit_hash
         executor = ToolExecutor(t)
@@ -359,7 +359,7 @@ class TestAsTools:
     """Test the Tract.as_tools() convenience method."""
 
     def test_default_profile_openai(self, tract):
-        tools = tract.toolkit.as_tools()
+        tools = tract.runtime.tools.as_tools()
         assert isinstance(tools, list)
         # Default profile is "compact" with 7 domain-grouped tools
         assert len(tools) == 7
@@ -369,15 +369,15 @@ class TestAsTools:
             assert "function" in tool
 
     def test_supervisor_profile(self, tract):
-        tools = tract.toolkit.as_tools(profile="supervisor")
+        tools = tract.runtime.tools.as_tools(profile="supervisor")
         assert len(tools) == 29
 
     def test_full_profile(self, tract):
-        tools = tract.toolkit.as_tools(profile="full")
+        tools = tract.runtime.tools.as_tools(profile="full")
         assert len(tools) == 29
 
     def test_anthropic_format(self, tract):
-        tools = tract.toolkit.as_tools(format="anthropic")
+        tools = tract.runtime.tools.as_tools(format="anthropic")
         assert isinstance(tools, list)
         for tool in tools:
             assert "name" in tool
@@ -388,7 +388,7 @@ class TestAsTools:
 
     def test_with_overrides(self, tract):
         custom_desc = "Custom status description for testing"
-        tools = tract.toolkit.as_tools(profile="self", overrides={"status": custom_desc})
+        tools = tract.runtime.tools.as_tools(profile="self", overrides={"status": custom_desc})
         status_tools = [
             t for t in tools
             if t["function"]["name"] == "status"
@@ -404,18 +404,18 @@ class TestAsTools:
                 "compile": ToolConfig(enabled=True),
             },
         )
-        tools = tract.toolkit.as_tools(profile=custom_profile)
+        tools = tract.runtime.tools.as_tools(profile=custom_profile)
         assert len(tools) == 2
         names = {t["function"]["name"] for t in tools}
         assert names == {"status", "compile"}
 
     def test_unknown_format_raises(self, tract):
         with pytest.raises(ValueError, match="Unknown format"):
-            tract.toolkit.as_tools(format="bedrock")
+            tract.runtime.tools.as_tools(format="bedrock")
 
     def test_unknown_profile_raises(self, tract):
         with pytest.raises(ValueError, match="Unknown profile"):
-            tract.toolkit.as_tools(profile="nonexistent")
+            tract.runtime.tools.as_tools(profile="nonexistent")
 
 
 # ===========================================================================
@@ -483,7 +483,7 @@ class TestToolkitIntegration:
     def test_reset_via_tools(self, tract_with_commits):
         executor = ToolExecutor(tract_with_commits)
         # Get first commit hash from log
-        log_entries = tract_with_commits.search.log(limit=3)
+        log_entries = tract_with_commits.log(limit=3)
         first = log_entries[-1]
         result = executor.execute("reset", {"target": first.commit_hash})
         assert result.success
@@ -551,7 +551,7 @@ class TestNewTools:
 
     def test_tag_untag_roundtrip(self, tract):
         """tag and untag tools work together."""
-        tract.tags.register("important", "important items")
+        tract.register_tag("important", "important items")
         info = tract.commit({"content_type": "dialogue", "role": "user", "text": "test"})
         executor = ToolExecutor(tract)
         result = executor.execute("tag", {"commit_hash": info.commit_hash, "tag": "important"})
@@ -562,9 +562,9 @@ class TestNewTools:
 
     def test_query_by_tags(self, tract):
         """query_by_tags finds tagged commits."""
-        tract.tags.register("milestone", "milestone marker")
+        tract.register_tag("milestone", "milestone marker")
         info = tract.commit({"content_type": "dialogue", "role": "user", "text": "test"})
-        tract.tags.add(info.commit_hash, "milestone")
+        tract.tag(info.commit_hash, "milestone")
         executor = ToolExecutor(tract)
         result = executor.execute("query_by_tags", {"tags": ["milestone"]})
         assert result.success
@@ -596,7 +596,7 @@ class TestAsCallableTools:
 
     def test_returns_callables(self, tract):
         """as_callable_tools() returns a list of callables."""
-        tools = tract.toolkit.as_callable_tools()
+        tools = tract.runtime.tools.as_callable_tools()
         assert isinstance(tools, list)
         assert len(tools) > 0
         for tool in tools:
@@ -604,7 +604,7 @@ class TestAsCallableTools:
 
     def test_callable_has_name(self, tract):
         """Each callable has __name__ matching the tool name."""
-        tools = tract.toolkit.as_callable_tools(profile="self")
+        tools = tract.runtime.tools.as_callable_tools(profile="self")
         names = {t.__name__ for t in tools}
         assert "status" in names
         assert "compile" in names
@@ -612,7 +612,7 @@ class TestAsCallableTools:
 
     def test_callable_has_docstring(self, tract):
         """Each callable has __doc__ from the tool description."""
-        tools = tract.toolkit.as_callable_tools(profile="self")
+        tools = tract.runtime.tools.as_callable_tools(profile="self")
         status_tool = next(t for t in tools if t.__name__ == "status")
         assert status_tool.__doc__ is not None
         assert len(status_tool.__doc__) > 10
@@ -621,7 +621,7 @@ class TestAsCallableTools:
         """Each callable has a proper inspect.Signature with typed params."""
         import inspect
 
-        tools = tract.toolkit.as_callable_tools(profile="self")
+        tools = tract.runtime.tools.as_callable_tools(profile="self")
         annotate_tool = next(t for t in tools if t.__name__ == "annotate")
 
         sig = inspect.signature(annotate_tool)
@@ -636,14 +636,14 @@ class TestAsCallableTools:
         """Each callable's signature has str return annotation."""
         import inspect
 
-        tools = tract.toolkit.as_callable_tools(profile="self")
+        tools = tract.runtime.tools.as_callable_tools(profile="self")
         status_tool = next(t for t in tools if t.__name__ == "status")
         sig = inspect.signature(status_tool)
         assert sig.return_annotation is str
 
     def test_callable_executes(self, tract_with_commits):
         """Calling a callable actually executes the tool handler."""
-        tools = tract_with_commits.toolkit.as_callable_tools(profile="self")
+        tools = tract_with_commits.runtime.tools.as_callable_tools(profile="self")
         status_tool = next(t for t in tools if t.__name__ == "status")
         result = status_tool()
         assert isinstance(result, str)
@@ -651,15 +651,15 @@ class TestAsCallableTools:
 
     def test_callable_with_args(self, tract_with_commits):
         """Callables with parameters accept kwargs correctly."""
-        tools = tract_with_commits.toolkit.as_callable_tools(profile="self")
+        tools = tract_with_commits.runtime.tools.as_callable_tools(profile="self")
         log_tool = next(t for t in tools if t.__name__ == "log")
         result = log_tool(limit=2)
         assert isinstance(result, str)
 
     def test_profile_filtering(self, tract):
         """as_callable_tools() respects profile filtering."""
-        self_tools = tract.toolkit.as_callable_tools(profile="self")
-        full_tools = tract.toolkit.as_callable_tools(profile="full")
+        self_tools = tract.runtime.tools.as_callable_tools(profile="self")
+        full_tools = tract.runtime.tools.as_callable_tools(profile="full")
         self_names = {t.__name__ for t in self_tools}
         full_names = {t.__name__ for t in full_tools}
         # Full profile has more tools than self
@@ -667,7 +667,7 @@ class TestAsCallableTools:
 
     def test_description_overrides(self, tract):
         """as_callable_tools() applies description overrides."""
-        tools = tract.toolkit.as_callable_tools(profile="self", overrides={"status": "Custom description"})
+        tools = tract.runtime.tools.as_callable_tools(profile="self", overrides={"status": "Custom description"})
         status_tool = next(t for t in tools if t.__name__ == "status")
         assert status_tool.__doc__ == "Custom description"
 
@@ -675,7 +675,7 @@ class TestAsCallableTools:
         """Optional JSON Schema params become kwargs with defaults."""
         import inspect
 
-        tools = tract.toolkit.as_callable_tools(profile="self")
+        tools = tract.runtime.tools.as_callable_tools(profile="self")
         log_tool = next(t for t in tools if t.__name__ == "log")
         sig = inspect.signature(log_tool)
         # 'limit' is optional in the log tool

@@ -162,7 +162,7 @@ def run_loop(
             at the start if provided.
         config: Loop configuration. Defaults to LoopConfig().
         llm_client: LLM client to use. Falls back to tract's configured client.
-        tools: Tool definitions (OpenAI format). Falls back to tract.toolkit.as_tools().
+        tools: Tool definitions (OpenAI format). Falls back to tract.runtime.tools.as_tools().
         tool_handlers: Optional mapping of custom tool names to callables.
             When the LLM calls a tool whose name is in this dict, the
             corresponding function is called with the tool arguments as
@@ -193,7 +193,7 @@ def run_loop(
         )
 
     if tools is None:
-        tools = tract.toolkit.as_tools(format="openai")
+        tools = tract.runtime.tools.as_tools(format="openai")
 
     # Grab effective LLM config for the result
     effective_config = tract.default_config
@@ -266,7 +266,7 @@ def run_loop(
                     cfg.auto_compress_threshold * 100, cfg.max_tokens,
                 )
                 try:
-                    tract.compression.compress(strategy="sliding_window", window_size=cfg.strategy_k)
+                    tract.compress(strategy="sliding_window", window_size=cfg.strategy_k)
                     last_compiled = tract.compile(strategy=strategy, strategy_k=strategy_k)
                     compressed_this_step = True
                 except Exception as e:
@@ -800,7 +800,7 @@ def _extract_and_record_usage(
         return None
     try:
         usage = tract._normalize_usage_dict(usage_dict)
-        tract.compression.record_usage(usage)
+        tract.record_usage(usage)
         return usage
     except Exception:
         logger.debug("Failed to record usage", exc_info=True)
@@ -1018,7 +1018,7 @@ async def arun_loop(
         )
 
     if tools is None:
-        tools = tract.toolkit.as_tools(format="openai")
+        tools = tract.runtime.tools.as_tools(format="openai")
 
     effective_config = tract.default_config
 
@@ -1089,7 +1089,7 @@ async def arun_loop(
                     cfg.auto_compress_threshold * 100, cfg.max_tokens,
                 )
                 try:
-                    tract.compression.compress(strategy="sliding_window", window_size=cfg.strategy_k)
+                    tract.compress(strategy="sliding_window", window_size=cfg.strategy_k)
                     last_compiled = tract.compile(strategy=strategy, strategy_k=strategy_k)
                     compressed_this_step = True
                 except Exception as e:
