@@ -21,13 +21,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
-from tract._helpers import safe_llm_call as _safe_llm_call
-from tract._helpers import strip_fences as _strip_fences
 from tract.exceptions import BlockedError
 
 if TYPE_CHECKING:
@@ -52,7 +49,7 @@ def build_manifest(tract: Tract, max_log_entries: int = 30) -> str:
 
     Shared by :class:`SemanticGate` and
     :class:`~tract.maintain.SemanticMaintainer`.  Uses only ``t.search.log()``
-    and ``t.config.get_all()`` — never ``t.search.status()`` or ``t.compile()``
+    and ``t.config.get_all()`` -- never ``t.search.status()`` or ``t.compile()``
     to avoid middleware recursion.
     """
     branch = tract.current_branch or "(detached)"
@@ -126,7 +123,7 @@ Be strict. Only pass if the criterion is clearly met based on the available evid
 
 
 # ---------------------------------------------------------------------------
-# GateResult — immutable result of a gate evaluation
+# GateResult -- immutable result of a gate evaluation
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class GateResult:
@@ -140,7 +137,7 @@ class GateResult:
 
 
 # ---------------------------------------------------------------------------
-# SemanticGate — middleware-compatible callable
+# SemanticGate -- middleware-compatible callable
 # ---------------------------------------------------------------------------
 @dataclass
 class SemanticGate:
@@ -151,14 +148,12 @@ class SemanticGate:
 
     When invoked the gate:
 
-    1. Runs an optional deterministic ``condition`` callback — returns
+    1. Runs an optional deterministic ``condition`` callback -- returns
        early (passes) if the callback returns ``False``.
-    2. Builds a lightweight manifest from ``t.search.log()`` and
-       ``t.config.get_all()`` (never ``t.search.status()`` or ``t.compile()``
-       which would cause recursion).
-    3. Sends the manifest plus the ``check`` criterion to an LLM.
-    4. Parses the LLM response for PASS / FAIL.
-    5. On FAIL, raises :class:`~tract.exceptions.BlockedError`.
+    2. Resolves an LLM client (gates require one; they do not fail-open
+       on missing client).
+    3. Evaluates the check criterion via :class:`~tract.judgment.Judgment`.
+    4. On FAIL, raises :class:`~tract.exceptions.BlockedError`.
 
     Attributes:
         name: Human-readable gate identifier.
@@ -231,10 +226,12 @@ class SemanticGate:
         )
 
     # ------------------------------------------------------------------
-    # __call__ — middleware handler interface
+    # __call__ -- middleware handler interface
     # ------------------------------------------------------------------
     def __call__(self, ctx: MiddlewareContext) -> None:
         """Evaluate the gate.  Raises :class:`BlockedError` on failure."""
+
+        tract = ctx.tract
 
         # 1. Deterministic pre-check
         if self.condition is not None:
@@ -264,8 +261,7 @@ class SemanticGate:
                 )
                 return
 
-        # 2. Resolve LLM client
-        tract = ctx.tract
+        # 2. Resolve LLM client (gates require a client, unlike Judgment's fail-open)
         try:
             client = tract.config._resolve_llm_client("gate")
         except RuntimeError as exc:
@@ -282,117 +278,46 @@ class SemanticGate:
                 f"Tract.open()."
             ) from exc
 
-        # 3. Build manifest and messages
-        manifest, consulted_hashes = self._build_manifest(tract)
-        prompt_override = tract.config.get_prompt("gate")
-        messages = self._build_messages(manifest, ctx, system_prompt=prompt_override)
+        # 3. Evaluate via Judgment
+        from tract.judgment import Judgment, GateVerdict
+        from tract.context_view import ContextView
 
-        # 4. LLM call — fail-open on infrastructure errors
-        llm_kwargs: dict[str, Any] = {"temperature": self.temperature}
-        if self.model is not None:
-            llm_kwargs["model"] = self.model
+        # Get custom prompt if configured
+        gate_prompt = _GATE_SYSTEM_PROMPT
+        try:
+            custom = tract.config.get_prompt("gate")
+            if custom:
+                gate_prompt = custom
+        except Exception:
+            pass
 
-        llm_result = _safe_llm_call(
-            client, messages, llm_kwargs, caller=f"Gate '{self.name}'",
+        judgment = Judgment(
+            instructions=f"=== CRITERION ===\n{self.check}\n\n=== EVENT ===\n{ctx.event}",
+            response_model=GateVerdict,
+            system_prompt=gate_prompt,
+            context=self.context or ContextView(scope=self.max_log_entries),
+            model=self.model,
+            temperature=self.temperature,
+            operation_name="gate",
         )
-        if llm_result is None:
-            self.last_result = GateResult(
-                gate_name=self.name,
-                passed=True,
-                reason="LLM call failed; fail-open default.",
-                tokens_used=0,
-                consulted_hashes=consulted_hashes,
-            )
-            return
 
-        raw_text, tokens_used = llm_result
+        result = judgment.evaluate(tract, llm_client=client)
 
-        # 5. Parse response
-        passed, reason = self._parse_response(raw_text)
+        # 4. Convert to GateResult
+        if result.succeeded and result.output is not None:
+            passed = str(result.output.result).lower() == "pass"
+            reason = result.output.reason or result.reasoning
+        else:
+            passed = True  # fail-open
+            reason = result.reasoning or "Evaluation failed; fail-open."
+
         self.last_result = GateResult(
             gate_name=self.name,
             passed=passed,
             reason=reason,
-            tokens_used=tokens_used,
-            consulted_hashes=consulted_hashes,
+            tokens_used=result.tokens_used,
+            consulted_hashes=result.consulted_hashes,
         )
 
-        # 6. Block if failed
         if not passed:
-            raise BlockedError(
-                ctx.event,
-                [f"Gate '{self.name}' FAILED: {reason}"],
-            )
-
-    # ------------------------------------------------------------------
-    # Manifest construction
-    # ------------------------------------------------------------------
-    def _build_manifest(self, tract: Tract) -> tuple[str, tuple[str, ...]]:
-        """Build context manifest via :func:`~tract.context_view.build_context`.
-
-        Returns (manifest_text, consulted_hashes).
-        """
-        from tract.context_view import ContextView, build_context
-
-        view = self.context or ContextView()
-        built = build_context(view, tract, default_scope=self.max_log_entries)
-        hashes = tuple(e["hash"] for e in built.commit_entries)
-        return built.text, hashes
-
-    # ------------------------------------------------------------------
-    # Message construction
-    # ------------------------------------------------------------------
-    def _build_messages(
-        self, manifest: str, ctx: MiddlewareContext, system_prompt: str | None = None,
-    ) -> list[dict[str, str]]:
-        """Construct the LLM messages for the gate evaluation."""
-        user_content = (
-            f"=== CRITERION ===\n"
-            f"{self.check}\n"
-            f"\n"
-            f"=== EVENT ===\n"
-            f"{ctx.event}\n"
-            f"\n"
-            f"{manifest}"
-        )
-        return [
-            {"role": "system", "content": system_prompt or _GATE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
-
-    # ------------------------------------------------------------------
-    # Response parsing
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _parse_response(text: str) -> tuple[bool, str]:
-        """Parse an LLM response into (passed, reason).
-
-        Tries JSON first, then falls back to scanning for PASS/FAIL
-        keywords in the raw text.
-        """
-        # Strip markdown code fences if present
-        cleaned = _strip_fences(text)
-
-        # Attempt JSON parse
-        try:
-            data = json.loads(cleaned)
-            if isinstance(data, dict):
-                result = str(data.get("result") or "").lower().strip()
-                reason = str(data.get("reason") or "").strip() or "(no reason given)"
-                if result == "pass":
-                    return True, reason
-                if result == "fail":
-                    return False, reason
-                # Unrecognised result value — fall through to keyword scan
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
-
-        # Fallback: word-boundary keyword scan
-        text_lower = text.lower()
-        if re.search(r"\bfail\b", text_lower):
-            return False, text.strip()[:200]
-        if re.search(r"\bpass\b", text_lower):
-            return True, text.strip()[:200]
-
-        # Ambiguous — treat as pass (fail-open)
-        return True, f"Could not parse gate response; defaulting to pass. Raw: {text[:200]}"
+            raise BlockedError(ctx.event, [f"Gate '{self.name}' FAILED: {reason}"])

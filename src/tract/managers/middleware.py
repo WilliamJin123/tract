@@ -28,6 +28,7 @@ class MiddlewareManager:
         get_current_branch: Callable[[], str | None],
         get_head: Callable[[], str | None],
         tract_ref: Callable,  # returns the Tract instance
+        policy_engine: Any = None,
     ) -> None:
         self._check_open = check_open
         self._persist_behavioral_spec = persist_behavioral_spec
@@ -35,6 +36,7 @@ class MiddlewareManager:
         self._get_current_branch = get_current_branch
         self._get_head = get_head
         self._tract_ref = tract_ref
+        self._policy_engine = policy_engine
 
         # Owned state
         self._middleware: dict[str, list[tuple[str, Callable]]] = {}
@@ -297,5 +299,20 @@ class MiddlewareManager:
             )
             for _id, fn in list(handlers):
                 fn(ctx)
+
+            # Fire policies after middleware handlers
+            if self._policy_engine is not None:
+                bound = self._policy_engine._event_bindings.get(event, [])
+                if bound:
+                    from tract.policy import PolicyContext
+
+                    policy_ctx = PolicyContext(
+                        tract=self._tract_ref(),
+                        event=event,
+                        trigger_data=kwargs.get("pending"),
+                        branch=self._get_current_branch() or "",
+                        head=self._get_head() or "",
+                    )
+                    self._policy_engine.fire(event, policy_ctx)
         finally:
             self._in_middleware_events.discard(event)

@@ -629,28 +629,6 @@ class TestGateFailThenPass:
 
 
 # ---------------------------------------------------------------------------
-# Parse response edge cases (null reason)
-# ---------------------------------------------------------------------------
-
-class TestParseResponseNullReason:
-    def test_null_reason_in_json(self):
-        """JSON response with null reason should produce '(no reason given)'."""
-        passed, reason = SemanticGate._parse_response(
-            '{"result": "pass", "reason": null}'
-        )
-        assert passed is True
-        assert reason == "(no reason given)"
-
-    def test_substring_keyword_no_false_match(self):
-        """Words like 'passive' or 'rainfall' should not trigger keyword fallback."""
-        # "passive" contains "pass" as substring but not as word
-        passed, reason = SemanticGate._parse_response("This is about passive income")
-        # Should be ambiguous (no word-boundary match), defaulting to pass
-        assert passed is True
-        assert "defaulting to pass" in reason.lower() or "passive" in reason.lower()
-
-
-# ---------------------------------------------------------------------------
 # Post_* event validation
 # ---------------------------------------------------------------------------
 

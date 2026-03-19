@@ -1,4 +1,4 @@
-"""Tests for tract.gate — SemanticGate and GateResult."""
+"""Tests for tract.gate -- SemanticGate and GateResult."""
 
 from __future__ import annotations
 
@@ -254,153 +254,6 @@ class TestLLMClientResolution:
 
 
 # ---------------------------------------------------------------------------
-# Manifest building tests
-# ---------------------------------------------------------------------------
-
-class TestBuildManifest:
-    def test_empty_log(self):
-        tract_mock = _make_tract_mock(commits=[], config={})
-        gate = SemanticGate(name="m1", check="x")
-        manifest, hashes = gate._build_manifest(tract_mock)
-
-        assert isinstance(manifest, str)
-        assert isinstance(hashes, tuple)
-        assert len(hashes) == 0
-        assert "Branch: main" in manifest
-
-    def test_with_commits(self):
-        commits = [
-            _make_commit_info(
-                commit_hash="a1b2c3d4" + "0" * 32,
-                content_type="assistant",
-                token_count=847,
-                message="Analysis of B-tree indexing strategies",
-                tags=["research"],
-                effective_priority="NORMAL",
-            ),
-            _make_commit_info(
-                commit_hash="b2c3d4e5" + "0" * 32,
-                content_type="tool_io",
-                token_count=234,
-                message=None,
-                tags=[],
-                effective_priority="NORMAL",
-            ),
-        ]
-        tract_mock = _make_tract_mock(commits=commits, config={"stage": "research"})
-        gate = SemanticGate(name="m2", check="x")
-        manifest, hashes = gate._build_manifest(tract_mock)
-
-        assert "COMMIT LOG" in manifest
-        assert "a1b2c3d4" in manifest
-        assert "assistant" in manifest
-        assert "847" in manifest
-        assert "research" in manifest
-        assert len(hashes) == 2
-        assert "a1b2c3d4" + "0" * 32 in hashes
-        assert "b2c3d4e5" + "0" * 32 in hashes
-
-    def test_message_truncation(self):
-        long_msg = "A" * 100
-        commits = [_make_commit_info(message=long_msg)]
-        tract_mock = _make_tract_mock(commits=commits)
-        gate = SemanticGate(name="m3", check="x")
-        manifest, hashes = gate._build_manifest(tract_mock)
-
-        # Message should be truncated
-        assert "A" * 100 not in manifest
-        assert len(hashes) == 1
-
-    def test_max_log_entries_respected(self):
-        commits = [
-            _make_commit_info(commit_hash=f"{i:040d}") for i in range(50)
-        ]
-        tract_mock = _make_tract_mock(commits=commits)
-        # Tract.log() receives the limit
-        gate = SemanticGate(name="m4", check="x", max_log_entries=10)
-        gate._build_manifest(tract_mock)
-        tract_mock.search.log.assert_called_once_with(limit=10)
-
-
-# ---------------------------------------------------------------------------
-# Message building tests
-# ---------------------------------------------------------------------------
-
-class TestBuildMessages:
-    def test_message_structure(self):
-        gate = SemanticGate(name="msg-test", check="Has 3 findings")
-        manifest = "=== CONTEXT MANIFEST ===\nBranch: main"
-        ctx = _make_ctx(_make_tract_mock())
-        messages = gate._build_messages(manifest, ctx)
-
-        assert len(messages) == 2
-        assert messages[0]["role"] == "system"
-        assert messages[0]["content"] == _GATE_SYSTEM_PROMPT
-        assert messages[1]["role"] == "user"
-        assert "Has 3 findings" in messages[1]["content"]
-        assert "CONTEXT MANIFEST" in messages[1]["content"]
-        assert "pre_transition" in messages[1]["content"]
-
-
-# ---------------------------------------------------------------------------
-# Response parsing tests
-# ---------------------------------------------------------------------------
-
-class TestParseResponse:
-    def test_json_pass(self):
-        text = '{"result": "pass", "reason": "Criterion met"}'
-        passed, reason = SemanticGate._parse_response(text)
-        assert passed is True
-        assert reason == "Criterion met"
-
-    def test_json_fail(self):
-        text = '{"result": "fail", "reason": "Missing findings"}'
-        passed, reason = SemanticGate._parse_response(text)
-        assert passed is False
-        assert reason == "Missing findings"
-
-    def test_json_with_code_fence(self):
-        text = '```json\n{"result": "fail", "reason": "Not enough"}\n```'
-        passed, reason = SemanticGate._parse_response(text)
-        assert passed is False
-        assert reason == "Not enough"
-
-    def test_json_no_reason(self):
-        text = '{"result": "pass"}'
-        passed, reason = SemanticGate._parse_response(text)
-        assert passed is True
-        assert reason == "(no reason given)"
-
-    def test_fallback_pass_keyword(self):
-        text = "The context seems to PASS the criterion."
-        passed, reason = SemanticGate._parse_response(text)
-        assert passed is True
-
-    def test_fallback_fail_keyword(self):
-        text = "This does not meet the requirement. FAIL."
-        passed, reason = SemanticGate._parse_response(text)
-        assert passed is False
-
-    def test_ambiguous_defaults_to_pass(self):
-        text = "I'm not sure what to say here."
-        passed, reason = SemanticGate._parse_response(text)
-        assert passed is True
-        assert "defaulting to pass" in reason.lower()
-
-    def test_invalid_json_with_fail(self):
-        text = '{"result": bad json} but the answer is FAIL'
-        passed, reason = SemanticGate._parse_response(text)
-        assert passed is False
-
-    def test_json_unknown_result_with_fail_keyword(self):
-        text = '{"result": "maybe", "reason": "not sure"}'
-        # "maybe" is not pass/fail, falls through to keyword scan
-        # "maybe" doesn't contain "pass" or "fail", so ambiguous -> pass
-        passed, reason = SemanticGate._parse_response(text)
-        assert passed is True  # fail-open
-
-
-# ---------------------------------------------------------------------------
 # Full __call__ integration tests
 # ---------------------------------------------------------------------------
 
@@ -448,7 +301,7 @@ class TestGateCall:
 
         assert gate.last_result is not None
         assert gate.last_result.passed is True
-        assert "fail-open" in gate.last_result.reason.lower()
+        assert "fail" in gate.last_result.reason.lower()
 
     def test_model_override_passed_to_chat(self):
         client = FakeLLMClient()
@@ -542,3 +395,30 @@ class TestEdgeCases:
         gate(ctx)
 
         assert gate.last_result.tokens_used == 0
+
+    def test_to_spec_and_from_spec(self):
+        """Serialization round-trip preserves gate configuration."""
+        gate = SemanticGate(
+            name="test-gate",
+            check="Has findings",
+            model="gpt-4o",
+            condition=lambda c: True,
+            temperature=0.5,
+            max_log_entries=20,
+        )
+        spec = gate.to_spec()
+
+        assert spec["name"] == "test-gate"
+        assert spec["check"] == "Has findings"
+        assert spec["model"] == "gpt-4o"
+        assert spec["has_condition"] is True
+        assert spec["temperature"] == 0.5
+        assert spec["max_log_entries"] == 20
+
+        restored = SemanticGate.from_spec(spec)
+        assert restored.name == "test-gate"
+        assert restored.check == "Has findings"
+        assert restored.model == "gpt-4o"
+        assert restored.condition is None  # not restorable
+        assert restored.temperature == 0.5
+        assert restored.max_log_entries == 20

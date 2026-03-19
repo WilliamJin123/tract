@@ -423,6 +423,10 @@ class Tract:
         self._template_registry: dict = default_template_registry()
         self._profile_registry: dict = default_profile_registry()
 
+        # Policy engine
+        from tract.policy import PolicyEngine
+        self._policy_engine = PolicyEngine()
+
         # Custom tools registered via @t.tool decorator
         self._custom_tools: dict[str, Any] = {}  # name -> ToolDefinition
 
@@ -513,6 +517,7 @@ class Tract:
             get_current_branch=lambda: self.current_branch,
             get_head=lambda: self.head,
             tract_ref=lambda: self,
+            policy_engine=self._policy_engine,
         )
 
         self._tools_mgr = ToolManager(
@@ -809,6 +814,11 @@ class Tract:
     def toolkit(self):
         """Toolkit sub-object."""
         return self._toolkit_mgr
+
+    @property
+    def policies(self):
+        """Policy engine for managing context management policies."""
+        return self._policy_engine
 
     def _check_open(self) -> None:
         """Raise :class:`ClosedError` if closed, or :class:`ThreadSafetyError` if wrong thread."""
@@ -2250,6 +2260,28 @@ class Tract:
             priorities=new_priorities,
         )
 
+
+    # ------------------------------------------------------------------
+    # Evaluate (one-shot Judgment)
+    # ------------------------------------------------------------------
+
+    def evaluate(self, judgment, *, llm_client=None):
+        """Evaluate a one-shot Judgment against this tract's context state.
+
+        Args:
+            judgment: A Judgment instance specifying what to evaluate.
+            llm_client: Optional LLM client override.
+
+        Returns:
+            JudgmentResult with the parsed output.
+        """
+        self._check_open()
+        return judgment.evaluate(self, llm_client=llm_client)
+
+    async def aevaluate(self, judgment, *, llm_client=None):
+        """Async version of evaluate()."""
+        self._check_open()
+        return await judgment.aevaluate(self, llm_client=llm_client)
 
     # ------------------------------------------------------------------
     # Tag system

@@ -101,6 +101,20 @@ from tract.intelligence import CherryPickResult, DedupResult, cherry_pick, acher
 # Autonomous operations
 from tract.autonomous import AutoSplitResult, AutoRebaseResult, AutoBranchResult, auto_split, aauto_split, auto_rebase, aauto_rebase, auto_branch, aauto_branch
 
+# Judgment (unified LLM-powered evaluation primitive)
+from tract.judgment import (
+    Judgment, JudgmentResult,
+    GateVerdict, MaintenancePlan, MaintenanceAction,
+    SelectionResult, DedupGroups, SplitPlan, BooleanDecision, RouteSelection,
+)
+
+# Policy (unified context management policy primitive)
+from tract.policy import (
+    Policy, PolicyContext, PolicyOutcome, PolicyEngine,
+    always, never, token_ratio_above, commit_count_above,
+    block_with_reason, pass_through,
+)
+
 # Routing
 from tract.routing import Route, RoutingTable, SemanticRouter, RoutingResult
 
@@ -303,6 +317,28 @@ __all__ = [
     "aauto_rebase",
     "auto_branch",
     "aauto_branch",
+    # Judgment
+    "Judgment",
+    "JudgmentResult",
+    "GateVerdict",
+    "MaintenancePlan",
+    "MaintenanceAction",
+    "SelectionResult",
+    "DedupGroups",
+    "SplitPlan",
+    "BooleanDecision",
+    "RouteSelection",
+    # Policy
+    "Policy",
+    "PolicyContext",
+    "PolicyOutcome",
+    "PolicyEngine",
+    "always",
+    "never",
+    "token_ratio_above",
+    "commit_count_above",
+    "block_with_reason",
+    "pass_through",
     # Routing
     "Route",
     "RoutingTable",
